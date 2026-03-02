@@ -2,13 +2,20 @@ use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
-    StaticSegment,
+    StaticSegment, ParamSegment,
 };
+
+pub mod models;
+pub mod mock;
+pub mod api;
+pub mod components;
+
+use components::{Level1View, Level2View, Level3View};
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="zh-CN">
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -25,35 +32,20 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 
 #[component]
 pub fn App() -> impl IntoView {
-    // Provides context that manages stylesheets, titles, meta tags, etc.
     provide_meta_context();
 
     view! {
         <Stylesheet id="leptos" href="/pkg/super-trainning-collector.css"/>
+        <Title text="训练任务监控面板"/>
 
-        // sets the document title
-        <Title text="Welcome to Leptos"/>
-
-        // content for this welcome page
         <Router>
-            <main>
-                <Routes fallback=|| "Page not found.".into_view()>
-                    <Route path=StaticSegment("") view=HomePage/>
+            <main class="app-container">
+                <Routes fallback=|| "页面未找到".into_view()>
+                    <Route path=StaticSegment("") view=Level1View/>
+                    <Route path=StaticSegment("nodes") view=Level2View/>
+                    <Route path=(StaticSegment("nodes"), ParamSegment("ip")) view=Level3View/>
                 </Routes>
             </main>
         </Router>
-    }
-}
-
-/// Renders the home page of your application.
-#[component]
-fn HomePage() -> impl IntoView {
-    // Creates a reactive value to update the button
-    let count = RwSignal::new(0);
-    let on_click = move |_| *count.write() += 1;
-
-    view! {
-        <h1>"Welcome to Leptos!"</h1>
-        <button on:click=on_click>"Click Me: " {count}</button>
     }
 }

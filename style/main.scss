@@ -1,4 +1,474 @@
+// 变量定义
+$color-healthy: #22c55e;
+$color-warning: #eab308;
+$color-critical: #ef4444;
+$color-bg: #0f172a;
+$color-card: #1e293b;
+$color-border: #334155;
+$color-text: #f1f5f9;
+$color-text-muted: #94a3b8;
+
+// 基础样式
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
 body {
-	font-family: sans-serif;
-	text-align: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: $color-bg;
+    color: $color-text;
+    line-height: 1.6;
+}
+
+.app-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+// 页面标题
+.page-title {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 24px;
+    color: $color-text;
+}
+
+// 状态徽章
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+
+    &-healthy {
+        background: rgba($color-healthy, 0.2);
+        color: $color-healthy;
+    }
+    &-warning {
+        background: rgba($color-warning, 0.2);
+        color: $color-warning;
+    }
+    &-critical {
+        background: rgba($color-critical, 0.2);
+        color: $color-critical;
+    }
+}
+
+// 状态类
+.status-healthy { border-left: 4px solid $color-healthy; }
+.status-warning { border-left: 4px solid $color-warning; }
+.status-critical { border-left: 4px solid $color-critical; }
+
+// 热力色块
+.heat-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    min-width: 60px;
+}
+
+.heat-level-0 { background: rgba($color-healthy, 0.2); color: $color-healthy; }
+.heat-level-1 { background: rgba(#84cc16, 0.2); color: #84cc16; }
+.heat-level-2 { background: rgba($color-warning, 0.2); color: $color-warning; }
+.heat-level-3 { background: rgba(#f97316, 0.2); color: #f97316; }
+.heat-level-4 { background: rgba($color-critical, 0.2); color: $color-critical; }
+
+// 值样式
+.value-healthy { color: $color-healthy; }
+.value-warning { color: $color-warning; }
+.value-critical { color: $color-critical; font-weight: 600; }
+
+// KPI 卡片
+.kpi-card {
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    padding: 16px;
+
+    .kpi-title {
+        font-size: 0.75rem;
+        color: $color-text-muted;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 8px;
+    }
+
+    .kpi-value {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: $color-text;
+    }
+
+    .kpi-unit {
+        font-size: 0.875rem;
+        color: $color-text-muted;
+        margin-left: 4px;
+    }
+}
+
+.kpi-grid, .progress-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+}
+
+// 健康分布
+.health-section {
+    margin-bottom: 32px;
+}
+
+.health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+}
+
+.health-distribution {
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    padding: 16px;
+
+    .health-label {
+        font-size: 0.875rem;
+        color: $color-text-muted;
+        margin-bottom: 12px;
+    }
+
+    .health-bars {
+        display: flex;
+        height: 32px;
+        border-radius: 4px;
+        overflow: hidden;
+        gap: 2px;
+    }
+
+    .health-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 600;
+        min-width: 30px;
+
+        &.healthy { background: $color-healthy; color: #000; }
+        &.warning { background: $color-warning; color: #000; }
+        &.critical { background: $color-critical; color: #fff; }
+    }
+
+    .health-total {
+        font-size: 0.75rem;
+        color: $color-text-muted;
+        margin-top: 8px;
+        text-align: right;
+    }
+}
+
+// 区块样式
+section {
+    margin-bottom: 32px;
+
+    h2 {
+        font-size: 1rem;
+        color: $color-text-muted;
+        margin-bottom: 16px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+}
+
+// 导航按钮
+.nav-button {
+    display: inline-block;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: #fff;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: opacity 0.2s;
+
+    &:hover {
+        opacity: 0.9;
+    }
+}
+
+// 面包屑
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    font-size: 0.875rem;
+
+    a {
+        color: $color-text-muted;
+        text-decoration: none;
+
+        &:hover {
+            color: $color-text;
+        }
+
+        &.active {
+            color: $color-text;
+            font-weight: 500;
+        }
+    }
+
+    .separator {
+        color: $color-border;
+    }
+}
+
+// 筛选栏
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding: 16px;
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+
+    .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        label {
+            font-size: 0.875rem;
+            color: $color-text-muted;
+        }
+
+        select {
+            padding: 8px 12px;
+            background: $color-bg;
+            border: 1px solid $color-border;
+            border-radius: 4px;
+            color: $color-text;
+            font-size: 0.875rem;
+            cursor: pointer;
+
+            &:focus {
+                outline: none;
+                border-color: #3b82f6;
+            }
+        }
+    }
+}
+
+// 节点表格
+.nodes-table-container {
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.nodes-table {
+    width: 100%;
+    border-collapse: collapse;
+
+    th, td {
+        padding: 12px 16px;
+        text-align: left;
+        border-bottom: 1px solid $color-border;
+    }
+
+    th {
+        background: rgba(0, 0, 0, 0.2);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: $color-text-muted;
+        font-weight: 600;
+    }
+
+    .node-row {
+        transition: background 0.2s;
+
+        &.clickable {
+            cursor: pointer;
+
+            &:hover {
+                background: rgba(255, 255, 255, 0.05);
+            }
+        }
+    }
+
+    .node-ip {
+        font-family: monospace;
+        font-weight: 500;
+    }
+
+    .rank-status {
+        font-size: 0.875rem;
+
+        .healthy { color: $color-healthy; }
+        .warning { color: $color-warning; }
+        .critical { color: $color-critical; }
+    }
+}
+
+.table-footer {
+    padding: 12px 16px;
+    font-size: 0.875rem;
+    color: $color-text-muted;
+    border-top: 1px solid $color-border;
+}
+
+// Level 3 - 节点详情
+.node-overview {
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+
+    .node-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+
+    .node-title {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 1.25rem;
+    }
+
+    .node-ip {
+        font-family: monospace;
+    }
+
+    .node-hostname {
+        color: $color-text-muted;
+        font-weight: normal;
+    }
+
+    .rack-label {
+        color: $color-text-muted;
+        font-size: 0.875rem;
+    }
+}
+
+.node-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+}
+
+// Rank 卡片网格
+.ranks-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.rank-card {
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    padding: 16px;
+
+    .rank-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid $color-border;
+    }
+
+    .rank-id {
+        font-weight: 600;
+    }
+
+    .local-rank {
+        color: $color-text-muted;
+        font-size: 0.875rem;
+    }
+
+    .rank-metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+
+    .metric {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+
+        .metric-label {
+            font-size: 0.75rem;
+            color: $color-text-muted;
+        }
+    }
+
+    .rank-error {
+        margin-top: 16px;
+        padding: 8px 12px;
+        background: rgba($color-critical, 0.1);
+        border: 1px solid rgba($color-critical, 0.3);
+        border-radius: 4px;
+        color: $color-critical;
+        font-size: 0.875rem;
+
+        .error-icon {
+            margin-right: 8px;
+        }
+    }
+}
+
+// 加载指示器
+.loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px;
+    color: $color-text-muted;
+    gap: 16px;
+
+    .loading-spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid $color-border;
+        border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+// 错误显示
+.error-display {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    background: rgba($color-critical, 0.1);
+    border: 1px solid rgba($color-critical, 0.3);
+    border-radius: 8px;
+    color: $color-critical;
+
+    .error-icon {
+        font-size: 1.5rem;
+    }
 }

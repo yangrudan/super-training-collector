@@ -36,17 +36,17 @@ RUST (leptos + axum)
     - 网络：`reqwest`（后端）+ `leptos_axum`（前后端一体化）。
 
 # 开发阶段
-[parse1] 搭建leptos框架, 实现「**后端预聚合+前端热力编码+按需下钻**」的三级视图：
+[phase1] 搭建leptos框架, 实现「**后端预聚合+前端热力编码+按需下钻**」的三级视图：
 
 + Level 1：全局聚合，聚焦“是否正常”；
 + Level 2：节点聚合，聚焦“问题在哪”；
 + Level 3：rank 细节，聚焦“问题根因”；
 
-[parse2] 开发adapter层, 接入probing正式的真实数据, 解决并发和性能问题;
+[phase2] 开发adapter层, 接入probing正式的真实数据, 解决并发和性能问题;
 
-[parse3] 数据分析模块开发和告警, 决策;
+[phase3] 数据分析模块开发和告警, 决策;
 
-[parse4] OTLP expoter迁移升级.
+[phase4] OTLP exporter迁移升级.
 
 + <font style="color:rgb(101, 123, 131);">集成 OpenTelemetry Collector</font>
 

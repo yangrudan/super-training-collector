@@ -3,6 +3,241 @@
 
 先用mock的数据进行一个16机128卡的环境, 完成框架搭建和实现, 后续我再换成真实数据.
 
+---
+
+### 零、核心数据结构定义（Rust）
+
+#### 1. 状态枚举
+```rust
+/// 健康状态枚举
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HealthStatus {
+    Healthy,   // 绿色：正常
+    Warning,   // 黄色：性能下降但未故障
+    Critical,  // 红色：故障或严重异常
+}
+```
+
+#### 2. Rank 级别数据（单个训练进程）
+```rust
+/// 单个 Rank 的指标数据
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RankMetrics {
+    pub rank_id: u32,              // 全局唯一 rank ID (0-127)
+    pub local_rank: u8,            // 节点内 GPU 编号 (0-7)
+    pub node_ip: String,           // 所属节点 IP
+    
+    // 核心指标
+    pub step_time_ms: f64,         // 当前 step 耗时 (毫秒)
+    pub step_time_ratio: f64,      // 相对全局 P50 的倍数 (如 1.5x 表示慢 50%)
+    pub gpu_utilization: f32,      // GPU 利用率 (0-100%)
+    pub gpu_memory_used_gb: f32,   // GPU 显存占用 (GB)
+    pub gpu_memory_total_gb: f32,  // GPU 显存总量 (GB)
+    
+    // 通信指标
+    pub nccl_latency_ms: f64,      // NCCL 通信延迟 (毫秒)
+    pub nccl_bandwidth_gbps: f32,  // NCCL 带宽 (Gbps)
+    
+    // 状态
+    pub status: HealthStatus,
+    pub last_heartbeat: u64,       // Unix 时间戳 (秒)
+    pub current_step: u64,         // 当前训练 step
+    pub error_message: Option<String>,
+}
+```
+
+#### 3. Node 级别数据（节点聚合）
+```rust
+/// 节点聚合指标
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeMetrics {
+    pub node_ip: String,           // 节点 IP
+    pub hostname: String,          // 主机名
+    pub rack_id: String,           // 机柜 ID
+    
+    // 聚合指标
+    pub rank_count: u8,            // 节点上的 rank 数量 (通常为 8)
+    pub healthy_count: u8,         // 健康 rank 数量
+    pub warning_count: u8,         // 警告 rank 数量
+    pub critical_count: u8,        // 故障 rank 数量
+    
+    // 性能聚合
+    pub slow_ratio: f32,           // 慢 rank 占比 (0.0-1.0)
+    pub avg_step_time_ms: f64,     // 平均 step 耗时
+    pub p50_step_time_ms: f64,     // P50 step 耗时
+    pub p99_step_time_ms: f64,     // P99 step 耗时
+    pub avg_gpu_utilization: f32,  // 平均 GPU 利用率
+    pub avg_nccl_latency_ms: f64,  // 平均 NCCL 延迟
+    
+    // 状态
+    pub status: HealthStatus,      // 节点整体状态 (取最严重的 rank 状态)
+    pub last_update: u64,          // 最后更新时间戳
+}
+```
+
+#### 4. 全局聚合数据
+```rust
+/// 全局聚合指标 (Level 1 视图)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GlobalMetrics {
+    pub total_nodes: u16,          // 总节点数
+    pub total_ranks: u16,          // 总 rank 数
+    
+    // 健康分布
+    pub healthy_nodes: u16,
+    pub warning_nodes: u16,
+    pub critical_nodes: u16,
+    pub healthy_ranks: u16,
+    pub warning_ranks: u16,
+    pub critical_ranks: u16,
+    
+    // 全局性能指标
+    pub global_p50_step_time_ms: f64,
+    pub global_p99_step_time_ms: f64,
+    pub global_avg_gpu_utilization: f32,
+    pub slow_node_ratio: f32,      // 慢节点占比
+    
+    // 训练进度
+    pub current_step: u64,
+    pub steps_per_second: f64,
+    pub estimated_remaining_hours: Option<f64>,
+    
+    // 时间戳
+    pub last_update: u64,
+}
+```
+
+#### 5. 拓扑结构
+```rust
+/// 拓扑视图数据
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Topology {
+    pub racks: Vec<RackInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RackInfo {
+    pub rack_id: String,
+    pub nodes: Vec<NodeSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeSummary {
+    pub node_ip: String,
+    pub status: HealthStatus,
+    pub slow_ratio: f32,
+}
+```
+
+---
+
+### 零.一、REST API 端点设计
+
+#### Level 1 - 全局聚合
+```
+GET /api/global
+Response: GlobalMetrics
+```
+
+#### Level 2 - 节点列表
+```
+GET /api/nodes?sort_by={field}&order={asc|desc}&status={healthy|warning|critical}
+Response: {
+    nodes: Vec<NodeMetrics>,
+    total: u16,
+}
+```
+
+#### Level 3 - Rank 详情
+```
+GET /api/nodes/{ip}/ranks
+Response: {
+    node: NodeMetrics,
+    ranks: Vec<RankMetrics>,
+}
+```
+
+#### 拓扑热图
+```
+GET /api/topology
+Response: Topology
+```
+
+---
+
+### 零.二、Mock 数据规格
+
+#### 环境配置
+- **节点数**: 16 台服务器
+- **每节点 GPU 数**: 8 张
+- **总 Rank 数**: 128 (16 × 8)
+- **机柜分布**: 4 个机柜，每机柜 4 台服务器
+
+#### 数据生成规则
+```rust
+// IP 生成: 192.168.1.{1-16}
+// Rack 分配: rack-{01-04}，每 4 台一组
+
+// 正常 Rank 指标范围
+step_time_ms: 80.0 ~ 120.0 (正态分布, μ=100, σ=10)
+gpu_utilization: 85% ~ 98%
+nccl_latency_ms: 0.5 ~ 2.0
+
+// 慢 Rank 注入 (约 10% 的 rank)
+step_time_ms: 200.0 ~ 500.0
+gpu_utilization: 40% ~ 70%
+
+// 故障 Rank 注入 (约 2% 的 rank)
+status: Critical
+error_message: Some("NCCL timeout" | "OOM" | "Heartbeat lost")
+```
+
+#### 慢/异常判定阈值
+```rust
+// 慢判定: step_time > global_p50 * 1.5
+// 警告判定: 节点有 1-2 个慢 rank
+// 故障判定: 节点有 ≥1 个 Critical rank 或 心跳超时 > 30s
+```
+
+---
+
+### 零.三、可视化依赖建议
+
+#### 热力色阶实现方案
+
+**方案一：纯 CSS 线性渐变（推荐）**
+```css
+/* 健康状态热力色 */
+.heat-level-0 { background: #22c55e; } /* 绿色 - 正常 */
+.heat-level-1 { background: #84cc16; } /* 浅绿 */
+.heat-level-2 { background: #eab308; } /* 黄色 - 轻微异常 */
+.heat-level-3 { background: #f97316; } /* 橙色 */
+.heat-level-4 { background: #ef4444; } /* 红色 - 严重 */
+
+/* 慢占比热力色 (0-100%) */
+.slow-ratio {
+    background: linear-gradient(90deg, 
+        #22c55e 0%,    /* 0% 慢 */
+        #eab308 30%,   /* 30% 慢 */
+        #ef4444 100%   /* 100% 慢 */
+    );
+}
+```
+
+**方案二：charming (ECharts Rust 绑定) - 用于复杂图表**
+```toml
+# Cargo.toml
+[dependencies]
+charming = "0.3"  # ECharts 的 Rust 绑定，支持 WASM
+```
+
+适用场景：
+- 时序折线图（step time 历史趋势）
+- 拓扑热力图（机柜视图）
+- 分布直方图（step time 分布）
+
+**不推荐 d3-rs**：在 WASM 环境兼容性有限，建议使用纯 CSS + charming 组合。
+
 ### 一、技术栈选型（Rust 生态）
 #### 1. 前端框架：Leptos（首选）/Yew
 + **核心优势**：
