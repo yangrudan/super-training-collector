@@ -353,3 +353,144 @@ impl Default for MockDataStore {
         Self::new()
     }
 }
+
+// ============ Mock 堆栈数据生成 ============
+
+/// 模拟的调用栈模板
+const COMMON_STACK_FRAMES: &[&str] = &[
+    "main",
+    "torch::distributed::init_process_group",
+    "training_loop",
+    "model.forward",
+    "transformer_block",
+    "attention_layer",
+    "torch::matmul",
+];
+
+const NCCL_STACK_FRAMES: &[&str] = &[
+    "nccl::AllReduce",
+    "nccl::internal::enqueue",
+    "nccl::net::send",
+];
+
+const SLOW_STACK_FRAMES: &[&str] = &[
+    "cudaStreamSynchronize",
+    "cudaMemcpyAsync",
+    "data_loader::next_batch",
+    "disk_io::read_chunk",
+];
+
+const COMPUTE_STACK_FRAMES: &[&str] = &[
+    "cublas::gemm",
+    "cudnn::convolution_forward",
+    "torch::autograd::backward",
+];
+
+/// 为指定节点生成 mock 堆栈数据
+pub fn generate_node_stacks(node_ip: &str, ranks: &[RankMetrics]) -> Vec<RankStack> {
+    let seed = now_timestamp() ^ (node_ip.as_bytes().iter().map(|&b| b as u64).sum::<u64>());
+    let mut rng = SimpleRng::new(seed);
+
+    ranks
+        .iter()
+        .filter(|r| r.node_ip == node_ip)
+        .map(|rank| {
+            let callstack = generate_mock_callstack(&mut rng, rank.status);
+            RankStack {
+                rank_id: rank.rank_id,
+                node_ip: node_ip.to_string(),
+                callstack,
+                timestamp: now_timestamp(),
+            }
+        })
+        .collect()
+}
+
+fn generate_mock_callstack(rng: &mut SimpleRng, status: HealthStatus) -> Vec<String> {
+    let mut stack: Vec<String> = COMMON_STACK_FRAMES.iter().map(|s| s.to_string()).collect();
+
+    match status {
+        HealthStatus::Critical => {
+            // 故障 rank: 卡在 NCCL 通信
+            stack.extend(NCCL_STACK_FRAMES.iter().map(|s| s.to_string()));
+            stack.push("nccl::wait_timeout".to_string());
+        }
+        HealthStatus::Warning => {
+            // 慢 rank: 在 IO 或同步上
+            if rng.next_bool(0.5) {
+                stack.extend(SLOW_STACK_FRAMES.iter().map(|s| s.to_string()));
+            } else {
+                stack.extend(NCCL_STACK_FRAMES.iter().map(|s| s.to_string()));
+            }
+        }
+        HealthStatus::Healthy => {
+            // 正常 rank: 在计算中
+            stack.extend(COMPUTE_STACK_FRAMES.iter().map(|s| s.to_string()));
+            // 随机添加一些变化
+            if rng.next_bool(0.3) {
+                stack.push("torch::nn::LayerNorm::forward".to_string());
+            }
+            if rng.next_bool(0.3) {
+                stack.push("torch::nn::Dropout::forward".to_string());
+            }
+        }
+    }
+
+    stack
+}
+
+/// 合并多个 rank 的堆栈为树结构
+pub fn merge_stacks(stacks: &[RankStack]) -> MergedStackFrame {
+    let total_ranks = stacks.len() as u32;
+    let mut root = MergedStackFrame {
+        frame_name: "root".to_string(),
+        depth: 0,
+        rank_ids: Vec::new(),
+        rank_count: 0,
+        total_ranks,
+        children: Vec::new(),
+    };
+
+    for stack in stacks {
+        insert_stack(&mut root, &stack.callstack, stack.rank_id, total_ranks, 0);
+    }
+
+    // 根节点包含所有 rank
+    root.rank_ids = stacks.iter().map(|s| s.rank_id).collect();
+    root.rank_count = total_ranks;
+
+    root
+}
+
+fn insert_stack(node: &mut MergedStackFrame, frames: &[String], rank_id: u32, total_ranks: u32, depth: u32) {
+    if frames.is_empty() {
+        return;
+    }
+
+    let frame_name = &frames[0];
+    let remaining = &frames[1..];
+
+    // 查找或创建子节点
+    let child = if let Some(existing) = node.children.iter_mut().find(|c| &c.frame_name == frame_name) {
+        existing
+    } else {
+        node.children.push(MergedStackFrame {
+            frame_name: frame_name.clone(),
+            depth: depth + 1,
+            rank_ids: Vec::new(),
+            rank_count: 0,
+            total_ranks,
+            children: Vec::new(),
+        });
+        node.children.last_mut().unwrap()
+    };
+
+    // 添加 rank_id
+    if !child.rank_ids.contains(&rank_id) {
+        child.rank_ids.push(rank_id);
+        child.rank_count += 1;
+    }
+
+    // 递归处理剩余帧
+    insert_stack(child, remaining, rank_id, total_ranks, depth + 1);
+}

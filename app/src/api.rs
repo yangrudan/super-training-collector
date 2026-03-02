@@ -69,3 +69,32 @@ pub async fn get_topology() -> Result<Topology, ServerFnError> {
     let store = MockDataStore::new();
     Ok(store.topology)
 }
+
+/// 获取指定节点的堆栈数据 (用于火焰图)
+#[server(GetNodeStacks)]
+pub async fn get_node_stacks(ip: String) -> Result<NodeStacksResponse, ServerFnError> {
+    use crate::mock::{generate_node_stacks, merge_stacks};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let store = MockDataStore::new();
+    let ranks = store.get_ranks_by_ip(&ip);
+
+    if ranks.is_empty() {
+        return Err(ServerFnError::new("Node not found"));
+    }
+
+    let stacks = generate_node_stacks(&ip, &ranks);
+    let merged_root = merge_stacks(&stacks);
+
+    let collected_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    Ok(NodeStacksResponse {
+        node_ip: ip,
+        stacks,
+        merged_root,
+        collected_at,
+    })
+}

@@ -172,3 +172,94 @@ impl Default for StatusFilter {
         StatusFilter::All
     }
 }
+
+// ============ 堆栈分析相关数据结构 ============
+
+/// 单个 Rank 的堆栈信息
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RankStack {
+    pub rank_id: u32,
+    pub node_ip: String,
+    pub callstack: Vec<String>,      // 调用栈帧列表 (从栈底到栈顶)
+    pub timestamp: u64,
+}
+
+/// 合并后的堆栈帧节点 (用于火焰图展示)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MergedStackFrame {
+    pub frame_name: String,
+    pub depth: u32,                   // 调用深度
+    pub rank_ids: Vec<u32>,           // 包含此帧的 rank 列表
+    pub rank_count: u32,
+    pub total_ranks: u32,             // 总 rank 数，用于计算覆盖率
+    pub children: Vec<MergedStackFrame>,
+}
+
+impl MergedStackFrame {
+    /// 计算覆盖率 (0.0 - 1.0)
+    pub fn coverage(&self) -> f32 {
+        if self.total_ranks == 0 {
+            0.0
+        } else {
+            self.rank_count as f32 / self.total_ranks as f32
+        }
+    }
+
+    /// 获取覆盖率 CSS 类
+    pub fn coverage_class(&self) -> &'static str {
+        let coverage = self.coverage();
+        if coverage >= 0.9 {
+            "coverage-full"
+        } else if coverage >= 0.5 {
+            "coverage-partial"
+        } else {
+            "coverage-rare"
+        }
+    }
+
+    /// 格式化 rank 分布字符串
+    pub fn rank_range_str(&self) -> String {
+        if self.rank_ids.is_empty() {
+            return String::new();
+        }
+
+        let mut result = Vec::new();
+        let mut sorted_ranks = self.rank_ids.clone();
+        sorted_ranks.sort();
+
+        let mut start = sorted_ranks[0];
+        let mut end = start;
+
+        for &rank in &sorted_ranks[1..] {
+            if rank == end + 1 {
+                end = rank;
+            } else {
+                if start == end {
+                    result.push(format!("{}", start));
+                } else {
+                    result.push(format!("{}-{}", start, end));
+                }
+                start = rank;
+                end = rank;
+            }
+        }
+        
+        // 处理最后一个范围
+        if start == end {
+            result.push(format!("{}", start));
+        } else {
+            result.push(format!("{}-{}", start, end));
+        }
+
+        result.join(", ")
+    }
+}
+
+/// 节点堆栈响应
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeStacksResponse {
+    pub node_ip: String,
+    pub stacks: Vec<RankStack>,
+    pub merged_root: MergedStackFrame,
+    pub collected_at: u64,
+}

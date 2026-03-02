@@ -312,7 +312,9 @@ charming = "0.3"  # ECharts 的 Rust 绑定，支持 WASM
     - 后端计算“慢”的阈值：基于全局 P50 + 3σ，或 P99/P50 倍数，前端仅展示结果；
     - 异常聚类：后端按 IP/机柜聚合异常 rank，前端仅展示聚类结果（避免展示数千个异常 rank）。
 
-### 四、总结
+### 四、总结（原）
+
+> 注：以下总结已整合到第六章。
 基于 Rust 构建千卡级监控面板的核心是「**后端预聚合+前端热力编码+按需下钻**」：
 
 + Level 1：全局聚合，聚焦“是否正常”；
@@ -322,3 +324,257 @@ charming = "0.3"  # ECharts 的 Rust 绑定，支持 WASM
 
 技术上依托 Leptos+Axum 的 Rust 生态，既能保证高性能（异步处理聚合计算），又能实现前后端一体化（复用数据结构体，减少序列化开销），完美适配千卡级训练任务的监控需求。
 
+
+---
+
+### 五、堆栈收集与聚合火焰图
+
+#### 5.1 功能概述
+
+基于 [collect_draw_r](https://github.com/yangrudan/collect_draw_r) 实现多 Rank 堆栈的收集、合并与火焰图可视化，用于深度性能分析和问题定位。
+
+**核心能力**：
+- **多 Rank 堆栈收集**：从各节点的 Probing 服务并发获取堆栈数据
+- **堆栈合并**：使用 Trie 树结构合并相同调用路径，标注 Rank 分布
+- **聚合火焰图**：生成可交互的 SVG 火焰图，直观展示性能热点
+
+#### 5.2 数据结构定义
+
+```rust
+/// 单个 Rank 的堆栈信息
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RankStack {
+    pub rank_id: u32,
+    pub node_ip: String,
+    pub callstack: Vec<String>,      // 调用栈帧列表 (从栈底到栈顶)
+    pub timestamp: u64,               // 采集时间戳
+}
+
+/// 堆栈收集请求
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StackCollectRequest {
+    pub rank_ids: Option<Vec<u32>>,   // 指定 rank，None 表示全部
+    pub node_ips: Option<Vec<String>>, // 指定节点，None 表示全部
+}
+
+/// 合并后的堆栈帧节点
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MergedStackFrame {
+    pub frame_name: String,           // 函数名
+    pub ranks: Vec<u32>,              // 包含此帧的 rank 列表
+    pub rank_count: u32,              // rank 数量
+    pub children: Vec<MergedStackFrame>, // 子帧
+}
+
+/// 火焰图响应
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FlameGraphResponse {
+    pub svg_content: String,          // SVG 火焰图内容
+    pub total_ranks: u32,             // 参与合并的总 rank 数
+    pub merged_at: u64,               // 合并时间戳
+}
+```
+
+#### 5.3 API 端点设计
+
+```
+# 触发堆栈收集
+POST /api/stacks/collect
+Body: StackCollectRequest
+Response: {
+    task_id: String,              // 异步任务 ID
+    estimated_time_ms: u32,       // 预估耗时
+}
+
+# 查询收集状态
+GET /api/stacks/collect/{task_id}
+Response: {
+    status: "pending" | "collecting" | "merging" | "completed" | "failed",
+    progress: f32,                // 0.0 - 1.0
+    collected_ranks: u32,
+    failed_ranks: u32,
+}
+
+# 获取合并后的火焰图
+GET /api/stacks/flamegraph?task_id={id}&format={svg|json}
+Response: FlameGraphResponse | MergedStackFrame (root)
+
+# 获取指定 Rank 的原始堆栈
+GET /api/stacks/raw/{rank_id}
+Response: RankStack
+```
+
+#### 5.4 堆栈合并算法 (Trie 树)
+
+```rust
+/// Trie 节点 - 用于堆栈合并
+pub struct TrieNode {
+    children: HashMap<String, TrieNode>,
+    is_end_of_stack: bool,
+    ranks: BTreeSet<u32>,         // 包含此路径的 rank 集合
+}
+
+/// 堆栈 Trie 树
+pub struct StackTrie {
+    root: TrieNode,
+    all_ranks: BTreeSet<u32>,
+}
+
+impl StackTrie {
+    /// 插入一个 rank 的堆栈
+    pub fn insert(&mut self, stack: Vec<&str>, rank: u32) {
+        let mut node = &mut self.root;
+        for frame in stack {
+            node = node.children
+                .entry(frame.to_string())
+                .or_insert_with(TrieNode::new);
+            node.ranks.insert(rank);
+        }
+        node.is_end_of_stack = true;
+    }
+
+    /// 格式化 rank 分布字符串 (如 "@0-3/5-7|4" 表示 0-3,5-7 有此帧，4 缺失)
+    pub fn format_rank_str(&self, ranks: &BTreeSet<u32>) -> String {
+        // 实现连续 rank 的范围压缩: [0,1,2,3,5,6,7] -> "0-3/5-7"
+        // ...
+    }
+}
+```
+
+#### 5.5 前端可视化组件
+
+##### Level 3 视图集成（节点详情页）
+
+```rust
+/// 堆栈分析面板组件
+#[component]
+pub fn StackAnalysisPanel(node_ip: String) -> impl IntoView {
+    let collect_action = ServerAction::<CollectStacks>::new();
+    let flamegraph_resource = Resource::new(/* ... */);
+
+    view! {
+        <section class="stack-analysis">
+            <h2>"堆栈分析"</h2>
+            
+            // 收集控制区
+            <div class="stack-controls">
+                <button on:click=move |_| collect_action.dispatch(/* ... */)>
+                    "采集当前堆栈"
+                </button>
+                <span class="hint">"采集节点上所有 Rank 的调用堆栈并生成聚合火焰图"</span>
+            </div>
+
+            // 火焰图展示区
+            <Suspense fallback=|| view! { <Loading message="正在生成火焰图..."/> }>
+                {move || flamegraph_resource.get().map(|result| {
+                    match result {
+                        Ok(fg) => view! {
+                            <div class="flamegraph-container">
+                                <div class="flamegraph-header">
+                                    <span>"共 " {fg.total_ranks} " 个 Rank"</span>
+                                    <span>"生成于 " {format_timestamp(fg.merged_at)}</span>
+                                </div>
+                                // 嵌入 SVG 火焰图
+                                <div class="flamegraph-svg" 
+                                     inner_html=fg.svg_content />
+                            </div>
+                        }.into_any(),
+                        Err(e) => view! {
+                            <ErrorMessage message=e.to_string() />
+                        }.into_any(),
+                    }
+                })}
+            </Suspense>
+        </section>
+    }
+}
+```
+
+##### 火焰图交互说明
+
+| 交互 | 行为 |
+|------|------|
+| **悬停** | 显示函数名、Rank 分布、调用次数 |
+| **点击** | 放大该函数及其子调用（zoom in） |
+| **右键** | 复制函数名、跳转到源码（如有） |
+| **搜索** | 高亮匹配的函数帧 |
+
+##### 火焰图颜色编码
+
+```css
+/* 火焰图色阶 - 基于 Rank 覆盖率 */
+.flame-frame {
+    /* 所有 Rank 都有此帧 - 绿色 (正常公共路径) */
+    &.coverage-full { fill: #22c55e; }
+    
+    /* 部分 Rank 有此帧 - 黄色/橙色 (分歧点) */
+    &.coverage-partial { fill: #f97316; }
+    
+    /* 仅少数 Rank 有此帧 - 红色 (异常/慢路径) */
+    &.coverage-rare { fill: #ef4444; }
+}
+```
+
+#### 5.6 后端实现架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Dashboard Server                        │
+├─────────────────────────────────────────────────────────────┤
+│  POST /api/stacks/collect                                   │
+│       │                                                     │
+│       ▼                                                     │
+│  ┌─────────────────┐                                        │
+│  │ StackCollector  │ ◄── 并发请求各节点 Probing 服务        │
+│  │ (async/tokio)   │     http://{node_ip}:{port}/stack     │
+│  └────────┬────────┘                                        │
+│           │ Vec<RankStack>                                  │
+│           ▼                                                 │
+│  ┌─────────────────┐                                        │
+│  │  StackMerger    │ ◄── Trie 树合并相同调用路径            │
+│  │  (Trie-based)   │     标注每帧的 Rank 分布               │
+│  └────────┬────────┘                                        │
+│           │ MergedStackFrame                                │
+│           ▼                                                 │
+│  ┌─────────────────┐                                        │
+│  │ FlameGraphGen   │ ◄── 使用 inferno 库生成 SVG           │
+│  │ (inferno crate) │     支持自定义配色方案                 │
+│  └────────┬────────┘                                        │
+│           │ SVG String                                      │
+│           ▼                                                 │
+│  GET /api/stacks/flamegraph                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 5.7 依赖配置
+
+```toml
+# Cargo.toml 新增依赖
+[dependencies]
+inferno = "0.11"        # 火焰图生成库
+reqwest = { version = "0.12", features = ["json"] }  # HTTP 客户端
+futures = "0.3"         # 并发收集
+```
+
+#### 5.8 使用场景
+
+| 场景 | 操作流程 |
+|------|----------|
+| **定位慢 Rank 原因** | Level 2 发现慢节点 → Level 3 点击"采集堆栈" → 查看火焰图中的红色（异常路径） |
+| **分析训练卡顿** | 全局采集堆栈 → 火焰图中黄色帧表示部分 Rank 阻塞 → 定位 NCCL/IO 等待 |
+| **对比正常/异常** | 分别采集健康节点和问题节点 → 对比火焰图差异 → 发现异常调用路径 |
+
+---
+
+### 六、总结
+
+基于 Rust 构建千卡级监控面板的核心是「**后端预聚合+前端热力编码+按需下钻+堆栈分析**」：
+
++ Level 1：全局聚合，聚焦"是否正常"；
++ Level 2：节点聚合，聚焦"问题在哪"；
++ Level 3：rank 细节 + 堆栈分析，聚焦"问题根因"；
++ 堆栈火焰图：深度诊断，可视化展示多 Rank 的调用差异；
+
+全程规避 rank 列表作为主视图，用「分布/聚类/热力/火焰图」替代"数字列表"，适配千卡规模下的人效最大化（30 秒内定位问题节点）。
+
+技术上依托 Leptos+Axum 的 Rust 生态，既能保证高性能（异步处理聚合计算），又能实现前后端一体化（复用数据结构体，减少序列化开销），完美适配千卡级训练任务的监控需求。堆栈收集与火焰图功能基于 [collect_draw_r](https://github.com/yangrudan/collect_draw_r) 实现，提供深度性能分析能力。

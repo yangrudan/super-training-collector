@@ -3,6 +3,7 @@ use leptos_router::hooks::use_params_map;
 use crate::api::get_node_ranks;
 use crate::models::*;
 use crate::components::common::*;
+use crate::components::stack_view::StackAnalysisPanel;
 
 /// Level 3: Rank 详情视图
 #[component]
@@ -34,6 +35,9 @@ pub fn Level3View() -> impl IntoView {
                                 <div class="level3-content">
                                     // 节点概览
                                     <NodeOverview node=response.node.clone() />
+
+                                    // 堆栈分析面板
+                                    <StackAnalysisPanel node_ip=response.node.node_ip.clone() />
 
                                     // Rank 列表
                                     <section class="ranks-section">

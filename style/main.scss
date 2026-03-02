@@ -472,3 +472,236 @@ section {
         font-size: 1.5rem;
     }
 }
+
+// ============ 堆栈分析样式 ============
+
+.stack-analysis {
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+
+    .stack-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+
+        h2 {
+            margin-bottom: 0;
+        }
+    }
+
+    .collect-btn {
+        padding: 8px 20px;
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.2s;
+
+        &:hover:not(:disabled) {
+            opacity: 0.9;
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    }
+
+    .stack-placeholder {
+        padding: 32px;
+        text-align: center;
+        color: $color-text-muted;
+
+        .hint {
+            font-size: 0.875rem;
+            margin-top: 8px;
+            opacity: 0.7;
+        }
+    }
+
+    .stack-content {
+        .stack-info {
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid $color-border;
+
+            .stack-meta {
+                font-size: 0.875rem;
+                color: $color-text-muted;
+            }
+        }
+    }
+}
+
+// 合并堆栈树
+.merged-stack-tree {
+    margin-bottom: 24px;
+
+    h3 {
+        font-size: 0.875rem;
+        color: $color-text-muted;
+        margin-bottom: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .stack-tree-container {
+        background: $color-bg;
+        border: 1px solid $color-border;
+        border-radius: 6px;
+        padding: 12px;
+        overflow-x: auto;
+    }
+}
+
+.stack-frame {
+    border-left: 3px solid transparent;
+    padding-left: 8px;
+    margin-bottom: 2px;
+
+    &.coverage-full {
+        border-left-color: $color-healthy;
+    }
+    &.coverage-partial {
+        border-left-color: $color-warning;
+    }
+    &.coverage-rare {
+        border-left-color: $color-critical;
+    }
+
+    .frame-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 8px;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 4px;
+        margin-bottom: 2px;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+    }
+
+    .frame-name {
+        font-family: 'Fira Code', 'Monaco', monospace;
+        font-size: 0.85rem;
+        color: $color-text;
+    }
+
+    .frame-stats {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .rank-count {
+        font-size: 0.75rem;
+        color: $color-text-muted;
+        font-family: monospace;
+    }
+
+    .coverage-badge {
+        font-size: 0.7rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+
+        &.coverage-full {
+            background: rgba($color-healthy, 0.2);
+            color: $color-healthy;
+        }
+        &.coverage-partial {
+            background: rgba($color-warning, 0.2);
+            color: $color-warning;
+        }
+        &.coverage-rare {
+            background: rgba($color-critical, 0.2);
+            color: $color-critical;
+        }
+    }
+
+    .frame-children {
+        margin-left: 16px;
+        padding-left: 8px;
+        border-left: 1px dashed $color-border;
+    }
+}
+
+// 原始堆栈详情
+.raw-stacks-section {
+    margin-top: 16px;
+
+    summary {
+        cursor: pointer;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 6px;
+        font-size: 0.875rem;
+        color: $color-text-muted;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+    }
+
+    .raw-stacks-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+    }
+}
+
+.rank-stack-card {
+    background: $color-bg;
+    border: 1px solid $color-border;
+    border-radius: 6px;
+    overflow: hidden;
+
+    .rank-stack-header {
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.03);
+        border-bottom: 1px solid $color-border;
+
+        .rank-id {
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+    }
+
+    .callstack {
+        padding: 8px 0;
+        font-family: 'Fira Code', 'Monaco', monospace;
+        font-size: 0.75rem;
+        max-height: 200px;
+        overflow-y: auto;
+
+        .stack-line {
+            display: flex;
+            padding: 2px 12px;
+
+            &:hover {
+                background: rgba(255, 255, 255, 0.03);
+            }
+
+            .line-num {
+                color: $color-text-muted;
+                min-width: 24px;
+                text-align: right;
+                margin-right: 12px;
+                opacity: 0.6;
+            }
+
+            .frame-text {
+                color: $color-text;
+            }
+        }
+    }
+}
