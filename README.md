@@ -1,110 +1,115 @@
-<picture>
-    <source srcset="https://raw.githubusercontent.com/leptos-rs/leptos/main/docs/logos/Leptos_logo_Solid_White.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/leptos-rs/leptos/main/docs/logos/Leptos_logo_RGB.svg" alt="Leptos Logo">
-</picture>
+# Super Training Collector
 
-# Leptos Axum Starter Template
+基于 Rust + Leptos 构建的千卡级分布式训练任务 Web 监控面板。
 
-This is a template for use with the [Leptos](https://github.com/leptos-rs/leptos) web framework and the [cargo-leptos](https://github.com/leptos-rs/cargo-leptos) tool using [Axum](https://github.com/tokio-rs/axum).
+## 功能特性
 
-## Creating your template repo
+- **分层视图**：采用「全局 → 节点 → Rank」三级下钻架构
+- **热力编码**：通过颜色直观展示健康状态（绿色正常/黄色警告/红色故障）
+- **实时监控**：追踪 Step Time、GPU 利用率、NCCL 延迟等关键指标
+- **高效定位**：聚焦问题节点，快速定位千卡规模下的性能瓶颈
 
-If you don't have `cargo-leptos` installed you can install it with
+## 视图层级
+
+| 层级 | 视图 | 描述 |
+|------|------|------|
+| Level 1 | 全局态势 | 健康分布、全局 KPI、拓扑热力图 |
+| Level 2 | 节点列表 | 节点性能表格，支持排序/筛选 |
+| Level 3 | 节点详情 | 单节点 Rank 级别指标详情 |
+
+## 技术栈
+
+- **框架**: [Leptos](https://leptos.dev/) 0.8 (全栈 Rust Web 框架)
+- **后端**: Axum
+- **前端**: WebAssembly (wasm32-unknown-unknown)
+- **样式**: SCSS
+
+## 环境要求
+
+- Rust nightly toolchain
+- `wasm32-unknown-unknown` target
+- `cargo-leptos` CLI 工具
+
+## 快速开始
+
+### 1. 安装依赖
 
 ```bash
-cargo install cargo-leptos --locked
+# 安装 Rust nightly
+rustup toolchain install nightly
+rustup default nightly
+
+# 添加 WebAssembly target
+rustup target add wasm32-unknown-unknown
+
+# 安装 cargo-leptos
+cargo install cargo-leptos
 ```
 
-Then run
-```bash
-cargo leptos new --git https://github.com/leptos-rs/start-axum-workspace/
-```
-
-to generate a new project template.
-
-```bash
-cd super-trainning-collector
-```
-
-to go to your newly created project.
-Feel free to explore the project structure, but the best place to start with your application code is in `app/src/lib.rs`.
-Additionally, Cargo.toml may need updating as new versions of the dependencies are released, especially if things are not working after a `cargo update`.
-
-### Islands support
-
-Note that for islands to work correctly, you need to have a `use app;` in your frontend `lib.rs` otherwise rustc / wasm_bindgen gets confused.
-To prevent clippy from complaining, at the top of the `frontend/src/lib.rs` file place:
-```rust
-#[allow(clippy::single_component_path_imports)]
-#[allow(unused_imports)]
-use app;
-```
-
-## Running your project
+### 2. 开发模式
 
 ```bash
 cargo leptos watch
 ```
 
-## Installing Additional Tools
+访问 http://127.0.0.1:3000
 
-By default, `cargo-leptos` uses `nightly` Rust, `cargo-generate`, and `sass`. If you run into any trouble, you may need to install one or more of these tools.
+### 3. 生产构建
 
-1. `rustup toolchain install nightly --allow-downgrade` - make sure you have Rust nightly
-2. `rustup default nightly` - setup nightly as default, or you can use rust-toolchain file later on
-3. `rustup target add wasm32-unknown-unknown` - add the ability to compile Rust to WebAssembly
-4. `cargo install cargo-generate` - install `cargo-generate` binary (should be installed automatically in future)
-5. `npm install -g sass` - install `dart-sass` (should be optional in future
-
-## Compiling for Release
 ```bash
 cargo leptos build --release
 ```
 
-Will generate your server binary in target/server/release and your site package in target/site
+## 项目结构
 
-## Testing Your Project
-
-Cargo-leptos uses [Playwright](https://playwright.dev) as the end-to-end test tool.
-
-Prior to the first run of the end-to-end tests run Playwright must be installed.
-In the project's `end2end` directory run `npm install -D playwright @playwright/test` to install playwright and browser specific APIs.
-
-To run the tests during development in the project root run:
-```bash
-cargo leptos end-to-end
+```
+super-trainning-collector/
+├── app/                    # 共享应用代码 (组件、模型、API)
+│   └── src/
+│       ├── components/     # UI 组件
+│       │   ├── level1.rs   # 全局态势视图
+│       │   ├── level2.rs   # 节点列表视图
+│       │   ├── level3.rs   # 节点详情视图
+│       │   └── common.rs   # 通用组件
+│       ├── models.rs       # 数据模型定义
+│       ├── api.rs          # API 接口
+│       └── mock.rs         # Mock 数据
+├── frontend/               # 前端 WASM 入口
+├── server/                 # 后端服务入口
+├── style/                  # SCSS 样式
+├── public/                 # 静态资源
+└── end2end/                # E2E 测试
 ```
 
-To run tests for release in the project root run:
-```bash
-cargo leptos end-to-end --release
+## 数据模型
+
+### 核心指标
+
+- **Step Time**: 训练步骤耗时 (ms)
+- **GPU Utilization**: GPU 利用率 (%)
+- **NCCL Latency**: 集合通信延迟 (ms)
+- **Slow Ratio**: 慢 Rank 占比
+
+### 健康状态
+
+```rust
+pub enum HealthStatus {
+    Healthy,   // 正常
+    Warning,   // 性能下降
+    Critical,  // 故障
+}
 ```
-There are some examples tests are located in `end2end/tests` directory that pass tests with the sample Leptos app.
 
-A web-based report on tests is available by running `npx playwright show-report` in the `end2end` directory.
+## 配置
 
+主要配置位于 `Cargo.toml` 的 `[workspace.metadata.leptos]` 部分：
 
-## Executing a Server on a Remote Machine Without the Toolchain
-After running a `cargo leptos build --release` the minimum files needed are:
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `site-addr` | `127.0.0.1:3000` | 服务监听地址 |
+| `reload-port` | `3001` | 热重载端口 |
+| `style-file` | `style/main.scss` | 样式入口文件 |
 
-1. The server binary located in `target/server/release`
-2. The `site` directory and all files within located in `target/site`
+## License
 
-Copy these files to your remote server. The directory structure should be:
-```text
-super-trainning-collector
-site/
-```
-Set the following environment variables (updating for your project as needed):
-```text
-LEPTOS_OUTPUT_NAME="super-trainning-collector"
-LEPTOS_SITE_ROOT="site"
-LEPTOS_SITE_PKG_DIR="pkg"
-LEPTOS_SITE_ADDR="127.0.0.1:3000"
-LEPTOS_RELOAD_PORT="3001"
-```
-Finally, run the server binary.
-
-## Licensing
-
-This template itself is released under the Unlicense. You should replace the LICENSE for your own application with an appropriate license if you plan to release it publicly.
+[Unlicense](LICENSE) - Public Domain
