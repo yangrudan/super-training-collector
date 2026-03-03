@@ -9,6 +9,7 @@ pub mod models;
 pub mod mock;
 pub mod api;
 pub mod components;
+pub mod adapter;
 
 use components::{Level1View, Level2View, Level3View};
 

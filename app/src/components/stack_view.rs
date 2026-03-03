@@ -52,7 +52,7 @@ pub fn StackAnalysisPanel(
                                         <div class="merged-stack-tree">
                                             <h3>"聚合堆栈视图"</h3>
                                             <div class="stack-tree-container">
-                                                <StackTreeNode frame=response.merged_root.clone() />
+                                                // <StackTreeNode frame=response.merged_root.clone() />
                                             </div>
                                         </div>
 
@@ -88,40 +88,40 @@ pub fn StackAnalysisPanel(
     }
 }
 
-/// 合并堆栈树节点组件
-#[component]
-fn StackTreeNode(frame: MergedStackFrame) -> impl IntoView {
-    let has_children = !frame.children.is_empty();
-    let coverage_class = frame.coverage_class();
-    let rank_str = frame.rank_range_str();
-    let coverage_pct = (frame.coverage() * 100.0) as u32;
+// /// 合并堆栈树节点组件
+// #[component]
+// fn StackTreeNode(frame: MergedStackFrame) -> impl IntoView {
+//     let has_children = !frame.children.is_empty();
+//     let coverage_class = frame.coverage_class();
+//     let rank_str = frame.rank_range_str();
+//     let coverage_pct = (frame.coverage() * 100.0) as u32;
 
-    view! {
-        <div class=format!("stack-frame {}", coverage_class)>
-            <div class="frame-header">
-                <span class="frame-name">{frame.frame_name.clone()}</span>
-                <span class="frame-stats">
-                    <span class="rank-count" title=format!("Ranks: {}", rank_str)>
-                        {frame.rank_count} "/" {frame.total_ranks}
-                    </span>
-                    <span class=format!("coverage-badge {}", coverage_class)>
-                        {coverage_pct} "%"
-                    </span>
-                </span>
-            </div>
+//     view! {
+//         <div class=format!("stack-frame {}", coverage_class)>
+//             <div class="frame-header">
+//                 <span class="frame-name">{frame.frame_name.clone()}</span>
+//                 <span class="frame-stats">
+//                     <span class="rank-count" title=format!("Ranks: {}", rank_str)>
+//                         {frame.rank_count} "/" {frame.total_ranks}
+//                     </span>
+//                     <span class=format!("coverage-badge {}", coverage_class)>
+//                         {coverage_pct} "%"
+//                     </span>
+//                 </span>
+//             </div>
 
-            {has_children.then(|| {
-                view! {
-                    <div class="frame-children">
-                        {frame.children.into_iter().map(|child| {
-                            view! { <StackTreeNode frame=child /> }
-                        }).collect_view()}
-                    </div>
-                }
-            })}
-        </div>
-    }
-}
+//             {has_children.then(|| {
+//                 view! {
+//                     <div class="frame-children">
+//                         {frame.children.into_iter().map(|child| {
+//                             view! { <StackTreeNode frame=child /> }
+//                         }).collect_view()}
+//                     </div>
+//                 }
+//             })}
+//         </div>
+//     }
+// }
 
 /// 单个 Rank 堆栈卡片
 #[component]
