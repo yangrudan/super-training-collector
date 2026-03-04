@@ -1,6 +1,15 @@
 use reqwest::Error;
 use serde::{Deserialize, Serialize};
+use crate::models::{RankMetrics, NodeMetrics, GlobalMetrics, HealthStatus};
+
+#[cfg(feature = "ssr")]
 use tokio::runtime::Runtime;
+
+#[cfg(feature = "ssr")]
+use std::collections::HashMap;
+
+#[cfg(feature = "ssr")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct NodeInfo {
@@ -24,6 +33,7 @@ pub async fn get_node_info(url: &str) -> Result<Vec<NodeInfo>, Error> {
     Ok(data)
 }
 
+#[cfg(feature = "ssr")]
 fn main() {
     let rt = Runtime::new().unwrap();
     let url = "http://10.107.204.71:9933/apis/nodes";
@@ -40,6 +50,7 @@ fn main() {
     }
 }
 
+#[cfg(feature = "ssr")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +80,39 @@ mod tests {
             },
             Err(e) => {
                 panic!("Failed to get node info: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_real_data_conversion() {
+        let result = get_real_training_data().await;
+        
+        match result {
+            Ok((ranks, nodes)) => {
+                println!("Converted {} ranks into {} nodes", ranks.len(), nodes.len());
+                
+                // 验证数据转换
+                assert!(!ranks.is_empty());
+                assert!(!nodes.is_empty());
+                
+                // 验证rank数据
+                for rank in &ranks {
+                    assert!(rank.rank_id < 1000); // 合理的rank ID
+                    assert!(!rank.node_ip.is_empty());
+                    assert!(matches!(rank.status, HealthStatus::Healthy | HealthStatus::Warning | HealthStatus::Critical));
+                    println!("Rank {}: IP={}, Status={:?}", rank.rank_id, rank.node_ip, rank.status);
+                }
+                
+                // 验证node数据
+                for node in &nodes {
+                    assert!(!node.node_ip.is_empty());
+                    assert!(node.rank_count > 0);
+                    println!("Node {}: {} ranks, status={:?}", node.node_ip, node.rank_count, node.status);
+                }
+            },
+            Err(e) => {
+                panic!("Failed to get real training data: {}", e);
             }
         }
     }
@@ -112,5 +156,217 @@ mod tests {
             },
             Err(e) => panic!("Test failed with error: {}", e),
         }
+    }
+}
+
+#[cfg(feature = "ssr")]
+/// 从NodeInfo地址中提取IP
+fn extract_ip_from_addr(addr: &str) -> String {
+    // 从 "0.0.0.0:9933" 中提取 IP，如果是 0.0.0.0 则使用 host 字段
+    let ip = addr.split(':').next().unwrap_or(addr).to_string();
+    if ip == "0.0.0.0" {
+        // 如果地址是 0.0.0.0，这通常意味着服务绑定到所有接口
+        // 我们需要使用真实的节点IP，暂时返回一个占位符
+        "10.107.204.71".to_string() // 使用API服务器的IP作为节点IP
+    } else {
+        ip
+    }
+}
+
+#[cfg(feature = "ssr")]
+/// 将status字符串转换为HealthStatus枚举
+fn convert_status(status: &str) -> HealthStatus {
+    match status.to_lowercase().as_str() {
+        "running" => HealthStatus::Healthy,
+        "error" | "failed" | "critical" => HealthStatus::Critical,
+        _ => HealthStatus::Warning,
+    }
+}
+
+#[cfg(feature = "ssr")]
+
+#[cfg(feature = "ssr")]
+/// 将NodeInfo转换为RankMetrics
+pub fn convert_node_info_to_rank_metrics(node_info: NodeInfo) -> RankMetrics {
+    RankMetrics {
+        rank_id: node_info.rank,
+        local_rank: node_info.local_rank as u8,
+        node_ip: extract_ip_from_addr(&node_info.addr),
+        
+        // 基础状态信息
+        status: convert_status(&node_info.status),
+        last_heartbeat: node_info.timestamp / 1_000_000, // 微秒转秒
+        
+        // 使用默认值的性能指标（后续集成真实API时替换）
+        step_time_ms: 100.0,          // 默认步时间
+        step_time_ratio: 1.0,         // 默认比率
+        gpu_utilization: 90.0,        // 默认GPU利用率
+        gpu_memory_used_gb: 16.0,     // 默认显存占用
+        gpu_memory_total_gb: 32.0,    // 默认显存总量
+        nccl_latency_ms: 5.0,         // 默认NCCL延迟
+        nccl_bandwidth_gbps: 100.0,   // 默认NCCL带宽
+        current_step: 0,              // 默认训练步数
+        error_message: None,          // 默认无错误
+    }
+}
+
+#[cfg(feature = "ssr")]
+/// 从RankMetrics聚合生成NodeMetrics
+pub fn aggregate_ranks_to_node_metrics(node_ip: &str, ranks: &[RankMetrics]) -> Option<NodeMetrics> {
+    if ranks.is_empty() {
+        return None;
+    }
+
+    let hostname = ranks[0].node_ip.clone(); // 使用IP作为hostname的临时方案
+    // 修复rack_id计算，避免溢出
+    let last_octet = node_ip.split('.').last()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
+    let rack_id = format!("rack-{}", last_octet / 4 + 1);
+    
+    let rank_count = ranks.len() as u8;
+    let healthy_count = ranks.iter().filter(|r| r.status == HealthStatus::Healthy).count() as u8;
+    let warning_count = ranks.iter().filter(|r| r.status == HealthStatus::Warning).count() as u8;
+    let critical_count = ranks.iter().filter(|r| r.status == HealthStatus::Critical).count() as u8;
+
+    let slow_ratio = warning_count as f32 / rank_count as f32;
+    let avg_step_time_ms = ranks.iter().map(|r| r.step_time_ms).sum::<f64>() / rank_count as f64;
+    
+    let mut step_times: Vec<f64> = ranks.iter().map(|r| r.step_time_ms).collect();
+    step_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p50_step_time_ms = step_times[step_times.len() / 2];
+    let p99_step_time_ms = step_times[(step_times.len() * 99 / 100).min(step_times.len() - 1)];
+    
+    let avg_gpu_utilization = ranks.iter().map(|r| r.gpu_utilization).sum::<f32>() / rank_count as f32;
+    let avg_nccl_latency_ms = ranks.iter().map(|r| r.nccl_latency_ms).sum::<f64>() / rank_count as f64;
+
+    let status = if critical_count > 0 {
+        HealthStatus::Critical
+    } else if warning_count > rank_count / 2 {
+        HealthStatus::Warning
+    } else {
+        HealthStatus::Healthy
+    };
+
+    let last_update = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    Some(NodeMetrics {
+        node_ip: node_ip.to_string(),
+        hostname,
+        rack_id,
+        rank_count,
+        healthy_count,
+        warning_count,
+        critical_count,
+        slow_ratio,
+        avg_step_time_ms,
+        p50_step_time_ms,
+        p99_step_time_ms,
+        avg_gpu_utilization,
+        avg_nccl_latency_ms,
+        status,
+        last_update,
+    })
+}
+
+#[cfg(feature = "ssr")]
+/// 获取真实数据并转换为应用所需格式
+pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetrics>), Error> {
+    let url = "http://10.107.204.71:9933/apis/nodes";
+    let node_infos = get_node_info(url).await?;
+    
+    // 转换为RankMetrics
+    let ranks: Vec<RankMetrics> = node_infos
+        .into_iter()
+        .map(convert_node_info_to_rank_metrics)
+        .collect();
+    
+    // 按节点IP分组并聚合为NodeMetrics
+    let mut nodes_map: HashMap<String, Vec<RankMetrics>> = HashMap::new();
+    for rank in &ranks {
+        nodes_map.entry(rank.node_ip.clone())
+            .or_insert_with(Vec::new)
+            .push(rank.clone());
+    }
+    
+    let nodes: Vec<NodeMetrics> = nodes_map
+        .iter()
+        .filter_map(|(node_ip, ranks)| aggregate_ranks_to_node_metrics(node_ip, ranks))
+        .collect();
+    
+    Ok((ranks, nodes))
+}
+
+#[cfg(feature = "ssr")]
+/// 生成全局聚合指标
+pub fn generate_global_metrics_from_real_data(nodes: &[NodeMetrics], ranks: &[RankMetrics]) -> GlobalMetrics {
+    let total_nodes = nodes.len() as u16;
+    let total_ranks = ranks.len() as u16;
+
+    let healthy_nodes = nodes.iter().filter(|n| n.status == HealthStatus::Healthy).count() as u16;
+    let warning_nodes = nodes.iter().filter(|n| n.status == HealthStatus::Warning).count() as u16;
+    let critical_nodes = nodes.iter().filter(|n| n.status == HealthStatus::Critical).count() as u16;
+
+    let healthy_ranks = ranks.iter().filter(|r| r.status == HealthStatus::Healthy).count() as u16;
+    let warning_ranks = ranks.iter().filter(|r| r.status == HealthStatus::Warning).count() as u16;
+    let critical_ranks = ranks.iter().filter(|r| r.status == HealthStatus::Critical).count() as u16;
+
+    let mut all_step_times: Vec<f64> = ranks.iter().map(|r| r.step_time_ms).collect();
+    all_step_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let global_p50_step_time_ms = if !all_step_times.is_empty() {
+        all_step_times[all_step_times.len() / 2]
+    } else {
+        100.0
+    };
+    
+    let global_p99_step_time_ms = if !all_step_times.is_empty() {
+        all_step_times[(all_step_times.len() * 99 / 100).min(all_step_times.len() - 1)]
+    } else {
+        120.0
+    };
+
+    let global_avg_gpu_utilization = if total_ranks > 0 {
+        ranks.iter().map(|r| r.gpu_utilization).sum::<f32>() / total_ranks as f32
+    } else {
+        0.0
+    };
+
+    let slow_node_count = nodes.iter().filter(|n| n.slow_ratio > 0.1).count();
+    let slow_node_ratio = if total_nodes > 0 {
+        slow_node_count as f32 / total_nodes as f32
+    } else {
+        0.0
+    };
+
+    let current_step = ranks.iter().map(|r| r.current_step).max().unwrap_or(0);
+    let steps_per_second = 10.0; // 默认值
+    let estimated_remaining_hours = Some(1.5); // 默认值
+
+    let last_update = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    GlobalMetrics {
+        total_nodes,
+        total_ranks,
+        healthy_nodes,
+        warning_nodes,
+        critical_nodes,
+        healthy_ranks,
+        warning_ranks,
+        critical_ranks,
+        global_p50_step_time_ms,
+        global_p99_step_time_ms,
+        global_avg_gpu_utilization,
+        slow_node_ratio,
+        current_step,
+        steps_per_second,
+        estimated_remaining_hours,
+        last_update,
     }
 }
