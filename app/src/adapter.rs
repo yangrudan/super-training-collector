@@ -1,9 +1,9 @@
-use reqwest::Error;
-use serde::{Deserialize, Serialize};
-use crate::models::{RankMetrics, NodeMetrics, GlobalMetrics, HealthStatus};
-
 #[cfg(feature = "ssr")]
-use tokio::runtime::Runtime;
+use reqwest::Error;
+#[cfg(feature = "ssr")]
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "ssr")]
+use crate::models::{RankMetrics, NodeMetrics, GlobalMetrics, HealthStatus};
 
 #[cfg(feature = "ssr")]
 use std::collections::HashMap;
@@ -11,6 +11,7 @@ use std::collections::HashMap;
 #[cfg(feature = "ssr")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "ssr")]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct NodeInfo {
     pub host: String,
@@ -27,27 +28,11 @@ pub struct NodeInfo {
     pub timestamp: u64,
 }
 
+#[cfg(feature = "ssr")]
 pub async fn get_node_info(url: &str) -> Result<Vec<NodeInfo>, Error> {
     let resp = reqwest::get(url).await?;
     let data: Vec<NodeInfo> = resp.json().await?;
     Ok(data)
-}
-
-#[cfg(feature = "ssr")]
-fn main() {
-    let rt = Runtime::new().unwrap();
-    let url = "http://10.107.204.71:9933/apis/nodes";
-    
-    let result = rt.block_on(get_node_info(url));
-    match result {
-        Ok(nodes) => {
-            for node in nodes {
-                println!("Host: {}, Rank: {}, Status: {}, Address: {}", 
-                    node.host, node.rank, node.status, node.addr);
-            }
-        },
-        Err(e) => println!("Error: {}", e),
-    }
 }
 
 #[cfg(feature = "ssr")]

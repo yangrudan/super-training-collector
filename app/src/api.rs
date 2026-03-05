@@ -1,4 +1,5 @@
 use crate::models::*;
+#[cfg(feature = "ssr")]
 use crate::mock::MockDataStore;
 #[cfg(feature = "ssr")]
 use crate::adapter::{get_real_training_data, generate_global_metrics_from_real_data};
