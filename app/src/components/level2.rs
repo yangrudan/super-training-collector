@@ -1,20 +1,13 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-use crate::api::get_nodes;
+use crate::api::{get_nodes, get_config_nodes, get_node_flamegraph};
 use crate::models::*;
 use crate::components::common::*;
 
-/// Level 2: 节点聚合视图
+/// Level 2: 节点聚合视图 (带 Tab)
 #[component]
 pub fn Level2View() -> impl IntoView {
-    let sort_field = RwSignal::new(SortField::SlowRatio);
-    let sort_order = RwSignal::new(SortOrder::Desc);
-    let status_filter = RwSignal::new(StatusFilter::All);
-
-    let nodes_resource = Resource::new(
-        move || (sort_field.get(), sort_order.get(), status_filter.get()),
-        |(field, order, filter)| get_nodes(Some(field), Some(order), Some(filter)),
-    );
+    let active_tab = RwSignal::new(0u8); // 0 = 节点列表, 1 = 全部堆栈
 
     view! {
         <div class="level2-view">
@@ -25,6 +18,43 @@ pub fn Level2View() -> impl IntoView {
 
             <h1 class="page-title">"节点状态监控"</h1>
 
+            // Tab 导航
+            <div class="tab-bar">
+                <button
+                    class=move || if active_tab.get() == 0 { "tab-btn tab-btn-active" } else { "tab-btn" }
+                    on:click=move |_| active_tab.set(0)
+                >"节点列表"</button>
+                <button
+                    class=move || if active_tab.get() == 1 { "tab-btn tab-btn-active" } else { "tab-btn" }
+                    on:click=move |_| active_tab.set(1)
+                >"全部 Rank 堆栈"</button>
+            </div>
+
+            // Tab 内容
+            <Show when=move || active_tab.get() == 0>
+                <NodesTableTab />
+            </Show>
+            <Show when=move || active_tab.get() == 1>
+                <AllStacksTab />
+            </Show>
+        </div>
+    }
+}
+
+/// Tab 1: 节点表格
+#[component]
+fn NodesTableTab() -> impl IntoView {
+    let sort_field = RwSignal::new(SortField::SlowRatio);
+    let sort_order = RwSignal::new(SortOrder::Desc);
+    let status_filter = RwSignal::new(StatusFilter::All);
+
+    let nodes_resource = Resource::new(
+        move || (sort_field.get(), sort_order.get(), status_filter.get()),
+        |(field, order, filter)| get_nodes(Some(field), Some(order), Some(filter)),
+    );
+
+    view! {
+        <div>
             // 筛选栏
             <div class="filter-bar">
                 <div class="filter-group">
@@ -124,6 +154,113 @@ pub fn Level2View() -> impl IntoView {
                     })
                 }}
             </Suspense>
+        </div>
+    }
+}
+
+/// Tab 2: 全部节点 Rank 堆栈 (从 config/flamegraph.json 加载)
+#[component]
+fn AllStacksTab() -> impl IntoView {
+    let config_resource = Resource::new(|| (), |_| get_config_nodes());
+
+    view! {
+        <div class="all-stacks-tab">
+            <Suspense fallback=move || view! { <Loading /> }>
+                {move || {
+                    config_resource.get().map(|result| {
+                        match result {
+                            Ok(nodes) => view! {
+                                <div class="all-stacks-grid">
+                                    {nodes.into_iter().map(|(ip, urls)| {
+                                        view! { <NodeFlamegraphPanel ip=ip urls=urls /> }
+                                    }).collect_view()}
+                                </div>
+                            }.into_any(),
+                            Err(e) => view! {
+                                <ErrorDisplay message=e.to_string() />
+                            }.into_any(),
+                        }
+                    })
+                }}
+            </Suspense>
+        </div>
+    }
+}
+
+/// 单节点火焰图面板 (懒加载)
+#[component]
+fn NodeFlamegraphPanel(ip: String, urls: Vec<String>) -> impl IntoView {
+    let (loading, set_loading) = signal(false);
+    let flamegraph_svg: RwSignal<Option<String>> = RwSignal::new(None);
+    let error_msg: RwSignal<Option<String>> = RwSignal::new(None);
+
+    let ip_clone = ip.clone();
+    let on_generate = move |_| {
+        let ip = ip_clone.clone();
+        set_loading.set(true);
+        flamegraph_svg.set(None);
+        error_msg.set(None);
+        leptos::task::spawn_local(async move {
+            match get_node_flamegraph(ip).await {
+                Ok(svg) => {
+                    flamegraph_svg.set(Some(svg));
+                }
+                Err(e) => {
+                    error_msg.set(Some(e.to_string()));
+                }
+            }
+            set_loading.set(false);
+        });
+    };
+
+    let rank_count = urls.len();
+
+    view! {
+        <div class="node-flamegraph-panel">
+            <div class="node-fg-header">
+                <div class="node-fg-info">
+                    <span class="node-ip">{ip.clone()}</span>
+                    <span class="rank-count-badge">
+                        {rank_count} " 个 Rank"
+                    </span>
+                </div>
+                <button
+                    class="collect-btn"
+                    on:click=on_generate
+                    disabled=move || loading.get()
+                >
+                    {move || if loading.get() { "生成中..." } else { "生成火焰图" }}
+                </button>
+            </div>
+
+            // Rank URL 列表
+            <div class="rank-urls">
+                {urls.into_iter().enumerate().map(|(i, url)| {
+                    view! {
+                        <div class="rank-url-item">
+                            <span class="rank-label">"Rank " {i}</span>
+                            <span class="rank-url-text">{url}</span>
+                        </div>
+                    }
+                }).collect_view()}
+            </div>
+
+            // 错误信息
+            <Show when=move || error_msg.get().is_some()>
+                <div class="stack-error">
+                    {move || error_msg.get().unwrap_or_default()}
+                </div>
+            </Show>
+
+            // 火焰图 SVG
+            <Show when=move || flamegraph_svg.get().is_some()>
+                <div class="flamegraph-container">
+                    <div
+                        class="flamegraph-svg"
+                        inner_html=move || flamegraph_svg.get().unwrap_or_default()
+                    />
+                </div>
+            </Show>
         </div>
     }
 }

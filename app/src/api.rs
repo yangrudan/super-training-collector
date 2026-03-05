@@ -117,6 +117,19 @@ pub async fn get_topology() -> Result<Topology, ServerFnError> {
     Ok(store.topology)
 }
 
+/// 从 config/flamegraph.json 获取所有配置节点 IP 及其 rank URL 列表
+#[server(GetConfigNodes)]
+pub async fn get_config_nodes() -> Result<Vec<(String, Vec<String>)>, ServerFnError> {
+    use crate::flamegraph::load_flamegraph_config;
+
+    let config = load_flamegraph_config("./config/flamegraph.json")
+        .map_err(|e| ServerFnError::new(format!("Failed to load flamegraph config: {}", e)))?;
+
+    let mut nodes: Vec<(String, Vec<String>)> = config.into_iter().collect();
+    nodes.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(nodes)
+}
+
 /// 获取指定节点的堆栈火焰图 SVG (通过 config/flamegraph.json 配置 URL)
 #[server(GetNodeFlamegraph)]
 pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
