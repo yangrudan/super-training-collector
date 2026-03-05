@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-use crate::api::{get_nodes, get_config_nodes, get_node_flamegraph};
+use crate::api::{get_nodes, get_all_nodes_callstack_info, get_node_flamegraph};
 use crate::models::*;
 use crate::components::common::*;
 
@@ -158,21 +158,29 @@ fn NodesTableTab() -> impl IntoView {
     }
 }
 
-/// Tab 2: 全部节点 Rank 堆栈 (从 config/flamegraph.json 加载)
+/// Tab 2: 全部节点 Rank 堆栈
+/// IP 来自训练数据，端口由 config/collector.json 的 callstack_base_port 起始递增
 #[component]
 fn AllStacksTab() -> impl IntoView {
-    let config_resource = Resource::new(|| (), |_| get_config_nodes());
+    // (ip, rank_count, base_port)
+    let info_resource = Resource::new(|| (), |_| get_all_nodes_callstack_info());
 
     view! {
         <div class="all-stacks-tab">
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || {
-                    config_resource.get().map(|result| {
+                    info_resource.get().map(|result| {
                         match result {
                             Ok(nodes) => view! {
                                 <div class="all-stacks-grid">
-                                    {nodes.into_iter().map(|(ip, urls)| {
-                                        view! { <NodeFlamegraphPanel ip=ip urls=urls /> }
+                                    {nodes.into_iter().map(|(ip, rank_count, base_port)| {
+                                        view! {
+                                            <NodeFlamegraphPanel
+                                                ip=ip
+                                                rank_count=rank_count
+                                                base_port=base_port
+                                            />
+                                        }
                                     }).collect_view()}
                                 </div>
                             }.into_any(),
@@ -187,9 +195,9 @@ fn AllStacksTab() -> impl IntoView {
     }
 }
 
-/// 单节点火焰图面板 (懒加载)
+/// 单节点火焰图面板 (懒加载，按需生成)
 #[component]
-fn NodeFlamegraphPanel(ip: String, urls: Vec<String>) -> impl IntoView {
+fn NodeFlamegraphPanel(ip: String, rank_count: u8, base_port: u16) -> impl IntoView {
     let (loading, set_loading) = signal(false);
     let flamegraph_svg: RwSignal<Option<String>> = RwSignal::new(None);
     let error_msg: RwSignal<Option<String>> = RwSignal::new(None);
@@ -202,18 +210,12 @@ fn NodeFlamegraphPanel(ip: String, urls: Vec<String>) -> impl IntoView {
         error_msg.set(None);
         leptos::task::spawn_local(async move {
             match get_node_flamegraph(ip).await {
-                Ok(svg) => {
-                    flamegraph_svg.set(Some(svg));
-                }
-                Err(e) => {
-                    error_msg.set(Some(e.to_string()));
-                }
+                Ok(svg) => flamegraph_svg.set(Some(svg)),
+                Err(e) => error_msg.set(Some(e.to_string())),
             }
             set_loading.set(false);
         });
     };
-
-    let rank_count = urls.len();
 
     view! {
         <div class="node-flamegraph-panel">
@@ -233,9 +235,11 @@ fn NodeFlamegraphPanel(ip: String, urls: Vec<String>) -> impl IntoView {
                 </button>
             </div>
 
-            // Rank URL 列表
+            // 各 Rank 端口信息
             <div class="rank-urls">
-                {urls.into_iter().enumerate().map(|(i, url)| {
+                {(0..rank_count).map(|i| {
+                    let port = base_port + i as u16;
+                    let url = format!("http://{}:{}/apis/pythonext/callstack", ip, port);
                     view! {
                         <div class="rank-url-item">
                             <span class="rank-label">"Rank " {i}</span>

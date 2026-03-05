@@ -117,30 +117,49 @@ pub async fn get_topology() -> Result<Topology, ServerFnError> {
     Ok(store.topology)
 }
 
-/// 从 config/flamegraph.json 获取所有配置节点 IP 及其 rank URL 列表
-#[server(GetConfigNodes)]
-pub async fn get_config_nodes() -> Result<Vec<(String, Vec<String>)>, ServerFnError> {
-    use crate::flamegraph::load_flamegraph_config;
+/// 从 config/collector.json 获取所有节点及其 Rank URL 列表 (IP 来自训练数据, 端口自动递增)
+#[server(GetAllNodesCallstackInfo)]
+pub async fn get_all_nodes_callstack_info() -> Result<Vec<(String, u8, u16)>, ServerFnError> {
+    use crate::flamegraph::load_collector_config;
 
-    let config = load_flamegraph_config("./config/flamegraph.json")
-        .map_err(|e| ServerFnError::new(format!("Failed to load flamegraph config: {}", e)))?;
+    let config = load_collector_config("./config/collector.json")
+        .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
-    let mut nodes: Vec<(String, Vec<String>)> = config.into_iter().collect();
-    nodes.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(nodes)
+    let (_, nodes) = get_real_training_data().await
+        .unwrap_or_else(|_| {
+            let store = MockDataStore::new();
+            (vec![], store.nodes)
+        });
+
+    let mut result: Vec<(String, u8, u16)> = nodes
+        .into_iter()
+        .map(|n| (n.node_ip, n.rank_count, config.callstack_base_port))
+        .collect();
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result)
 }
 
-/// 获取指定节点的堆栈火焰图 SVG (通过 config/flamegraph.json 配置 URL)
+/// 获取指定节点的堆栈火焰图 SVG (端口从 config/collector.json 自动推算)
 #[server(GetNodeFlamegraph)]
 pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
-    use crate::flamegraph::{collect_and_generate_flamegraph, load_flamegraph_config};
+    use crate::flamegraph::{collect_and_generate_flamegraph, load_collector_config, build_callstack_urls};
 
-    let config = load_flamegraph_config("./config/flamegraph.json")
-        .map_err(|e| ServerFnError::new(format!("Failed to load flamegraph config: {}", e)))?;
+    let config = load_collector_config("./config/collector.json")
+        .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
-    let urls = config.get(&ip)
-        .cloned()
-        .ok_or_else(|| ServerFnError::new(format!("No stack URLs configured for node {}", ip)))?;
+    // 获取该节点的 rank_count
+    let rank_count = match get_real_training_data().await {
+        Ok((_, nodes)) => nodes.into_iter()
+            .find(|n| n.node_ip == ip)
+            .map(|n| n.rank_count)
+            .unwrap_or(4),
+        Err(_) => {
+            let store = MockDataStore::new();
+            store.get_node_by_ip(&ip).map(|n| n.rank_count).unwrap_or(4)
+        }
+    };
+
+    let urls = build_callstack_urls(&ip, rank_count, config.callstack_base_port);
 
     let svg = collect_and_generate_flamegraph(&ip, urls).await
         .map_err(|e| ServerFnError::new(format!("Failed to generate flamegraph: {}", e)))?;

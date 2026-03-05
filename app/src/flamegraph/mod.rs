@@ -8,20 +8,30 @@ use stack_merger::merge_stacks;
 use process_data::process_callstacks;
 use flamegraph_generator::generate_flamegraph_svg;
 
-use std::collections::HashMap;
+use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 
-/// Config structure: maps node IP to a list of stack endpoint URLs.
-/// Loaded from `config/flamegraph.json`.
-pub type FlamegraphConfig = HashMap<String, Vec<String>>;
+/// Simple collector config: only the base port for rank 0's callstack endpoint.
+#[derive(Deserialize)]
+pub struct CollectorConfig {
+    pub callstack_base_port: u16,
+}
 
-pub fn load_flamegraph_config(config_path: &str) -> Result<FlamegraphConfig, Box<dyn std::error::Error>> {
+/// Load collector config from `config/collector.json`.
+pub fn load_collector_config(config_path: &str) -> Result<CollectorConfig, Box<dyn std::error::Error>> {
     let mut file = File::open(config_path)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
-    let config: FlamegraphConfig = serde_json::from_str(&contents)?;
+    let config: CollectorConfig = serde_json::from_str(&contents)?;
     Ok(config)
+}
+
+/// Build callstack URLs for a node: one URL per rank, port = base_port + local_rank.
+pub fn build_callstack_urls(ip: &str, rank_count: u8, base_port: u16) -> Vec<String> {
+    (0..rank_count)
+        .map(|i| format!("http://{}:{}/apis/pythonext/callstack", ip, base_port + i as u16))
+        .collect()
 }
 
 /// Collect stacks for the given node, generate a flamegraph SVG, and return it as a String.
