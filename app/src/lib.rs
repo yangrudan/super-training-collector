@@ -10,6 +10,8 @@ pub mod mock;
 pub mod api;
 pub mod components;
 pub mod adapter;
+#[cfg(feature = "ssr")]
+pub mod flamegraph;
 
 use components::{Level1View, Level2View, Level3View};
 

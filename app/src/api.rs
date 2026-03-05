@@ -117,7 +117,23 @@ pub async fn get_topology() -> Result<Topology, ServerFnError> {
     Ok(store.topology)
 }
 
-/// 获取指定节点的堆栈数据 (用于火焰图)
+/// 获取指定节点的堆栈火焰图 SVG (通过 config/flamegraph.json 配置 URL)
+#[server(GetNodeFlamegraph)]
+pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
+    use crate::flamegraph::{collect_and_generate_flamegraph, load_flamegraph_config};
+
+    let config = load_flamegraph_config("./config/flamegraph.json")
+        .map_err(|e| ServerFnError::new(format!("Failed to load flamegraph config: {}", e)))?;
+
+    let urls = config.get(&ip)
+        .cloned()
+        .ok_or_else(|| ServerFnError::new(format!("No stack URLs configured for node {}", ip)))?;
+
+    let svg = collect_and_generate_flamegraph(&ip, urls).await
+        .map_err(|e| ServerFnError::new(format!("Failed to generate flamegraph: {}", e)))?;
+
+    Ok(svg)
+}
 #[server(GetNodeStacks)]
 pub async fn get_node_stacks(ip: String) -> Result<NodeStacksResponse, ServerFnError> {
     use crate::mock::{generate_node_stacks, merge_stacks};

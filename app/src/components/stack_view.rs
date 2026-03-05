@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::api::get_node_stacks;
+use crate::api::{get_node_stacks, get_node_flamegraph};
 use crate::models::*;
 use crate::components::common::Loading;
 
@@ -9,7 +9,9 @@ pub fn StackAnalysisPanel(
     #[prop(into)] node_ip: String,
 ) -> impl IntoView {
     let (show_stacks, set_show_stacks) = signal(false);
+    let (show_flamegraph, set_show_flamegraph) = signal(false);
     let ip = node_ip.clone();
+    let ip2 = node_ip.clone();
 
     let stacks_resource = Resource::new(
         move || (show_stacks.get(), ip.clone()),
@@ -22,18 +24,64 @@ pub fn StackAnalysisPanel(
         },
     );
 
+    let flamegraph_resource = Resource::new(
+        move || (show_flamegraph.get(), ip2.clone()),
+        |(should_load, ip)| async move {
+            if should_load {
+                get_node_flamegraph(ip).await
+            } else {
+                Err(ServerFnError::new("Not loaded"))
+            }
+        },
+    );
+
     view! {
         <section class="stack-analysis">
             <div class="stack-header">
                 <h2>"堆栈分析"</h2>
-                <button
-                    class="collect-btn"
-                    on:click=move |_| set_show_stacks.set(true)
-                    disabled=move || show_stacks.get()
-                >
-                    {move || if show_stacks.get() { "已采集" } else { "采集堆栈" }}
-                </button>
+                <div class="stack-actions">
+                    <button
+                        class="collect-btn"
+                        on:click=move |_| set_show_stacks.set(true)
+                        disabled=move || show_stacks.get()
+                    >
+                        {move || if show_stacks.get() { "已采集" } else { "采集堆栈" }}
+                    </button>
+                    <button
+                        class="collect-btn flamegraph-btn"
+                        on:click=move |_| set_show_flamegraph.set(true)
+                        disabled=move || show_flamegraph.get()
+                    >
+                        {move || if show_flamegraph.get() { "生成中..." } else { "生成火焰图" }}
+                    </button>
+                </div>
             </div>
+
+            // 火焰图区域
+            <Show when=move || show_flamegraph.get()>
+                <Suspense fallback=move || view! { <Loading /> }>
+                    {move || {
+                        flamegraph_resource.get().map(|result| {
+                            match result {
+                                Ok(svg) => view! {
+                                    <div class="flamegraph-container">
+                                        <h3>"火焰图"</h3>
+                                        <div
+                                            class="flamegraph-svg"
+                                            inner_html=svg
+                                        />
+                                    </div>
+                                }.into_any(),
+                                Err(e) => view! {
+                                    <div class="stack-error">
+                                        "火焰图生成失败: " {e.to_string()}
+                                    </div>
+                                }.into_any(),
+                            }
+                        })
+                    }}
+                </Suspense>
+            </Show>
 
             <Show when=move || show_stacks.get()>
                 <Suspense fallback=move || view! { <Loading /> }>
@@ -48,15 +96,12 @@ pub fn StackAnalysisPanel(
                                             </span>
                                         </div>
                                         
-                                        // 合并堆栈树视图
                                         <div class="merged-stack-tree">
                                             <h3>"聚合堆栈视图"</h3>
                                             <div class="stack-tree-container">
-                                                // <StackTreeNode frame=response.merged_root.clone() />
                                             </div>
                                         </div>
 
-                                        // 各 Rank 原始堆栈
                                         <details class="raw-stacks-section">
                                             <summary>"原始堆栈详情"</summary>
                                             <div class="raw-stacks-grid">
@@ -78,9 +123,9 @@ pub fn StackAnalysisPanel(
                 </Suspense>
             </Show>
 
-            <Show when=move || !show_stacks.get()>
+            <Show when=move || !show_stacks.get() && !show_flamegraph.get()>
                 <div class="stack-placeholder">
-                    <p>"点击「采集堆栈」按钮获取各 Rank 的调用堆栈并生成聚合视图"</p>
+                    <p>"点击「采集堆栈」获取原始调用栈，或点击「生成火焰图」直接生成聚合火焰图"</p>
                     <p class="hint">"堆栈分析可帮助定位慢 Rank 的根因，如 NCCL 等待、IO 阻塞等"</p>
                 </div>
             </Show>
