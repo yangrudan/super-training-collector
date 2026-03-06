@@ -154,16 +154,20 @@ mod tests {
 }
 
 #[cfg(feature = "ssr")]
-/// 从NodeInfo地址中提取IP
-fn extract_ip_from_addr(addr: &str) -> String {
-    // 从 "0.0.0.0:<port>" 中提取 IP，如果是 0.0.0.0 则使用 host 字段
-    let ip = addr.split(':').next().unwrap_or(addr).to_string();
+/// 从NodeInfo地址中提取IP，如果是 0.0.0.0 则对 host 做 DNS 解析获取真实 IP
+fn extract_ip_from_addr(addr: &str, host: &str) -> String {
+    let ip = addr.split(':').next().unwrap_or(addr);
     if ip == "0.0.0.0" {
-        // 如果地址是 0.0.0.0，这通常意味着服务绑定到所有接口
-        // 我们需要使用真实的节点IP，暂时返回一个占位符
-        "0.0.0.0".to_string() // 使用API服务器的IP作为节点IP
+        // host 可能是主机名，尝试 DNS 解析
+        use std::net::ToSocketAddrs;
+        format!("{}:0", host)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .map(|sa| sa.ip().to_string())
+            .unwrap_or_else(|| host.to_string())
     } else {
-        ip
+        ip.to_string()
     }
 }
 
@@ -185,7 +189,7 @@ pub fn convert_node_info_to_rank_metrics(node_info: NodeInfo) -> RankMetrics {
     RankMetrics {
         rank_id: node_info.rank,
         local_rank: node_info.local_rank as u8,
-        node_ip: extract_ip_from_addr(&node_info.addr),
+        node_ip: extract_ip_from_addr(&node_info.addr, &node_info.host),
         
         // 基础状态信息
         status: convert_status(&node_info.status),
