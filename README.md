@@ -60,6 +60,22 @@ cargo leptos watch
 cargo leptos build --release
 ```
 
+在服务器上运行
+                                                                                                                                                                     
+```bash                                                                                                                                                                                 
+   cd /opt/collector                                                                                                                                                                     
+   # 设置环境变量覆盖默认配置                                                                                                                                                            
+   export LEPTOS_SITE_ROOT="target/site"                                                                                                                                                 
+   export LEPTOS_SITE_ADDR="0.0.0.0:3000"    # 改为 0.0.0.0 以便外部访问                                                                                                                 
+   export LEPTOS_ENV="PROD"                                                                                                                                                              
+                                                                                                                                                                                         
+   ./server                                                                                                                                                                              
+```
+                                                                                                                                                                                      
+**关键点**: 
+
+server会通过 Leptos 的 get_configuration() 读取 LEPTOS_* 环境变量。LEPTOS_SITE_ROOT 必须指向包含 pkg/ 的 target/site 目录，路径是相对于二进制运行目录的。
+
 ## 项目结构
 
 ```

@@ -166,6 +166,37 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 
     Ok(svg)
 }
+/// 获取所有节点全部 Rank 的堆栈，合并生成一张火焰图 SVG
+#[server(GetAllNodesFlamegraph)]
+pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
+    use crate::flamegraph::{collect_and_generate_flamegraph, load_collector_config, build_callstack_urls};
+
+    let config = load_collector_config("./config/collector.json")
+        .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
+
+    let (_, nodes) = get_real_training_data().await
+        .unwrap_or_else(|_| {
+            let store = MockDataStore::new();
+            (vec![], store.nodes)
+        });
+
+    // 收集所有节点的所有 rank URL
+    let mut all_urls: Vec<String> = Vec::new();
+    for node in &nodes {
+        let urls = build_callstack_urls(&node.node_ip, node.rank_count, config.callstack_base_port);
+        all_urls.extend(urls);
+    }
+
+    if all_urls.is_empty() {
+        return Err(ServerFnError::new("No nodes found"));
+    }
+
+    let svg = collect_and_generate_flamegraph("all_nodes", all_urls).await
+        .map_err(|e| ServerFnError::new(format!("Failed to generate combined flamegraph: {}", e)))?;
+
+    Ok(svg)
+}
+
 #[server(GetNodeStacks)]
 pub async fn get_node_stacks(ip: String) -> Result<NodeStacksResponse, ServerFnError> {
     use crate::mock::{generate_node_stacks, merge_stacks};

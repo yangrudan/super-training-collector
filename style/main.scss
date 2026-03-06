@@ -748,7 +748,41 @@ section {
 .all-stacks-toolbar {
     display: flex;
     align-items: center;
+    gap: 12px;
     margin-bottom: 20px;
+}
+
+.collect-btn-combined {
+    background: linear-gradient(135deg, #10b981, #3b82f6);
+}
+
+.combined-flamegraph-box {
+    margin-bottom: 24px;
+    background: $color-bg;
+    border: 1px solid $color-border;
+    border-radius: 6px;
+    overflow: hidden;
+
+    .flamegraph-result-title {
+        padding: 10px 14px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        color: #10b981;
+        background: rgba(16, 185, 129, 0.06);
+        border-bottom: 1px solid $color-border;
+    }
+
+    .flamegraph-svg {
+        padding: 8px;
+        overflow-x: auto;
+
+        svg {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+    }
 }
 
 .all-stacks-grid {

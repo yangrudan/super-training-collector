@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-use crate::api::{get_nodes, get_all_nodes_callstack_info, get_node_flamegraph};
+use crate::api::{get_nodes, get_all_nodes_callstack_info, get_node_flamegraph, get_all_nodes_flamegraph};
 use crate::models::*;
 use crate::components::common::*;
 
@@ -167,6 +167,24 @@ fn AllStacksTab() -> impl IntoView {
     // 每次递增触发所有面板同时生成火焰图
     let generate_trigger = RwSignal::new(0u32);
 
+    // 全局合并火焰图状态
+    let (combined_loading, set_combined_loading) = signal(false);
+    let combined_svg: RwSignal<Option<String>> = RwSignal::new(None);
+    let combined_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    let on_generate_combined = move |_| {
+        set_combined_loading.set(true);
+        combined_svg.set(None);
+        combined_error.set(None);
+        leptos::task::spawn_local(async move {
+            match get_all_nodes_flamegraph().await {
+                Ok(svg) => combined_svg.set(Some(svg)),
+                Err(e) => combined_error.set(Some(e.to_string())),
+            }
+            set_combined_loading.set(false);
+        });
+    };
+
     view! {
         <div class="all-stacks-tab">
             <div class="all-stacks-toolbar">
@@ -176,7 +194,34 @@ fn AllStacksTab() -> impl IntoView {
                 >
                     "生成所有 Rank 火焰图"
                 </button>
+                <button
+                    class="collect-btn collect-btn-combined"
+                    on:click=on_generate_combined
+                    disabled=move || combined_loading.get()
+                >
+                    {move || if combined_loading.get() { "合并生成中..." } else { "生成全局合并火焰图" }}
+                </button>
             </div>
+
+            // 全局合并火焰图展示区
+            <Show when=move || combined_loading.get()>
+                <Loading />
+            </Show>
+            <Show when=move || combined_error.get().is_some()>
+                <div class="stack-error">
+                    {move || combined_error.get().unwrap_or_default()}
+                </div>
+            </Show>
+            <Show when=move || combined_svg.get().is_some()>
+                <div class="flamegraph-result-box combined-flamegraph-box">
+                    <div class="flamegraph-result-title">"全局合并火焰图 (所有节点所有 Rank)"</div>
+                    <div
+                        class="flamegraph-svg"
+                        inner_html=move || combined_svg.get().unwrap_or_default()
+                    />
+                </div>
+            </Show>
+
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || {
                     info_resource.get().map(|result| {
