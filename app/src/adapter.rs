@@ -4,6 +4,8 @@ use reqwest::Error;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "ssr")]
 use crate::models::{RankMetrics, NodeMetrics, GlobalMetrics, HealthStatus};
+#[cfg(feature = "ssr")]
+use crate::flamegraph::load_collector_config;
 
 #[cfg(feature = "ssr")]
 use std::collections::HashMap;
@@ -43,8 +45,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_node_info_with_real_api() {
-        let url = "http://10.107.204.71:9933/apis/nodes";
-        let result = get_node_info(url).await;
+        let port = load_collector_config("./config/collector.json")
+            .map(|c| c.callstack_base_port)
+            .unwrap_or(9933);
+        let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let url = format!("http://{}:{}/apis/nodes", host, port);
+        let result = get_node_info(&url).await;
         
         match result {
             Ok(nodes) => {
@@ -105,9 +111,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_node_info_with_mock() {
         // 使用mock测试，基于真实数据格式
-        let expected_json = r#"[{
+        let port = load_collector_config("./config/collector.json")
+            .map(|c| c.callstack_base_port)
+            .unwrap_or(9933);
+        let expected_json = format!(r#"[{{
             "host": "test-host",
-            "addr": "0.0.0.0:9933",
+            "addr": "0.0.0.0:{}",
             "local_rank": 0,
             "rank": 0,
             "world_size": 1,
@@ -118,12 +127,12 @@ mod tests {
             "role_world_size": 1,
             "status": "running",
             "timestamp": 1772605483868205
-        }]"#;
+        }}]"#, port);
         
         let _m = mock("GET", "/apis/nodes")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(expected_json)
+            .with_body(&expected_json)
             .create();
 
         let url = &mockito::server_url();
@@ -147,12 +156,12 @@ mod tests {
 #[cfg(feature = "ssr")]
 /// 从NodeInfo地址中提取IP
 fn extract_ip_from_addr(addr: &str) -> String {
-    // 从 "0.0.0.0:9933" 中提取 IP，如果是 0.0.0.0 则使用 host 字段
+    // 从 "0.0.0.0:<port>" 中提取 IP，如果是 0.0.0.0 则使用 host 字段
     let ip = addr.split(':').next().unwrap_or(addr).to_string();
     if ip == "0.0.0.0" {
         // 如果地址是 0.0.0.0，这通常意味着服务绑定到所有接口
         // 我们需要使用真实的节点IP，暂时返回一个占位符
-        "10.107.204.71".to_string() // 使用API服务器的IP作为节点IP
+        "0.0.0.0".to_string() // 使用API服务器的IP作为节点IP
     } else {
         ip
     }
@@ -260,8 +269,12 @@ pub fn aggregate_ranks_to_node_metrics(node_ip: &str, ranks: &[RankMetrics]) -> 
 #[cfg(feature = "ssr")]
 /// 获取真实数据并转换为应用所需格式
 pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetrics>), Error> {
-    let url = "http://10.107.204.71:9933/apis/nodes";
-    let node_infos = get_node_info(url).await?;
+    let port = load_collector_config("./config/collector.json")
+        .map(|c| c.callstack_base_port)
+        .unwrap_or(9933);
+    let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let url = format!("http://{}:{}/apis/nodes", host, port);
+    let node_infos = get_node_info(&url).await?;
     
     // 转换为RankMetrics
     let ranks: Vec<RankMetrics> = node_infos
