@@ -127,7 +127,7 @@ fn NodesTableTab() -> impl IntoView {
                                             <tr>
                                                 <th>"状态"</th>
                                                 <th>"节点 IP"</th>
-                                                <th>"机柜"</th>
+                                                <th>"主机名"</th>
                                                 <th>"慢占比"</th>
                                                 <th>"P50 (ms)"</th>
                                                 <th>"P99 (ms)"</th>
@@ -348,7 +348,7 @@ fn NodeRow(node: NodeMetrics) -> impl IntoView {
                 <StatusBadge status=node.status />
             </td>
             <td class="node-ip">{node.node_ip.clone()}</td>
-            <td>{node.rack_id.clone()}</td>
+            <td>{node.hostname.clone()}</td>
             <td>
                 <HeatCell value=node.slow_ratio show_value=true />
             </td>

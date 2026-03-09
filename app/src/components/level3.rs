@@ -72,7 +72,7 @@ fn NodeOverview(node: NodeMetrics) -> impl IntoView {
                     <span class="node-ip">{node.node_ip.clone()}</span>
                     <span class="node-hostname">"("{node.hostname.clone()}")"</span>
                 </h1>
-                <span class="rack-label">"机柜: " {node.rack_id.clone()}</span>
+                <span class="rack-label">"主机: " {node.hostname.clone()}</span>
             </div>
 
             <div class="node-kpi-grid">
