@@ -190,6 +190,7 @@ pub fn convert_node_info_to_rank_metrics(node_info: NodeInfo) -> RankMetrics {
         rank_id: node_info.rank,
         local_rank: node_info.local_rank as u8,
         node_ip: extract_ip_from_addr(&node_info.addr, &node_info.host),
+        hostname: node_info.host.clone(),
         
         // 基础状态信息
         status: convert_status(&node_info.status),
@@ -215,7 +216,7 @@ pub fn aggregate_ranks_to_node_metrics(node_ip: &str, ranks: &[RankMetrics]) -> 
         return None;
     }
 
-    let hostname = ranks[0].node_ip.clone(); // 使用IP作为hostname的临时方案
+    let hostname = ranks[0].hostname.clone(); // 使用 NodeInfo.host 字段
     // 修复rack_id计算，避免溢出
     let last_octet = node_ip.split('.').last()
         .and_then(|s| s.parse::<u32>().ok())

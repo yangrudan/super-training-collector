@@ -33,6 +33,7 @@ pub struct RankMetrics {
     pub rank_id: u32,             // 全局唯一 rank ID (0-127)
     pub local_rank: u8,           // 节点内 GPU 编号 (0-7)
     pub node_ip: String,          // 所属节点 IP
+    pub hostname: String,         // 主机名 (来自 NodeInfo.host)
 
     // 核心指标
     pub step_time_ms: f64,        // 当前 step 耗时 (毫秒)

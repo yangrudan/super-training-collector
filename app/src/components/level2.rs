@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-use crate::api::{get_nodes, get_all_nodes_callstack_info, get_node_flamegraph, get_all_nodes_flamegraph};
+use crate::api::{get_nodes, get_all_nodes_flamegraph};
 use crate::models::*;
 use crate::components::common::*;
 
@@ -162,11 +162,6 @@ fn NodesTableTab() -> impl IntoView {
 /// IP 来自训练数据，端口由 config/collector.json 的 callstack_base_port 起始递增
 #[component]
 fn AllStacksTab() -> impl IntoView {
-    // (ip, rank_count, base_port)
-    let info_resource = Resource::new(|| (), |_| get_all_nodes_callstack_info());
-    // 每次递增触发所有面板同时生成火焰图
-    let generate_trigger = RwSignal::new(0u32);
-
     // 全局合并火焰图状态
     let (combined_loading, set_combined_loading) = signal(false);
     let combined_svg: RwSignal<Option<String>> = RwSignal::new(None);
@@ -188,12 +183,6 @@ fn AllStacksTab() -> impl IntoView {
     view! {
         <div class="all-stacks-tab">
             <div class="all-stacks-toolbar">
-                <button
-                    class="collect-btn"
-                    on:click=move |_| generate_trigger.update(|v| *v += 1)
-                >
-                    "生成所有 Rank 火焰图"
-                </button>
                 <button
                     class="collect-btn collect-btn-combined"
                     on:click=on_generate_combined
@@ -218,112 +207,6 @@ fn AllStacksTab() -> impl IntoView {
                     <div
                         class="flamegraph-svg"
                         inner_html=move || combined_svg.get().unwrap_or_default()
-                    />
-                </div>
-            </Show>
-
-            <Suspense fallback=move || view! { <Loading /> }>
-                {move || {
-                    info_resource.get().map(|result| {
-                        match result {
-                            Ok(nodes) => view! {
-                                <div class="all-stacks-grid">
-                                    {nodes.into_iter().map(|(ip, rank_count, base_port)| {
-                                        view! {
-                                            <NodeFlamegraphPanel
-                                                ip=ip
-                                                rank_count=rank_count
-                                                base_port=base_port
-                                                generate_trigger=generate_trigger
-                                            />
-                                        }
-                                    }).collect_view()}
-                                </div>
-                            }.into_any(),
-                            Err(e) => view! {
-                                <ErrorDisplay message=e.to_string() />
-                            }.into_any(),
-                        }
-                    })
-                }}
-            </Suspense>
-        </div>
-    }
-}
-
-/// 单节点火焰图面板 (由外部 generate_trigger 驱动，无独立按钮)
-#[component]
-fn NodeFlamegraphPanel(
-    ip: String,
-    rank_count: u8,
-    base_port: u16,
-    generate_trigger: RwSignal<u32>,
-) -> impl IntoView {
-    let (loading, set_loading) = signal(false);
-    let flamegraph_svg: RwSignal<Option<String>> = RwSignal::new(None);
-    let error_msg: RwSignal<Option<String>> = RwSignal::new(None);
-
-    // 监听外部触发信号，每次 trigger 递增时自动生成火焰图
-    let ip_for_effect = ip.clone();
-    Effect::new(move |_| {
-        let trigger = generate_trigger.get();
-        if trigger > 0 {
-            let ip = ip_for_effect.clone();
-            set_loading.set(true);
-            flamegraph_svg.set(None);
-            error_msg.set(None);
-            leptos::task::spawn_local(async move {
-                match get_node_flamegraph(ip).await {
-                    Ok(svg) => flamegraph_svg.set(Some(svg)),
-                    Err(e) => error_msg.set(Some(e.to_string())),
-                }
-                set_loading.set(false);
-            });
-        }
-    });
-
-    view! {
-        <div class="node-flamegraph-panel">
-            <div class="node-fg-header">
-                <div class="node-fg-info">
-                    <span class="node-ip">{ip.clone()}</span>
-                    <span class="rank-count-badge">
-                        {rank_count} " 个 Rank"
-                    </span>
-                </div>
-                <Show when=move || loading.get()>
-                    <span class="generating-badge">"生成中..."</span>
-                </Show>
-            </div>
-
-            // 各 Rank 端口信息
-            <div class="rank-urls">
-                {(0..rank_count).map(|i| {
-                    let port = base_port + i as u16;
-                    let url = format!("http://{}:{}/apis/pythonext/callstack", ip, port);
-                    view! {
-                        <div class="rank-url-item">
-                            <span class="rank-label">"Rank " {i}</span>
-                            <span class="rank-url-text">{url}</span>
-                        </div>
-                    }
-                }).collect_view()}
-            </div>
-
-            // 错误信息
-            <Show when=move || error_msg.get().is_some()>
-                <div class="stack-error">
-                    {move || error_msg.get().unwrap_or_default()}
-                </div>
-            </Show>
-
-            // 火焰图 SVG
-            <Show when=move || flamegraph_svg.get().is_some()>
-                <div class="flamegraph-result-box">
-                    <div class="flamegraph-result-title">"火焰图"</div>
-                    <div
-                        class="flamegraph-svg"
-                        inner_html=move || flamegraph_svg.get().unwrap_or_default()
                     />
                 </div>
             </Show>

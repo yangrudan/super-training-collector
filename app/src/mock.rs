@@ -67,6 +67,7 @@ pub fn generate_all_ranks() -> Vec<RankMetrics> {
 
     for node_idx in 0..NODE_COUNT {
         let ip = node_ip(node_idx);
+        let host = hostname(node_idx);
 
         for local_rank in 0..GPUS_PER_NODE {
             let rank_id = (node_idx * GPUS_PER_NODE + local_rank) as u32;
@@ -103,6 +104,7 @@ pub fn generate_all_ranks() -> Vec<RankMetrics> {
                 rank_id,
                 local_rank: local_rank as u8,
                 node_ip: ip.clone(),
+                hostname: host.clone(),
                 step_time_ms,
                 step_time_ratio: step_time_ms / global_p50,
                 gpu_utilization: gpu_util,
