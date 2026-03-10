@@ -151,6 +151,114 @@ mod tests {
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
+
+    #[test]
+    fn test_extract_ip_from_addr() {
+        // Test normal IP address extraction
+        let ip = extract_ip_from_addr("192.168.1.100:9933", "hostname");
+        assert_eq!(ip, "192.168.1.100");
+        
+        // Test 0.0.0.0 address (should use hostname)
+        let ip = extract_ip_from_addr("0.0.0.0:9933", "localhost");
+        assert!(!ip.is_empty(), "Should return some IP");
+    }
+
+    #[test]
+    fn test_convert_status() {
+        assert_eq!(convert_status("running"), HealthStatus::Healthy);
+        assert_eq!(convert_status("RUNNING"), HealthStatus::Healthy);
+        assert_eq!(convert_status("error"), HealthStatus::Critical);
+        assert_eq!(convert_status("failed"), HealthStatus::Critical);
+        assert_eq!(convert_status("critical"), HealthStatus::Critical);
+        assert_eq!(convert_status("unknown"), HealthStatus::Warning);
+        assert_eq!(convert_status("pending"), HealthStatus::Warning);
+    }
+
+    #[test]
+    fn test_convert_node_info_to_rank_metrics() {
+        let node_info = NodeInfo {
+            host: "test-host".to_string(),
+            addr: "192.168.1.100:9933".to_string(),
+            local_rank: 0,
+            rank: 5,
+            world_size: 8,
+            group_rank: 0,
+            group_world_size: 8,
+            role_name: "worker".to_string(),
+            role_rank: 5,
+            role_world_size: 8,
+            status: "running".to_string(),
+            timestamp: 1000000000,
+        };
+
+        let rank_metrics = convert_node_info_to_rank_metrics(node_info);
+        
+        assert_eq!(rank_metrics.rank_id, 5);
+        assert_eq!(rank_metrics.local_rank, 0);
+        assert_eq!(rank_metrics.node_ip, "192.168.1.100");
+        assert_eq!(rank_metrics.hostname, "test-host");
+        assert_eq!(rank_metrics.status, HealthStatus::Healthy);
+    }
+
+    #[test]
+    fn test_aggregate_ranks_to_node_metrics() {
+        let ranks = vec![
+            RankMetrics {
+                rank_id: 0,
+                local_rank: 0,
+                node_ip: "192.168.1.100".to_string(),
+                hostname: "test-host".to_string(),
+                step_time_ms: 100.0,
+                step_time_ratio: 1.0,
+                gpu_utilization: 90.0,
+                gpu_memory_used_gb: 16.0,
+                gpu_memory_total_gb: 32.0,
+                nccl_latency_ms: 1.0,
+                nccl_bandwidth_gbps: 100.0,
+                status: HealthStatus::Healthy,
+                last_heartbeat: 1000,
+                current_step: 100,
+                error_message: None,
+            },
+            RankMetrics {
+                rank_id: 1,
+                local_rank: 1,
+                node_ip: "192.168.1.100".to_string(),
+                hostname: "test-host".to_string(),
+                step_time_ms: 200.0,
+                step_time_ratio: 2.0,
+                gpu_utilization: 80.0,
+                gpu_memory_used_gb: 16.0,
+                gpu_memory_total_gb: 32.0,
+                nccl_latency_ms: 2.0,
+                nccl_bandwidth_gbps: 100.0,
+                status: HealthStatus::Warning,
+                last_heartbeat: 1000,
+                current_step: 100,
+                error_message: None,
+            },
+        ];
+
+        let node_metrics = aggregate_ranks_to_node_metrics("192.168.1.100", &ranks);
+        
+        assert!(node_metrics.is_some());
+        let node = node_metrics.unwrap();
+        
+        assert_eq!(node.node_ip, "192.168.1.100");
+        assert_eq!(node.hostname, "test-host");
+        assert_eq!(node.rank_count, 2);
+        assert_eq!(node.healthy_count, 1);
+        assert_eq!(node.warning_count, 1);
+        assert_eq!(node.critical_count, 0);
+    }
+
+    #[test]
+    fn test_aggregate_ranks_to_node_metrics_empty() {
+        let ranks: Vec<RankMetrics> = vec![];
+        let node_metrics = aggregate_ranks_to_node_metrics("192.168.1.100", &ranks);
+        
+        assert!(node_metrics.is_none(), "Should return None for empty ranks");
+    }
 }
 
 #[cfg(feature = "ssr")]

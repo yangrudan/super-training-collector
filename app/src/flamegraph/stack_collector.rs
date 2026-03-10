@@ -68,3 +68,14 @@ pub async fn fetch_and_save_urls(urls: Vec<String>) -> Result<(), Box<dyn std::e
     println!("Data has been saved to output/output.json");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_fetch_and_save_urls_empty_list() {
+        let result = fetch_and_save_urls(vec![]).await;
+        assert!(result.is_ok(), "Should handle empty URL list");
+    }
+}

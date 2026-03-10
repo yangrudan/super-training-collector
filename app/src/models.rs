@@ -264,3 +264,131 @@ pub struct NodeStacksResponse {
     pub merged_root: MergedStackFrame,
     pub collected_at: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_health_status_css_class() {
+        assert_eq!(HealthStatus::Healthy.css_class(), "status-healthy");
+        assert_eq!(HealthStatus::Warning.css_class(), "status-warning");
+        assert_eq!(HealthStatus::Critical.css_class(), "status-critical");
+    }
+
+    #[test]
+    fn test_health_status_label() {
+        assert_eq!(HealthStatus::Healthy.label(), "正常");
+        assert_eq!(HealthStatus::Warning.label(), "警告");
+        assert_eq!(HealthStatus::Critical.label(), "故障");
+    }
+
+    #[test]
+    fn test_merged_stack_frame_coverage() {
+        let frame = MergedStackFrame {
+            frame_name: "test".to_string(),
+            depth: 0,
+            rank_ids: vec![0, 1, 2, 3],
+            rank_count: 4,
+            total_ranks: 10,
+            children: vec![],
+        };
+        
+        assert_eq!(frame.coverage(), 0.4);
+    }
+
+    #[test]
+    fn test_merged_stack_frame_coverage_zero_total() {
+        let frame = MergedStackFrame {
+            frame_name: "test".to_string(),
+            depth: 0,
+            rank_ids: vec![0, 1],
+            rank_count: 2,
+            total_ranks: 0,
+            children: vec![],
+        };
+        
+        assert_eq!(frame.coverage(), 0.0);
+    }
+
+    #[test]
+    fn test_merged_stack_frame_coverage_class() {
+        let mut frame = MergedStackFrame {
+            frame_name: "test".to_string(),
+            depth: 0,
+            rank_ids: vec![],
+            rank_count: 9,
+            total_ranks: 10,
+            children: vec![],
+        };
+        assert_eq!(frame.coverage_class(), "coverage-full");
+        
+        frame.rank_count = 6;
+        assert_eq!(frame.coverage_class(), "coverage-partial");
+        
+        frame.rank_count = 2;
+        assert_eq!(frame.coverage_class(), "coverage-rare");
+    }
+
+    #[test]
+    fn test_merged_stack_frame_rank_range_str_continuous() {
+        let frame = MergedStackFrame {
+            frame_name: "test".to_string(),
+            depth: 0,
+            rank_ids: vec![0, 1, 2, 3, 4],
+            rank_count: 5,
+            total_ranks: 10,
+            children: vec![],
+        };
+        
+        let result = frame.rank_range_str();
+        assert_eq!(result, "0-4");
+    }
+
+    #[test]
+    fn test_merged_stack_frame_rank_range_str_gaps() {
+        let frame = MergedStackFrame {
+            frame_name: "test".to_string(),
+            depth: 0,
+            rank_ids: vec![0, 1, 2, 5, 6, 10],
+            rank_count: 6,
+            total_ranks: 12,
+            children: vec![],
+        };
+        
+        let result = frame.rank_range_str();
+        assert!(result.contains("0-2"));
+        assert!(result.contains("5-6"));
+        assert!(result.contains("10"));
+    }
+
+    #[test]
+    fn test_merged_stack_frame_rank_range_str_single() {
+        let frame = MergedStackFrame {
+            frame_name: "test".to_string(),
+            depth: 0,
+            rank_ids: vec![5],
+            rank_count: 1,
+            total_ranks: 10,
+            children: vec![],
+        };
+        
+        let result = frame.rank_range_str();
+        assert_eq!(result, "5");
+    }
+
+    #[test]
+    fn test_merged_stack_frame_rank_range_str_empty() {
+        let frame = MergedStackFrame {
+            frame_name: "test".to_string(),
+            depth: 0,
+            rank_ids: vec![],
+            rank_count: 0,
+            total_ranks: 10,
+            children: vec![],
+        };
+        
+        let result = frame.rank_range_str();
+        assert_eq!(result, "");
+    }
+}

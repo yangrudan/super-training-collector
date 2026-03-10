@@ -79,3 +79,79 @@ pub async fn collect_and_generate_flamegraph(
     let svg = generate_flamegraph_svg(&folded)?;
     Ok(svg)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_load_collector_config_valid() {
+        let config_content = r#"{"callstack_base_port": 9933}"#;
+        let temp_file = "/tmp/test_collector_config.json";
+        fs::write(temp_file, config_content).expect("Failed to write test config");
+        
+        let result = load_collector_config(temp_file);
+        assert!(result.is_ok(), "Should load valid config successfully");
+        
+        let config = result.unwrap();
+        assert_eq!(config.callstack_base_port, 9933, "Should parse port correctly");
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_load_collector_config_invalid_json() {
+        let temp_file = "/tmp/test_invalid_config.json";
+        fs::write(temp_file, "{invalid json}").expect("Failed to write test file");
+        
+        let result = load_collector_config(temp_file);
+        assert!(result.is_err(), "Should fail on invalid JSON");
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_load_collector_config_missing_file() {
+        let result = load_collector_config("/nonexistent/path/config.json");
+        assert!(result.is_err(), "Should fail on missing file");
+    }
+
+    #[test]
+    fn test_build_callstack_urls() {
+        let ip = "192.168.1.100";
+        let rank_count = 4;
+        let base_port = 9933;
+        
+        let urls = build_callstack_urls(ip, rank_count, base_port);
+        
+        assert_eq!(urls.len(), 4, "Should generate URL for each rank");
+        assert_eq!(urls[0], "http://192.168.1.100:9933/apis/pythonext/callstack");
+        assert_eq!(urls[1], "http://192.168.1.100:9934/apis/pythonext/callstack");
+        assert_eq!(urls[2], "http://192.168.1.100:9935/apis/pythonext/callstack");
+        assert_eq!(urls[3], "http://192.168.1.100:9936/apis/pythonext/callstack");
+    }
+
+    #[test]
+    fn test_build_callstack_urls_zero_ranks() {
+        let urls = build_callstack_urls("192.168.1.1", 0, 9933);
+        assert_eq!(urls.len(), 0, "Should return empty vector for 0 ranks");
+    }
+
+    #[test]
+    fn test_build_callstack_urls_many_ranks() {
+        let urls = build_callstack_urls("192.168.1.1", 8, 9933);
+        assert_eq!(urls.len(), 8, "Should handle 8 ranks");
+        assert_eq!(urls[7], "http://192.168.1.1:9940/apis/pythonext/callstack");
+    }
+
+    #[test]
+    fn test_build_callstack_urls_different_ip_formats() {
+        let urls = build_callstack_urls("10.0.0.1", 2, 8000);
+        assert_eq!(urls.len(), 2);
+        assert!(urls[0].starts_with("http://10.0.0.1:8000"));
+        assert!(urls[1].starts_with("http://10.0.0.1:8001"));
+    }
+}
