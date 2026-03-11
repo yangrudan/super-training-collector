@@ -1,1 +1,0 @@
-[38;5;214m    Metadata[0m keys ["env", "watch"] from metadata.leptos are not recognized and will be ignored
