@@ -5,6 +5,14 @@ use crate::mock::MockDataStore;
 use crate::adapter::{get_real_training_data, generate_global_metrics_from_real_data};
 use leptos::prelude::*;
 
+/// 检查是否启用了 mock 模式
+#[cfg(feature = "ssr")]
+fn is_mock_mode() -> bool {
+    std::env::var("COLLECTOR_MOCK_MODE")
+        .map(|v| v.to_lowercase() == "true" || v == "1")
+        .unwrap_or(false)
+}
+
 /// 获取全局聚合指标 (Level 1)
 #[server(GetGlobalMetrics)]
 pub async fn get_global_metrics() -> Result<GlobalMetrics, ServerFnError> {
@@ -16,10 +24,14 @@ pub async fn get_global_metrics() -> Result<GlobalMetrics, ServerFnError> {
             Ok(global_metrics)
         }
         Err(e) => {
-            // 如果真实API失败，回退到mock数据
-            leptos::logging::log!("Failed to get real data, falling back to mock: {}", e);
-            let store = MockDataStore::new();
-            Ok(store.global)
+            if is_mock_mode() {
+                leptos::logging::log!("Mock mode enabled, using mock data");
+                let store = MockDataStore::new();
+                Ok(store.global)
+            } else {
+                leptos::logging::log!("Failed to get real data: {}", e);
+                Err(ServerFnError::new(format!("无法连接训练集群: {}", e)))
+            }
         }
     }
 }
@@ -41,10 +53,14 @@ pub async fn get_nodes(
             nodes
         },
         Err(e) => {
-            // 如果真实API失败，回退到mock数据
-            leptos::logging::log!("Failed to get real data, falling back to mock: {}", e);
-            let store = MockDataStore::new();
-            store.nodes
+            if is_mock_mode() {
+                leptos::logging::log!("Mock mode enabled, using mock data");
+                let store = MockDataStore::new();
+                store.nodes
+            } else {
+                leptos::logging::log!("Failed to get real data: {}", e);
+                return Err(ServerFnError::new(format!("无法连接训练集群: {}", e)));
+            }
         }
     };
 
@@ -97,15 +113,19 @@ pub async fn get_node_ranks(ip: String) -> Result<NodeRanksResponse, ServerFnErr
             Ok(NodeRanksResponse { node, ranks: node_ranks })
         }
         Err(e) => {
-            // 如果真实API失败，回退到mock数据
-            leptos::logging::log!("Failed to get real data, falling back to mock: {}", e);
-            let store = MockDataStore::new();
-            
-            let node = store.get_node_by_ip(&ip)
-                .ok_or_else(|| ServerFnError::new("Node not found"))?;
-            let ranks = store.get_ranks_by_ip(&ip);
-            
-            Ok(NodeRanksResponse { node, ranks })
+            if is_mock_mode() {
+                leptos::logging::log!("Mock mode enabled, using mock data");
+                let store = MockDataStore::new();
+                
+                let node = store.get_node_by_ip(&ip)
+                    .ok_or_else(|| ServerFnError::new("Node not found"))?;
+                let ranks = store.get_ranks_by_ip(&ip);
+                
+                Ok(NodeRanksResponse { node, ranks })
+            } else {
+                leptos::logging::log!("Failed to get real data: {}", e);
+                Err(ServerFnError::new(format!("无法连接训练集群: {}", e)))
+            }
         }
     }
 }
@@ -125,11 +145,17 @@ pub async fn get_all_nodes_callstack_info() -> Result<Vec<(String, u8, u16)>, Se
     let config = load_collector_config("./config/collector.json")
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
-    let (_, nodes) = get_real_training_data().await
-        .unwrap_or_else(|_| {
-            let store = MockDataStore::new();
-            (vec![], store.nodes)
-        });
+    let nodes = match get_real_training_data().await {
+        Ok((_, nodes)) => nodes,
+        Err(e) => {
+            if is_mock_mode() {
+                let store = MockDataStore::new();
+                store.nodes
+            } else {
+                return Err(ServerFnError::new(format!("无法连接训练集群: {}", e)));
+            }
+        }
+    };
 
     let mut result: Vec<(String, u8, u16)> = nodes
         .into_iter()
@@ -153,9 +179,13 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
             .find(|n| n.node_ip == ip)
             .map(|n| n.rank_count)
             .unwrap_or(4),
-        Err(_) => {
-            let store = MockDataStore::new();
-            store.get_node_by_ip(&ip).map(|n| n.rank_count).unwrap_or(4)
+        Err(e) => {
+            if is_mock_mode() {
+                let store = MockDataStore::new();
+                store.get_node_by_ip(&ip).map(|n| n.rank_count).unwrap_or(4)
+            } else {
+                return Err(ServerFnError::new(format!("无法连接训练集群: {}", e)));
+            }
         }
     };
 
@@ -174,11 +204,17 @@ pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
     let config = load_collector_config("./config/collector.json")
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
-    let (_, nodes) = get_real_training_data().await
-        .unwrap_or_else(|_| {
-            let store = MockDataStore::new();
-            (vec![], store.nodes)
-        });
+    let nodes = match get_real_training_data().await {
+        Ok((_, nodes)) => nodes,
+        Err(e) => {
+            if is_mock_mode() {
+                let store = MockDataStore::new();
+                store.nodes
+            } else {
+                return Err(ServerFnError::new(format!("无法连接训练集群: {}", e)));
+            }
+        }
+    };
 
     // 收集所有节点的所有 rank URL
     let mut all_urls: Vec<String> = Vec::new();
@@ -223,4 +259,10 @@ pub async fn get_node_stacks(ip: String) -> Result<NodeStacksResponse, ServerFnE
         merged_root,
         collected_at,
     })
+}
+
+/// 获取当前是否处于 mock 模式
+#[server(GetMockModeStatus)]
+pub async fn get_mock_mode_status() -> Result<bool, ServerFnError> {
+    Ok(is_mock_mode())
 }

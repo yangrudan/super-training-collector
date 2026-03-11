@@ -47,11 +47,16 @@ fn NodesTableTab() -> impl IntoView {
     let sort_field = RwSignal::new(SortField::SlowRatio);
     let sort_order = RwSignal::new(SortOrder::Desc);
     let status_filter = RwSignal::new(StatusFilter::All);
+    let (refresh_trigger, set_refresh_trigger) = signal(0u32);
 
     let nodes_resource = Resource::new(
-        move || (sort_field.get(), sort_order.get(), status_filter.get()),
-        |(field, order, filter)| get_nodes(Some(field), Some(order), Some(filter)),
+        move || (sort_field.get(), sort_order.get(), status_filter.get(), refresh_trigger.get()),
+        |(field, order, filter, _)| get_nodes(Some(field), Some(order), Some(filter)),
     );
+
+    let retry_callback = Callback::new(move |_| {
+        set_refresh_trigger.update(|n| *n += 1);
+    });
 
     view! {
         <div>
@@ -148,7 +153,7 @@ fn NodesTableTab() -> impl IntoView {
                                 </div>
                             }.into_any(),
                             Err(e) => view! {
-                                <ErrorDisplay message=e.to_string() />
+                                <ErrorDisplay message=e.to_string() on_retry=retry_callback />
                             }.into_any(),
                         }
                     })

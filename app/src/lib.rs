@@ -13,7 +13,8 @@ pub mod adapter;
 #[cfg(feature = "ssr")]
 pub mod flamegraph;
 
-use components::{Level1View, Level2View, Level3View};
+use components::{Level1View, Level2View, Level3View, MockModeBanner};
+use api::get_mock_mode_status;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -37,9 +38,23 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 pub fn App() -> impl IntoView {
     provide_meta_context();
 
+    let mock_mode_resource = Resource::new(|| (), |_| get_mock_mode_status());
+
     view! {
         <Stylesheet id="leptos" href="/pkg/super-trainning-collector.css"/>
         <Title text="训练任务监控面板"/>
+
+        // Mock 模式警告横幅
+        <Suspense fallback=|| ()>
+            {move || {
+                mock_mode_resource.get().map(|result| {
+                    match result {
+                        Ok(true) => Some(view! { <MockModeBanner /> }),
+                        _ => None,
+                    }
+                })
+            }}
+        </Suspense>
 
         <Router>
             <main class="app-container">

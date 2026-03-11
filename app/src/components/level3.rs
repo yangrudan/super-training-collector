@@ -9,15 +9,20 @@ use crate::components::stack_view::StackAnalysisPanel;
 #[component]
 pub fn Level3View() -> impl IntoView {
     let params = use_params_map();
+    let (refresh_trigger, set_refresh_trigger) = signal(0u32);
 
     let ip = move || {
         params.read().get("ip").unwrap_or_default()
     };
 
     let ranks_resource = Resource::new(
-        move || ip(),
-        |ip| get_node_ranks(ip),
+        move || (ip(), refresh_trigger.get()),
+        |(ip, _)| get_node_ranks(ip),
     );
+
+    let retry_callback = Callback::new(move |_| {
+        set_refresh_trigger.update(|n| *n += 1);
+    });
 
     view! {
         <div class="level3-view">
@@ -51,7 +56,7 @@ pub fn Level3View() -> impl IntoView {
                                 </div>
                             }.into_any(),
                             Err(e) => view! {
-                                <ErrorDisplay message=e.to_string() />
+                                <ErrorDisplay message=e.to_string() on_retry=retry_callback />
                             }.into_any(),
                         }
                     })

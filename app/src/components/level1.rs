@@ -5,7 +5,16 @@ use crate::components::common::*;
 /// Level 1: 全局态势视图
 #[component]
 pub fn Level1View() -> impl IntoView {
-    let global_resource = Resource::new(|| (), |_| get_global_metrics());
+    let (refresh_trigger, set_refresh_trigger) = signal(0u32);
+    
+    let global_resource = Resource::new(
+        move || refresh_trigger.get(),
+        |_| get_global_metrics()
+    );
+
+    let retry_callback = Callback::new(move |_| {
+        set_refresh_trigger.update(|n| *n += 1);
+    });
 
     view! {
         <div class="level1-view">
@@ -95,7 +104,7 @@ pub fn Level1View() -> impl IntoView {
                                 </div>
                             }.into_any(),
                             Err(e) => view! {
-                                <ErrorDisplay message=e.to_string() />
+                                <ErrorDisplay message=e.to_string() on_retry=retry_callback />
                             }.into_any(),
                         }
                     })

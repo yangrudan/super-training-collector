@@ -471,6 +471,62 @@ section {
     .error-icon {
         font-size: 1.5rem;
     }
+
+    &.error-panel {
+        flex-direction: column;
+        padding: 48px 24px;
+        gap: 24px;
+
+        .error-content {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .error-message {
+            h3 {
+                margin-bottom: 8px;
+                font-size: 1.25rem;
+            }
+            p {
+                color: $color-text-muted;
+                font-size: 0.9rem;
+            }
+        }
+
+        .retry-button {
+            padding: 12px 24px;
+            background: rgba($color-critical, 0.2);
+            border: 1px solid rgba($color-critical, 0.4);
+            border-radius: 8px;
+            color: $color-text;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+
+            &:hover {
+                background: rgba($color-critical, 0.3);
+            }
+        }
+    }
+}
+
+// Mock 模式警告横幅
+.mock-mode-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: rgba($color-warning, 0.15);
+    border-bottom: 2px solid $color-warning;
+    color: $color-warning;
+    font-weight: 500;
+    font-size: 0.9rem;
+
+    .mock-icon {
+        font-size: 1.1rem;
+    }
 }
 
 // ============ 堆栈分析样式 ============

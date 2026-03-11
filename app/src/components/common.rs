@@ -127,13 +127,40 @@ pub fn Loading() -> impl IntoView {
     }
 }
 
-/// 错误显示
+/// 错误显示（带重试按钮）
 #[component]
-pub fn ErrorDisplay(#[prop(into)] message: String) -> impl IntoView {
+pub fn ErrorDisplay(
+    #[prop(into)] message: String,
+    #[prop(optional)] on_retry: Option<Callback<()>>,
+) -> impl IntoView {
     view! {
-        <div class="error-display">
-            <span class="error-icon">"⚠"</span>
-            <span>{message}</span>
+        <div class="error-display error-panel">
+            <div class="error-content">
+                <span class="error-icon">"❌"</span>
+                <div class="error-message">
+                    <h3>"连接失败"</h3>
+                    <p>{message}</p>
+                </div>
+            </div>
+            {on_retry.map(|callback| view! {
+                <button
+                    class="retry-button"
+                    on:click=move |_| callback.run(())
+                >
+                    "🔄 重试"
+                </button>
+            })}
+        </div>
+    }
+}
+
+/// Mock 模式警告横幅
+#[component]
+pub fn MockModeBanner() -> impl IntoView {
+    view! {
+        <div class="mock-mode-banner">
+            <span class="mock-icon">"⚠️"</span>
+            <span>"演示模式 - 显示模拟数据，非真实训练状态"</span>
         </div>
     }
 }
