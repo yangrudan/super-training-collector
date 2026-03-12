@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use crate::api::get_node_ranks;
+use crate::api::{get_node_ranks, get_step_show_enabled, get_rank_step_metrics};
 use crate::models::*;
 use crate::components::common::*;
 use crate::components::stack_view::StackAnalysisPanel;
@@ -20,6 +20,9 @@ pub fn Level3View() -> impl IntoView {
         |(ip, _)| get_node_ranks(ip),
     );
 
+    // Step 功能开关
+    let step_enabled_resource = Resource::new(|| (), |_| get_step_show_enabled());
+
     let retry_callback = Callback::new(move |_| {
         set_refresh_trigger.update(|n| *n += 1);
     });
@@ -34,6 +37,10 @@ pub fn Level3View() -> impl IntoView {
 
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || {
+                    let step_enabled = step_enabled_resource.get()
+                        .and_then(|r| r.ok())
+                        .unwrap_or(false);
+                    
                     ranks_resource.get().map(|result| {
                         match result {
                             Ok(response) => view! {
@@ -49,7 +56,8 @@ pub fn Level3View() -> impl IntoView {
                                         <h2>"Rank 详情"</h2>
                                         <div class="ranks-grid">
                                             {response.ranks.into_iter().map(|rank| {
-                                                view! { <RankCard rank=rank /> }
+                                                let node_ip = response.node.node_ip.clone();
+                                                view! { <RankCardWithStep rank=rank node_ip=node_ip step_enabled=step_enabled /> }
                                             }).collect_view()}
                                         </div>
                                     </section>
@@ -212,5 +220,115 @@ fn nccl_class(ms: f64) -> &'static str {
         "value-warning"
     } else {
         "value-healthy"
+    }
+}
+
+/// Rank 卡片组件（带 Step 信息）
+#[component]
+fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> impl IntoView {
+    let status_class = rank.status.css_class();
+    let rank_id = rank.rank_id;
+    let local_rank = rank.local_rank;
+    let ip_clone = node_ip.clone();
+    
+    // Step 指标资源（条件加载）
+    let step_resource = Resource::new(
+        move || (step_enabled, ip_clone.clone(), local_rank, rank_id),
+        move |(enabled, ip, lr, rid)| async move {
+            if enabled {
+                get_rank_step_metrics(ip, lr, rid).await.ok()
+            } else {
+                None
+            }
+        }
+    );
+
+    view! {
+        <div class=format!("rank-card {}", status_class)>
+            <div class="rank-header">
+                <span class="rank-id">"Rank " {rank.rank_id}</span>
+                <span class="local-rank">"(GPU " {rank.local_rank} ")"</span>
+                <StatusBadge status=rank.status />
+            </div>
+
+            <div class="rank-metrics">
+                <div class="metric">
+                    <span class="metric-label">"Step Time"</span>
+                    <span class=step_time_class(rank.step_time_ms)>
+                        {format!("{:.1} ms", rank.step_time_ms)}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">"相对 P50"</span>
+                    <span class=ratio_class(rank.step_time_ratio)>
+                        {format!("{:.2}x", rank.step_time_ratio)}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">"GPU 利用率"</span>
+                    <span class=gpu_util_class(rank.gpu_utilization)>
+                        {format!("{:.1}%", rank.gpu_utilization)}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">"显存"</span>
+                    <span>
+                        {format!("{:.1}/{:.0} GB", rank.gpu_memory_used_gb, rank.gpu_memory_total_gb)}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">"NCCL 延迟"</span>
+                    <span class=nccl_class(rank.nccl_latency_ms)>
+                        {format!("{:.2} ms", rank.nccl_latency_ms)}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">"当前 Step"</span>
+                    <span>{rank.current_step}</span>
+                </div>
+            </div>
+
+            // Step 详细信息（条件显示）
+            <Suspense fallback=|| ()>
+                {move || {
+                    step_resource.get().flatten().map(|step_metrics| {
+                        view! {
+                            <div class="rank-step-details">
+                                <h4>"Step 详情 (实时)"</h4>
+                                <div class="step-detail-grid">
+                                    <div class="step-detail">
+                                        <span class="detail-label">"Step"</span>
+                                        <span class="detail-value">{step_metrics.current_step}</span>
+                                    </div>
+                                    <div class="step-detail">
+                                        <span class="detail-label">"Duration"</span>
+                                        <span class="detail-value">
+                                            {step_metrics.latest_duration_ms
+                                                .map(|d| format!("{:.2} ms", d))
+                                                .unwrap_or_else(|| "-".to_string())}
+                                        </span>
+                                    </div>
+                                    <div class="step-detail">
+                                        <span class="detail-label">"Allocated"</span>
+                                        <span class="detail-value">
+                                            {step_metrics.latest_allocated_gb
+                                                .map(|a| format!("{:.2} GB", a))
+                                                .unwrap_or_else(|| "-".to_string())}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    })
+                }}
+            </Suspense>
+
+            {rank.error_message.map(|msg| view! {
+                <div class="rank-error">
+                    <span class="error-icon">"⚠"</span>
+                    {msg}
+                </div>
+            })}
+        </div>
     }
 }

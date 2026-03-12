@@ -266,3 +266,67 @@ pub async fn get_node_stacks(ip: String) -> Result<NodeStacksResponse, ServerFnE
 pub async fn get_mock_mode_status() -> Result<bool, ServerFnError> {
     Ok(is_mock_mode())
 }
+
+// ============ Step 指标 API (Phase 2) ============
+
+/// 检查是否启用了 Step 显示功能
+#[server(GetStepShowEnabled)]
+pub async fn get_step_show_enabled() -> Result<bool, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::adapter::is_step_show_enabled;
+        Ok(is_step_show_enabled())
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Ok(false)
+    }
+}
+
+/// 获取全局 Step 指标（首页使用）
+#[server(GetGlobalStepMetrics)]
+pub async fn get_global_step_metrics() -> Result<crate::models::GlobalStepMetrics, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::adapter::{get_global_step_metrics as fetch_global_step, is_step_show_enabled};
+        
+        if !is_step_show_enabled() {
+            return Err(ServerFnError::new("Step 显示功能未启用 (STEP_SHOW=true)"));
+        }
+        
+        match fetch_global_step().await {
+            Ok(metrics) => Ok(metrics),
+            Err(e) => Err(ServerFnError::new(format!("获取 Step 指标失败: {}", e))),
+        }
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Err(ServerFnError::new("SSR feature required"))
+    }
+}
+
+/// 获取指定 Rank 的 Step 指标
+#[server(GetRankStepMetrics)]
+pub async fn get_rank_step_metrics(
+    ip: String,
+    local_rank: u8,
+    rank_id: u32,
+) -> Result<crate::models::RankStepMetrics, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::adapter::{get_rank_step_metrics as fetch_rank_step, is_step_show_enabled};
+        
+        if !is_step_show_enabled() {
+            return Err(ServerFnError::new("Step 显示功能未启用 (STEP_SHOW=true)"));
+        }
+        
+        match fetch_rank_step(&ip, local_rank, rank_id).await {
+            Ok(metrics) => Ok(metrics),
+            Err(e) => Err(ServerFnError::new(format!("获取 Rank Step 指标失败: {}", e))),
+        }
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Err(ServerFnError::new("SSR feature required"))
+    }
+}

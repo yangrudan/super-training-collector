@@ -16,6 +16,12 @@ use std::io::{BufRead, BufReader, Read, Write};
 #[derive(Deserialize)]
 pub struct CollectorConfig {
     pub callstack_base_port: u16,
+    #[serde(default = "default_step_query_port_offset")]
+    pub step_query_port_offset: u16,
+}
+
+fn default_step_query_port_offset() -> u16 {
+    1  // 默认偏移量为 1
 }
 
 /// Load collector config from `config/collector.json`.

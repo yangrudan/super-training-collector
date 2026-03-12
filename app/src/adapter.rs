@@ -484,3 +484,88 @@ pub fn generate_global_metrics_from_real_data(nodes: &[NodeMetrics], ranks: &[Ra
         last_update,
     }
 }
+
+// ============ Step 指标查询 (Phase 2) ============
+
+#[cfg(feature = "ssr")]
+use crate::models::{StepQueryRequest, StepQueryResponse, StepRecord, GlobalStepMetrics, RankStepMetrics};
+
+#[cfg(feature = "ssr")]
+/// 检查是否启用了 Step 显示功能
+pub fn is_step_show_enabled() -> bool {
+    std::env::var("STEP_SHOW")
+        .map(|v| v.to_lowercase() == "true" || v == "1")
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "ssr")]
+/// 向指定 URL 发送 Step 查询请求
+pub async fn query_step_metrics(url: &str, limit: u32) -> Result<StepQueryResponse, Error> {
+    let client = reqwest::Client::new();
+    let request = StepQueryRequest::new(limit);
+    
+    let resp = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await?;
+    
+    // 尝试解析响应，如果失败则返回空记录
+    let response: StepQueryResponse = resp.json().await.unwrap_or_else(|_| {
+        StepQueryResponse { records: vec![] }
+    });
+    
+    Ok(response)
+}
+
+#[cfg(feature = "ssr")]
+/// 获取全局 Step 指标（首页使用）
+/// 端口 = callstack_base_port + step_query_port_offset
+pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, Error> {
+    let config = load_collector_config("./config/collector.json")
+        .map_err(|e| reqwest::Error::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+    
+    let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = config.callstack_base_port + config.step_query_port_offset;
+    let url = format!("http://{}:{}/query", host, port);
+    
+    let response = query_step_metrics(&url, 3).await?;
+    
+    let current_step = response.records.first().map(|r| r.step).unwrap_or(0);
+    let latest_duration_ms = response.records.first().and_then(|r| r.duration).map(|d| d / 1000.0); // 微秒转毫秒
+    let latest_allocated_gb = response.records.first().and_then(|r| r.allocated).map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
+    
+    Ok(GlobalStepMetrics {
+        current_step,
+        latest_duration_ms,
+        latest_allocated_gb,
+        records: response.records,
+    })
+}
+
+#[cfg(feature = "ssr")]
+/// 获取指定 Rank 的 Step 指标
+/// 端口 = callstack_base_port + local_rank
+pub async fn get_rank_step_metrics(ip: &str, local_rank: u8, rank_id: u32) -> Result<RankStepMetrics, Error> {
+    let config = load_collector_config("./config/collector.json")
+        .map_err(|e| reqwest::Error::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+    
+    let port = config.callstack_base_port + local_rank as u16;
+    let url = format!("http://{}:{}/query", ip, port);
+    
+    let response = query_step_metrics(&url, 3).await?;
+    
+    let current_step = response.records.first().map(|r| r.step).unwrap_or(0);
+    let latest_duration_ms = response.records.first().and_then(|r| r.duration).map(|d| d / 1000.0);
+    let latest_allocated_gb = response.records.first().and_then(|r| r.allocated).map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
+    
+    Ok(RankStepMetrics {
+        rank_id,
+        node_ip: ip.to_string(),
+        current_step,
+        latest_duration_ms,
+        latest_allocated_gb,
+        records: response.records,
+    })
+}

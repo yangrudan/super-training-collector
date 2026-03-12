@@ -949,3 +949,104 @@ section {
         }
     }
 }
+
+// ============ Step 指标样式 (Phase 2) ============
+
+.step-metrics-section {
+    margin: 2rem 0;
+    padding: 1.5rem;
+    background: var(--surface-color);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+
+    h2 {
+        margin-bottom: 1rem;
+        color: var(--primary-color);
+    }
+
+    .step-metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .step-metrics-error {
+        color: var(--warning-color);
+        font-style: italic;
+        padding: 1rem;
+        text-align: center;
+    }
+}
+
+.step-records-table {
+    margin-top: 1rem;
+
+    h3 {
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+        color: var(--text-secondary);
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: var(--background-color);
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: rgba(var(--primary-rgb), 0.05);
+        }
+    }
+}
+
+// Rank 卡片中的 Step 详情
+.rank-step-details {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--border-color);
+
+    h4 {
+        font-size: 0.85rem;
+        color: var(--primary-color);
+        margin-bottom: 0.5rem;
+    }
+
+    .step-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+    }
+
+    .step-detail {
+        display: flex;
+        flex-direction: column;
+        
+        .detail-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .detail-value {
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+    }
+}
+
+.loading-small {
+    color: var(--text-secondary);
+    font-style: italic;
+    padding: 0.5rem;
+}

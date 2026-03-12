@@ -265,6 +265,102 @@ pub struct NodeStacksResponse {
     pub collected_at: u64,
 }
 
+// ============ Step 指标相关数据结构 (Phase 2) ============
+
+/// Step 查询请求版本
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepQueryVersion {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl Default for StepQueryVersion {
+    fn default() -> Self {
+        Self { major: 0, minor: 1, patch: 0 }
+    }
+}
+
+/// Step 查询选项
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepQueryOpts {
+    pub limit: u32,
+}
+
+/// Step 查询 Payload
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepQueryPayload {
+    pub expr: String,
+    pub opts: StepQueryOpts,
+}
+
+/// Step 查询请求
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepQueryRequest {
+    pub version: StepQueryVersion,
+    pub timestamp: u64,
+    pub payload: StepQueryPayload,
+}
+
+impl StepQueryRequest {
+    /// 创建默认的 Step 查询请求
+    pub fn new(limit: u32) -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+        
+        Self {
+            version: StepQueryVersion::default(),
+            timestamp,
+            payload: StepQueryPayload {
+                expr: format!(
+                    "SELECT step, module, stage, duration, allocated FROM python.torch_trace WHERE step >= 0 ORDER BY step DESC LIMIT {}",
+                    limit
+                ),
+                opts: StepQueryOpts { limit },
+            },
+        }
+    }
+}
+
+/// 单条 Step 记录
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepRecord {
+    pub step: u64,
+    pub module: Option<String>,
+    pub stage: Option<String>,
+    pub duration: Option<f64>,      // 耗时（微秒或毫秒，取决于API）
+    pub allocated: Option<u64>,     // 显存分配（字节）
+}
+
+/// Step 查询响应
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepQueryResponse {
+    pub records: Vec<StepRecord>,
+}
+
+/// 全局 Step 指标（用于首页显示）
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GlobalStepMetrics {
+    pub current_step: u64,
+    pub latest_duration_ms: Option<f64>,
+    pub latest_allocated_gb: Option<f64>,
+    pub records: Vec<StepRecord>,
+}
+
+/// Rank Step 指标（用于三级页面显示）
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RankStepMetrics {
+    pub rank_id: u32,
+    pub node_ip: String,
+    pub current_step: u64,
+    pub latest_duration_ms: Option<f64>,
+    pub latest_allocated_gb: Option<f64>,
+    pub records: Vec<StepRecord>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
