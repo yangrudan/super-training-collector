@@ -2,6 +2,12 @@
 resolver = "2"
 members = ["app", "frontend", "server"]
 
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://gitlab.zhejianglab.com/research-center-for-high-efficiency-computing-infrastructure/nhhal/supertrainningcollector"
+
 # need to be applied only to wasm build
 [profile.release]
 codegen-units = 1
