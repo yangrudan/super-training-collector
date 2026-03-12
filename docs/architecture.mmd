@@ -1,0 +1,69 @@
+flowchart TD
+    %% User Interaction Layer
+    User[User Browser] -->|HTTP Requests| WebUI[Leptos Web UI]
+
+    %% Frontend Layer (WASM)
+    WebUI -->|Renders| Level1[Level1View: Global Overview]
+    WebUI -->|Renders| Level2[Level2View: Node List]
+    WebUI -->|Renders| Level3[Level3View: Node Details]
+
+    %% Backend Layer
+    WebUI -->|API Calls| AxumServer[Axum HTTP Server]
+
+    %% Application Logic Layer
+    AxumServer -->|Routes Requests| APIModule[API Module]
+    APIModule -->|Data Processing| DataAdapter[Data Adapter]
+    APIModule -->|Stack Processing| FlameGraph[FlameGraph Module]
+
+    %% Data Sources
+    DataAdapter -->|Mock Mode| MockData[Mock Data Generator]
+    DataAdapter -->|Real Mode| MonitorSource[Monitoring System]
+
+    %% Configuration & Assets
+    AxumServer -->|Serves| StaticAssets[Static Assets]
+    AxumServer -->|Reads| Config[Configuration]
+
+    %% External Systems
+    MonitorSource -->|Collects Metrics| TrainingNodes[Training Nodes]
+    FlameGraph -->|Analyzes| StackData[Call Stack Data]
+
+    %% Styling
+    StaticAssets -->|Includes| Styles[SCSS Stylesheets]
+
+    %% Subgraphs for clarity
+    subgraph Frontend [Frontend - WASM]
+        Level1
+        Level2
+        Level3
+    end
+
+    subgraph Backend [Backend - Rust]
+        AxumServer
+        APIModule
+        DataAdapter
+        FlameGraph
+    end
+
+    subgraph DataSources [Data Sources]
+        MockData
+        MonitorSource
+        TrainingNodes
+        StackData
+    end
+
+    subgraph ConfigAssets [Configuration & Assets]
+        Config
+        StaticAssets
+        Styles
+    end
+
+    %% Styling
+    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef backend fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef datasource fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef config fill:#fff3e0,stroke:#e65100,stroke-width:2px
+
+    class Frontend frontend
+    class Backend backend
+    class DataSources datasource
+    class ConfigAssets config

@@ -49,6 +49,8 @@
 | 样式   | SCSS                                               |
 | 测试   | Playwright (E2E)                                   |
 
+![技术栈](./docs/LeptosWebUIInteraction.png)
+
 ---
 
 ## 环境要求
