@@ -22,6 +22,8 @@ cache:
 check:
   stage: check
   image: rustlang/rust:nightly
+  tags:
+    - shared
   script:
     - rustup component add clippy rustfmt
     - cargo fmt --all -- --check
@@ -35,6 +37,8 @@ check:
 build:
   stage: build
   image: rustlang/rust:nightly
+  tags:
+    - shared
   before_script:
     - rustup target add wasm32-unknown-unknown
     - cargo install cargo-leptos
@@ -54,6 +58,8 @@ build:
 test:
   stage: test
   image: rustlang/rust:nightly
+  tags:
+    - shared
   script:
     - cargo test --workspace
   only:
@@ -65,6 +71,8 @@ test:
 release:
   stage: release
   image: rustlang/rust:nightly
+  tags:
+    - shared
   dependencies:
     - build
   script:
