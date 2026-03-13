@@ -1,6 +1,8 @@
 #[cfg(feature = "ssr")]
 use reqwest::Error;
 #[cfg(feature = "ssr")]
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+#[cfg(feature = "ssr")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "ssr")]
 use crate::models::{RankMetrics, NodeMetrics, GlobalMetrics, HealthStatus};
@@ -488,7 +490,7 @@ pub fn generate_global_metrics_from_real_data(nodes: &[NodeMetrics], ranks: &[Ra
 // ============ Step 指标查询 (Phase 2) ============
 
 #[cfg(feature = "ssr")]
-use crate::models::{StepQueryRequest, StepQueryResponse, StepRecord, GlobalStepMetrics, RankStepMetrics};
+use crate::models::{StepQueryRequest, StepQueryResponse, StepQueryRawResponse, GlobalStepMetrics, RankStepMetrics};
 
 #[cfg(feature = "ssr")]
 /// 检查是否启用了 Step 显示功能
@@ -501,40 +503,76 @@ pub fn is_step_show_enabled() -> bool {
 #[cfg(feature = "ssr")]
 /// 向指定 URL 发送 Step 查询请求
 pub async fn query_step_metrics(url: &str, limit: u32) -> Result<StepQueryResponse, Error> {
+    println!("[Step Query] Requesting URL: {}, limit: {}", url, limit);
+    
     let client = reqwest::Client::new();
     let request = StepQueryRequest::new(limit);
     
-    let resp = client
+    let resp = match client
         .post(url)
         .header("Content-Type", "application/json")
         .json(&request)
         .send()
-        .await?;
+        .await {
+            Ok(r) => {
+                println!("[Step Query] Got response, status: {}", r.status());
+                r
+            },
+            Err(e) => {
+                println!("[Step Query] Request failed: {}", e);
+                return Err(e);
+            }
+        };
     
-    // 尝试解析响应，如果失败则返回空记录
-    let response: StepQueryResponse = resp.json().await.unwrap_or_else(|_| {
+    let body = resp.text().await.unwrap_or_default();
+    println!("[Step Query] Response body (first 500 chars): {}", &body.chars().take(500).collect::<String>());
+    
+    // 先尝试解析为 DataFrame 格式（实际 API 返回格式）
+    if let Ok(raw_response) = serde_json::from_str::<StepQueryRawResponse>(&body) {
+        let records = raw_response.to_records();
+        println!("[Step Query] Parsed DataFrame format, got {} records", records.len());
+        if let Some(first) = records.first() {
+            println!("[Step Query] First record: step={}, duration={:?}, allocated={:?}", 
+                     first.step, first.duration, first.allocated);
+        }
+        return Ok(StepQueryResponse { records });
+    }
+    
+    // 回退：尝试直接解析为 StepQueryResponse 格式
+    let response: StepQueryResponse = serde_json::from_str(&body).unwrap_or_else(|e| {
+        println!("[Step Query] Failed to parse response: {}", e);
         StepQueryResponse { records: vec![] }
     });
     
+    println!("[Step Query] Parsed {} records", response.records.len());
     Ok(response)
 }
 
 #[cfg(feature = "ssr")]
 /// 获取全局 Step 指标（首页使用）
 /// 端口 = callstack_base_port + step_query_port_offset
-pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, Error> {
+pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, BoxError> {
+    println!("[Global Step] Loading config...");
     let config = load_collector_config("./config/collector.json")
-        .map_err(|e| reqwest::Error::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| -> BoxError { 
+            println!("[Global Step] Config load failed: {}", e);
+            e.to_string().into() 
+        })?;
     
     let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = config.callstack_base_port + config.step_query_port_offset;
     let url = format!("http://{}:{}/query", host, port);
+    println!("[Global Step] Config loaded. callstack_base_port={}, step_query_port_offset={}, URL={}", 
+             config.callstack_base_port, config.step_query_port_offset, url);
     
     let response = query_step_metrics(&url, 3).await?;
     
     let current_step = response.records.first().map(|r| r.step).unwrap_or(0);
     let latest_duration_ms = response.records.first().and_then(|r| r.duration).map(|d| d / 1000.0); // 微秒转毫秒
     let latest_allocated_gb = response.records.first().and_then(|r| r.allocated).map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
+    
+    println!("[Global Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}", 
+             current_step, latest_duration_ms, latest_allocated_gb);
     
     Ok(GlobalStepMetrics {
         current_step,
@@ -547,18 +585,26 @@ pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, Error> {
 #[cfg(feature = "ssr")]
 /// 获取指定 Rank 的 Step 指标
 /// 端口 = callstack_base_port + local_rank
-pub async fn get_rank_step_metrics(ip: &str, local_rank: u8, rank_id: u32) -> Result<RankStepMetrics, Error> {
+pub async fn get_rank_step_metrics(ip: &str, local_rank: u8, rank_id: u32) -> Result<RankStepMetrics, BoxError> {
+    println!("[Rank Step] rank_id={}, ip={}, local_rank={}", rank_id, ip, local_rank);
     let config = load_collector_config("./config/collector.json")
-        .map_err(|e| reqwest::Error::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| -> BoxError { 
+            println!("[Rank Step] Config load failed: {}", e);
+            e.to_string().into() 
+        })?;
     
     let port = config.callstack_base_port + local_rank as u16;
     let url = format!("http://{}:{}/query", ip, port);
+    println!("[Rank Step] callstack_base_port={}, URL={}", config.callstack_base_port, url);
     
     let response = query_step_metrics(&url, 3).await?;
     
     let current_step = response.records.first().map(|r| r.step).unwrap_or(0);
     let latest_duration_ms = response.records.first().and_then(|r| r.duration).map(|d| d / 1000.0);
     let latest_allocated_gb = response.records.first().and_then(|r| r.allocated).map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
+    
+    println!("[Rank Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}", 
+             current_step, latest_duration_ms, latest_allocated_gb);
     
     Ok(RankStepMetrics {
         rank_id,

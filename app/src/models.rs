@@ -335,6 +335,104 @@ pub struct StepRecord {
     pub allocated: Option<u64>,     // 显存分配（字节）
 }
 
+// ============ DataFrame 原始响应格式 ============
+
+/// DataFrame 列数据
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+#[allow(non_snake_case)]
+pub enum DataFrameCol {
+    SeqI64 { SeqI64: Vec<i64> },
+    SeqF64 { SeqF64: Vec<f64> },
+    SeqText { SeqText: Vec<String> },
+}
+
+/// DataFrame 结构
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataFrame {
+    pub names: Vec<String>,
+    pub cols: Vec<DataFrameCol>,
+    pub size: u32,
+}
+
+/// DataFrame 响应的 payload
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataFramePayload {
+    #[serde(rename = "DataFrame")]
+    pub dataframe: DataFrame,
+}
+
+/// Step 查询的原始 API 响应
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepQueryRawResponse {
+    pub payload: DataFramePayload,
+}
+
+impl StepQueryRawResponse {
+    /// 将 DataFrame 格式转换为 StepRecord 列表
+    pub fn to_records(&self) -> Vec<StepRecord> {
+        let df = &self.payload.dataframe;
+        
+        // 找到各列的索引
+        let step_idx = df.names.iter().position(|n| n == "step");
+        let module_idx = df.names.iter().position(|n| n == "module");
+        let stage_idx = df.names.iter().position(|n| n == "stage");
+        let duration_idx = df.names.iter().position(|n| n == "duration");
+        let allocated_idx = df.names.iter().position(|n| n == "allocated");
+        
+        // 获取行数
+        let row_count = df.cols.first().map(|col| match col {
+            DataFrameCol::SeqI64 { SeqI64 } => SeqI64.len(),
+            DataFrameCol::SeqF64 { SeqF64 } => SeqF64.len(),
+            DataFrameCol::SeqText { SeqText } => SeqText.len(),
+        }).unwrap_or(0);
+        
+        let mut records = Vec::with_capacity(row_count);
+        
+        for i in 0..row_count {
+            let step = step_idx.and_then(|idx| {
+                if let Some(DataFrameCol::SeqI64 { SeqI64 }) = df.cols.get(idx) {
+                    SeqI64.get(i).map(|v| *v as u64)
+                } else { None }
+            }).unwrap_or(0);
+            
+            let module = module_idx.and_then(|idx| {
+                if let Some(DataFrameCol::SeqText { SeqText }) = df.cols.get(idx) {
+                    SeqText.get(i).cloned()
+                } else { None }
+            });
+            
+            let stage = stage_idx.and_then(|idx| {
+                if let Some(DataFrameCol::SeqText { SeqText }) = df.cols.get(idx) {
+                    SeqText.get(i).cloned()
+                } else { None }
+            });
+            
+            let duration = duration_idx.and_then(|idx| {
+                if let Some(DataFrameCol::SeqF64 { SeqF64 }) = df.cols.get(idx) {
+                    SeqF64.get(i).copied()
+                } else { None }
+            });
+            
+            let allocated = allocated_idx.and_then(|idx| {
+                if let Some(DataFrameCol::SeqF64 { SeqF64 }) = df.cols.get(idx) {
+                    SeqF64.get(i).map(|v| *v as u64)
+                } else { None }
+            });
+            
+            records.push(StepRecord {
+                step,
+                module,
+                stage,
+                duration,
+                allocated,
+            });
+        }
+        
+        records
+    }
+}
+
 /// Step 查询响应
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StepQueryResponse {
