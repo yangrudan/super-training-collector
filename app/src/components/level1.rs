@@ -85,10 +85,42 @@ pub fn Level1View() -> impl IntoView {
                                     <section class="progress-section">
                                         <h2>"训练进度"</h2>
                                         <div class="progress-grid">
-                                            <KpiCard
-                                                title="当前 Step"
-                                                value=format!("{}", metrics.current_step)
-                                            />
+                                            // 当前 Step：优先使用实时 Step 数据
+                                            <Suspense fallback=move || view! { 
+                                                <KpiCard title="当前 Step" value=format!("{}", metrics.current_step) /> 
+                                            }>
+                                                {move || {
+                                                    let enabled = step_enabled_resource.get()
+                                                        .and_then(|r| r.ok())
+                                                        .unwrap_or(false);
+                                                    
+                                                    if enabled {
+                                                        step_resource.get().map(|result| {
+                                                            match result {
+                                                                Ok(step_metrics) if step_metrics.current_step > 0 => view! {
+                                                                    <KpiCard
+                                                                        title="当前 Step"
+                                                                        value=format!("{}", step_metrics.current_step)
+                                                                    />
+                                                                }.into_any(),
+                                                                _ => view! {
+                                                                    <KpiCard
+                                                                        title="当前 Step"
+                                                                        value=format!("{}", metrics.current_step)
+                                                                    />
+                                                                }.into_any(),
+                                                            }
+                                                        })
+                                                    } else {
+                                                        Some(view! {
+                                                            <KpiCard
+                                                                title="当前 Step"
+                                                                value=format!("{}", metrics.current_step)
+                                                            />
+                                                        }.into_any())
+                                                    }
+                                                }}
+                                            </Suspense>
                                             <KpiCard
                                                 title="训练速度"
                                                 value=format!("{:.2}", metrics.steps_per_second)
