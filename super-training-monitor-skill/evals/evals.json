@@ -1,0 +1,40 @@
+{
+  "skill_name": "super-training-monitor",
+  "evals": [
+    {
+      "id": 1,
+      "name": "获取全局状态",
+      "prompt": "我的训练监控面板运行在 http://localhost:3000，帮我看看集群的总体状态",
+      "expected_output": "应该询问确认地址，然后获取全局指标并展示健康状态、性能指标和训练进度摘要",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "查找慢节点",
+      "prompt": "训练监控在 3000 端口，有哪些节点比较慢？按慢节点排序给我看看",
+      "expected_output": "应该获取节点列表并按SlowRatio降序排序，展示节点表格，包含IP、状态、慢rank占比、性能指标",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "分析特定节点",
+      "prompt": "节点 192.168.1.100 看起来有问题，给我详细信息和火焰图",
+      "expected_output": "应该获取节点rank详情，展示各个GPU的性能，然后获取火焰图SVG并保存为文件",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "检查Step指标",
+      "prompt": "我想看看最近的step数据，监控面板在 127.0.0.1:3000",
+      "expected_output": "应该检查Step功能是否启用，如果启用则获取全局Step指标，展示当前step、duration和显存分配",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "集群诊断",
+      "prompt": "帮我全面诊断一下训练集群，所有节点都要检查",
+      "expected_output": "应该执行完整工作流：获取全局指标→节点列表→诊断问题节点→提供建议",
+      "files": []
+    }
+  ]
+}
