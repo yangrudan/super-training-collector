@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
     #[default]
-    Healthy,  // 绿色：正常
+    Healthy, // 绿色：正常
     Warning,  // 黄色：性能下降但未故障
     Critical, // 红色：故障或严重异常
 }
@@ -30,10 +30,10 @@ impl HealthStatus {
 /// 单个 Rank 的指标数据
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RankMetrics {
-    pub rank_id: u32,             // 全局唯一 rank ID (0-127)
-    pub local_rank: u8,           // 节点内 GPU 编号 (0-7)
-    pub node_ip: String,          // 所属节点 IP
-    pub hostname: String,         // 主机名 (来自 NodeInfo.host)
+    pub rank_id: u32,     // 全局唯一 rank ID (0-127)
+    pub local_rank: u8,   // 节点内 GPU 编号 (0-7)
+    pub node_ip: String,  // 所属节点 IP
+    pub hostname: String, // 主机名 (来自 NodeInfo.host)
 
     // 核心指标
     pub step_time_ms: f64,        // 当前 step 耗时 (毫秒)
@@ -48,23 +48,23 @@ pub struct RankMetrics {
 
     // 状态
     pub status: HealthStatus,
-    pub last_heartbeat: u64,      // Unix 时间戳 (秒)
-    pub current_step: u64,        // 当前训练 step
+    pub last_heartbeat: u64, // Unix 时间戳 (秒)
+    pub current_step: u64,   // 当前训练 step
     pub error_message: Option<String>,
 }
 
 /// 节点聚合指标
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeMetrics {
-    pub node_ip: String,          // 节点 IP
-    pub hostname: String,         // 主机名
-    pub rack_id: String,          // 机柜 ID
+    pub node_ip: String,  // 节点 IP
+    pub hostname: String, // 主机名
+    pub rack_id: String,  // 机柜 ID
 
     // 聚合指标
-    pub rank_count: u8,           // 节点上的 rank 数量 (通常为 8)
-    pub healthy_count: u8,        // 健康 rank 数量
-    pub warning_count: u8,        // 警告 rank 数量
-    pub critical_count: u8,       // 故障 rank 数量
+    pub rank_count: u8,     // 节点上的 rank 数量 (通常为 8)
+    pub healthy_count: u8,  // 健康 rank 数量
+    pub warning_count: u8,  // 警告 rank 数量
+    pub critical_count: u8, // 故障 rank 数量
 
     // 性能聚合
     pub slow_ratio: f32,          // 慢 rank 占比 (0.0-1.0)
@@ -75,15 +75,15 @@ pub struct NodeMetrics {
     pub avg_nccl_latency_ms: f64, // 平均 NCCL 延迟
 
     // 状态
-    pub status: HealthStatus,     // 节点整体状态
-    pub last_update: u64,         // 最后更新时间戳
+    pub status: HealthStatus, // 节点整体状态
+    pub last_update: u64,     // 最后更新时间戳
 }
 
 /// 全局聚合指标 (Level 1 视图)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlobalMetrics {
-    pub total_nodes: u16,         // 总节点数
-    pub total_ranks: u16,         // 总 rank 数
+    pub total_nodes: u16, // 总节点数
+    pub total_ranks: u16, // 总 rank 数
 
     // 健康分布
     pub healthy_nodes: u16,
@@ -97,7 +97,7 @@ pub struct GlobalMetrics {
     pub global_p50_step_time_ms: f64,
     pub global_p99_step_time_ms: f64,
     pub global_avg_gpu_utilization: f32,
-    pub slow_node_ratio: f32,     // 慢节点占比
+    pub slow_node_ratio: f32, // 慢节点占比
 
     // 训练进度
     pub current_step: u64,
@@ -181,7 +181,7 @@ impl Default for StatusFilter {
 pub struct RankStack {
     pub rank_id: u32,
     pub node_ip: String,
-    pub callstack: Vec<String>,      // 调用栈帧列表 (从栈底到栈顶)
+    pub callstack: Vec<String>, // 调用栈帧列表 (从栈底到栈顶)
     pub timestamp: u64,
 }
 
@@ -189,10 +189,10 @@ pub struct RankStack {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MergedStackFrame {
     pub frame_name: String,
-    pub depth: u32,                   // 调用深度
-    pub rank_ids: Vec<u32>,           // 包含此帧的 rank 列表
+    pub depth: u32,         // 调用深度
+    pub rank_ids: Vec<u32>, // 包含此帧的 rank 列表
     pub rank_count: u32,
-    pub total_ranks: u32,             // 总 rank 数，用于计算覆盖率
+    pub total_ranks: u32, // 总 rank 数，用于计算覆盖率
     pub children: Vec<MergedStackFrame>,
 }
 
@@ -244,7 +244,7 @@ impl MergedStackFrame {
                 end = rank;
             }
         }
-        
+
         // 处理最后一个范围
         if start == end {
             result.push(format!("{}", start));
@@ -277,7 +277,11 @@ pub struct StepQueryVersion {
 
 impl Default for StepQueryVersion {
     fn default() -> Self {
-        Self { major: 0, minor: 1, patch: 0 }
+        Self {
+            major: 0,
+            minor: 1,
+            patch: 0,
+        }
     }
 }
 
@@ -310,7 +314,7 @@ impl StepQueryRequest {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
-        
+
         Self {
             version: StepQueryVersion::default(),
             timestamp,
@@ -331,8 +335,8 @@ pub struct StepRecord {
     pub step: u64,
     pub module: Option<String>,
     pub stage: Option<String>,
-    pub duration: Option<f64>,      // 耗时（微秒或毫秒，取决于API）
-    pub allocated: Option<u64>,     // 显存分配（字节）
+    pub duration: Option<f64>,  // 耗时（微秒或毫秒，取决于API）
+    pub allocated: Option<u64>, // 显存分配（字节）
 }
 
 // ============ DataFrame 原始响应格式 ============
@@ -359,67 +363,90 @@ pub struct DataFrame {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataFramePayload {
     #[serde(rename = "DataFrame")]
-    pub dataframe: DataFrame,
+    pub dataframe: Option<DataFrame>,
 }
 
 /// Step 查询的原始 API 响应
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StepQueryRawResponse {
-    pub payload: DataFramePayload,
+    #[serde(default)]
+    pub payload: Option<DataFramePayload>,
 }
 
 impl StepQueryRawResponse {
     /// 将 DataFrame 格式转换为 StepRecord 列表
     pub fn to_records(&self) -> Vec<StepRecord> {
-        let df = &self.payload.dataframe;
-        
+        let Some(df) = self
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.dataframe.as_ref())
+        else {
+            return Vec::new();
+        };
+
         // 找到各列的索引
         let step_idx = df.names.iter().position(|n| n == "step");
         let module_idx = df.names.iter().position(|n| n == "module");
         let stage_idx = df.names.iter().position(|n| n == "stage");
         let duration_idx = df.names.iter().position(|n| n == "duration");
         let allocated_idx = df.names.iter().position(|n| n == "allocated");
-        
+
         // 获取行数
-        let row_count = df.cols.first().map(|col| match col {
-            DataFrameCol::SeqI64 { SeqI64 } => SeqI64.len(),
-            DataFrameCol::SeqF64 { SeqF64 } => SeqF64.len(),
-            DataFrameCol::SeqText { SeqText } => SeqText.len(),
-        }).unwrap_or(0);
-        
+        let row_count = df
+            .cols
+            .first()
+            .map(|col| match col {
+                DataFrameCol::SeqI64 { SeqI64 } => SeqI64.len(),
+                DataFrameCol::SeqF64 { SeqF64 } => SeqF64.len(),
+                DataFrameCol::SeqText { SeqText } => SeqText.len(),
+            })
+            .unwrap_or(0);
+
         let mut records = Vec::with_capacity(row_count);
-        
+
         for i in 0..row_count {
-            let step = step_idx.and_then(|idx| {
-                if let Some(DataFrameCol::SeqI64 { SeqI64 }) = df.cols.get(idx) {
-                    SeqI64.get(i).map(|v| *v as u64)
-                } else { None }
-            }).unwrap_or(0);
-            
+            let step = step_idx
+                .and_then(|idx| {
+                    if let Some(DataFrameCol::SeqI64 { SeqI64 }) = df.cols.get(idx) {
+                        SeqI64.get(i).map(|v| *v as u64)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+
             let module = module_idx.and_then(|idx| {
                 if let Some(DataFrameCol::SeqText { SeqText }) = df.cols.get(idx) {
                     SeqText.get(i).cloned()
-                } else { None }
+                } else {
+                    None
+                }
             });
-            
+
             let stage = stage_idx.and_then(|idx| {
                 if let Some(DataFrameCol::SeqText { SeqText }) = df.cols.get(idx) {
                     SeqText.get(i).cloned()
-                } else { None }
+                } else {
+                    None
+                }
             });
-            
+
             let duration = duration_idx.and_then(|idx| {
                 if let Some(DataFrameCol::SeqF64 { SeqF64 }) = df.cols.get(idx) {
                     SeqF64.get(i).copied()
-                } else { None }
+                } else {
+                    None
+                }
             });
-            
+
             let allocated = allocated_idx.and_then(|idx| {
                 if let Some(DataFrameCol::SeqF64 { SeqF64 }) = df.cols.get(idx) {
                     SeqF64.get(i).map(|v| *v as u64)
-                } else { None }
+                } else {
+                    None
+                }
             });
-            
+
             records.push(StepRecord {
                 step,
                 module,
@@ -428,7 +455,7 @@ impl StepQueryRawResponse {
                 allocated,
             });
         }
-        
+
         records
     }
 }
@@ -487,7 +514,7 @@ mod tests {
             total_ranks: 10,
             children: vec![],
         };
-        
+
         assert_eq!(frame.coverage(), 0.4);
     }
 
@@ -501,7 +528,7 @@ mod tests {
             total_ranks: 0,
             children: vec![],
         };
-        
+
         assert_eq!(frame.coverage(), 0.0);
     }
 
@@ -516,10 +543,10 @@ mod tests {
             children: vec![],
         };
         assert_eq!(frame.coverage_class(), "coverage-full");
-        
+
         frame.rank_count = 6;
         assert_eq!(frame.coverage_class(), "coverage-partial");
-        
+
         frame.rank_count = 2;
         assert_eq!(frame.coverage_class(), "coverage-rare");
     }
@@ -534,7 +561,7 @@ mod tests {
             total_ranks: 10,
             children: vec![],
         };
-        
+
         let result = frame.rank_range_str();
         assert_eq!(result, "0-4");
     }
@@ -549,7 +576,7 @@ mod tests {
             total_ranks: 12,
             children: vec![],
         };
-        
+
         let result = frame.rank_range_str();
         assert!(result.contains("0-2"));
         assert!(result.contains("5-6"));
@@ -566,7 +593,7 @@ mod tests {
             total_ranks: 10,
             children: vec![],
         };
-        
+
         let result = frame.rank_range_str();
         assert_eq!(result, "5");
     }
@@ -581,8 +608,68 @@ mod tests {
             total_ranks: 10,
             children: vec![],
         };
-        
+
         let result = frame.rank_range_str();
         assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_step_query_raw_response_with_null_payload_returns_empty_records() {
+        let response: StepQueryRawResponse = serde_json::from_str(
+            r#"{
+                "version":{"major":0,"minor":1,"patch":0},
+                "message_id":null,
+                "timestamp":1773635070305844,
+                "payload":null
+            }"#,
+        )
+        .unwrap();
+
+        assert!(response.to_records().is_empty());
+    }
+
+    #[test]
+    fn test_step_query_raw_response_with_empty_dataframe_payload_returns_empty_records() {
+        let response: StepQueryRawResponse = serde_json::from_str(
+            r#"{
+                "version":{"major":0,"minor":1,"patch":0},
+                "message_id":null,
+                "timestamp":1773635070305844,
+                "payload":{"DataFrame":{"names":[],"cols":[],"size":0}}
+            }"#,
+        )
+        .unwrap();
+
+        assert!(response.to_records().is_empty());
+    }
+
+    #[test]
+    fn test_step_query_raw_response_with_fewer_than_three_rows() {
+        let response: StepQueryRawResponse = serde_json::from_str(
+            r#"{
+                "version":{"major":0,"minor":1,"patch":0},
+                "message_id":null,
+                "timestamp":1773635071837842,
+                "payload":{
+                    "DataFrame":{
+                        "names":["step","module","stage","duration","allocated"],
+                        "cols":[
+                            {"SeqI64":[1099716,1099715]},
+                            {"SeqText":["None","None"]},
+                            {"SeqText":["pre forward","post forward"]},
+                            {"SeqF64":[0.0,0.00046796798706054686]},
+                            {"SeqF64":[21.3271,21.1111]}
+                        ],
+                        "size":2
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let records = response.to_records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].step, 1099716);
+        assert_eq!(records[1].step, 1099715);
     }
 }

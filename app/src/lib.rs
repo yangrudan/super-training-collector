@@ -2,19 +2,19 @@ use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
-    StaticSegment, ParamSegment,
+    ParamSegment, StaticSegment,
 };
 
-pub mod models;
-pub mod mock;
+pub mod adapter;
 pub mod api;
 pub mod components;
-pub mod adapter;
 #[cfg(feature = "ssr")]
 pub mod flamegraph;
+pub mod mock;
+pub mod models;
 
-use components::{Level1View, Level2View, Level3View, MockModeBanner};
 use api::get_mock_mode_status;
+use components::{Level1View, Level2View, Level3View, MockModeBanner};
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {

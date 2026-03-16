@@ -1,12 +1,10 @@
-use leptos::prelude::*;
 use crate::api::get_node_flamegraph;
 use crate::components::common::Loading;
+use leptos::prelude::*;
 
 /// 堆栈分析面板组件
 #[component]
-pub fn StackAnalysisPanel(
-    #[prop(into)] node_ip: String,
-) -> impl IntoView {
+pub fn StackAnalysisPanel(#[prop(into)] node_ip: String) -> impl IntoView {
     let (loading, set_loading) = signal(false);
     let flamegraph_svg: RwSignal<Option<String>> = RwSignal::new(None);
     let error_msg: RwSignal<Option<String>> = RwSignal::new(None);

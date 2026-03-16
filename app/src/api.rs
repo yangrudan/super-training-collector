@@ -1,8 +1,8 @@
-use crate::models::*;
+#[cfg(feature = "ssr")]
+use crate::adapter::{generate_global_metrics_from_real_data, get_real_training_data};
 #[cfg(feature = "ssr")]
 use crate::mock::MockDataStore;
-#[cfg(feature = "ssr")]
-use crate::adapter::{get_real_training_data, generate_global_metrics_from_real_data};
+use crate::models::*;
 use leptos::prelude::*;
 
 /// 检查是否启用了 mock 模式
@@ -19,7 +19,11 @@ pub async fn get_global_metrics() -> Result<GlobalMetrics, ServerFnError> {
     leptos::logging::log!("Getting global metrics from real API...");
     match get_real_training_data().await {
         Ok((ranks, nodes)) => {
-            leptos::logging::log!("Real API success: {} ranks, {} nodes", ranks.len(), nodes.len());
+            leptos::logging::log!(
+                "Real API success: {} ranks, {} nodes",
+                ranks.len(),
+                nodes.len()
+            );
             let global_metrics = generate_global_metrics_from_real_data(&nodes, &ranks);
             Ok(global_metrics)
         }
@@ -51,7 +55,7 @@ pub async fn get_nodes(
                 leptos::logging::log!("Node: IP={}, Ranks={}", node.node_ip, node.rank_count);
             }
             nodes
-        },
+        }
         Err(e) => {
             if is_mock_mode() {
                 leptos::logging::log!("Mock mode enabled, using mock data");
@@ -70,9 +74,18 @@ pub async fn get_nodes(
     if let Some(filter) = status_filter {
         filtered_nodes = match filter {
             StatusFilter::All => filtered_nodes,
-            StatusFilter::Healthy => filtered_nodes.into_iter().filter(|n| n.status == HealthStatus::Healthy).collect(),
-            StatusFilter::Warning => filtered_nodes.into_iter().filter(|n| n.status == HealthStatus::Warning).collect(),
-            StatusFilter::Critical => filtered_nodes.into_iter().filter(|n| n.status == HealthStatus::Critical).collect(),
+            StatusFilter::Healthy => filtered_nodes
+                .into_iter()
+                .filter(|n| n.status == HealthStatus::Healthy)
+                .collect(),
+            StatusFilter::Warning => filtered_nodes
+                .into_iter()
+                .filter(|n| n.status == HealthStatus::Warning)
+                .collect(),
+            StatusFilter::Critical => filtered_nodes
+                .into_iter()
+                .filter(|n| n.status == HealthStatus::Critical)
+                .collect(),
         };
     }
 
@@ -84,8 +97,14 @@ pub async fn get_nodes(
         let cmp = match field {
             SortField::SlowRatio => a.slow_ratio.partial_cmp(&b.slow_ratio).unwrap(),
             SortField::StepTime => a.p99_step_time_ms.partial_cmp(&b.p99_step_time_ms).unwrap(),
-            SortField::GpuUtilization => a.avg_gpu_utilization.partial_cmp(&b.avg_gpu_utilization).unwrap(),
-            SortField::NcclLatency => a.avg_nccl_latency_ms.partial_cmp(&b.avg_nccl_latency_ms).unwrap(),
+            SortField::GpuUtilization => a
+                .avg_gpu_utilization
+                .partial_cmp(&b.avg_gpu_utilization)
+                .unwrap(),
+            SortField::NcclLatency => a
+                .avg_nccl_latency_ms
+                .partial_cmp(&b.avg_nccl_latency_ms)
+                .unwrap(),
         };
         match order {
             SortOrder::Asc => cmp,
@@ -94,7 +113,10 @@ pub async fn get_nodes(
     });
 
     let total = filtered_nodes.len() as u16;
-    Ok(NodesResponse { nodes: filtered_nodes, total })
+    Ok(NodesResponse {
+        nodes: filtered_nodes,
+        total,
+    })
 }
 
 /// 获取指定节点的 Rank 详情 (Level 3)
@@ -102,25 +124,29 @@ pub async fn get_nodes(
 pub async fn get_node_ranks(ip: String) -> Result<NodeRanksResponse, ServerFnError> {
     match get_real_training_data().await {
         Ok((ranks, nodes)) => {
-            let node = nodes.into_iter()
+            let node = nodes
+                .into_iter()
                 .find(|n| n.node_ip == ip)
                 .ok_or_else(|| ServerFnError::new("Node not found"))?;
 
-            let node_ranks: Vec<RankMetrics> = ranks.into_iter()
-                .filter(|r| r.node_ip == ip)
-                .collect();
+            let node_ranks: Vec<RankMetrics> =
+                ranks.into_iter().filter(|r| r.node_ip == ip).collect();
 
-            Ok(NodeRanksResponse { node, ranks: node_ranks })
+            Ok(NodeRanksResponse {
+                node,
+                ranks: node_ranks,
+            })
         }
         Err(e) => {
             if is_mock_mode() {
                 leptos::logging::log!("Mock mode enabled, using mock data");
                 let store = MockDataStore::new();
-                
-                let node = store.get_node_by_ip(&ip)
+
+                let node = store
+                    .get_node_by_ip(&ip)
                     .ok_or_else(|| ServerFnError::new("Node not found"))?;
                 let ranks = store.get_ranks_by_ip(&ip);
-                
+
                 Ok(NodeRanksResponse { node, ranks })
             } else {
                 leptos::logging::log!("Failed to get real data: {}", e);
@@ -168,14 +194,17 @@ pub async fn get_all_nodes_callstack_info() -> Result<Vec<(String, u8, u16)>, Se
 /// 获取指定节点的堆栈火焰图 SVG (端口从 config/collector.json 自动推算)
 #[server(GetNodeFlamegraph)]
 pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
-    use crate::flamegraph::{collect_and_generate_flamegraph, load_collector_config, build_callstack_urls};
+    use crate::flamegraph::{
+        build_callstack_urls, collect_and_generate_flamegraph, load_collector_config,
+    };
 
     let config = load_collector_config("./config/collector.json")
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
     // 获取该节点的 rank_count
     let rank_count = match get_real_training_data().await {
-        Ok((_, nodes)) => nodes.into_iter()
+        Ok((_, nodes)) => nodes
+            .into_iter()
             .find(|n| n.node_ip == ip)
             .map(|n| n.rank_count)
             .unwrap_or(4),
@@ -191,7 +220,8 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 
     let urls = build_callstack_urls(&ip, rank_count, config.callstack_base_port);
 
-    let svg = collect_and_generate_flamegraph(&ip, urls).await
+    let svg = collect_and_generate_flamegraph(&ip, urls)
+        .await
         .map_err(|e| ServerFnError::new(format!("Failed to generate flamegraph: {}", e)))?;
 
     Ok(svg)
@@ -199,7 +229,9 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 /// 获取所有节点全部 Rank 的堆栈，合并生成一张火焰图 SVG
 #[server(GetAllNodesFlamegraph)]
 pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
-    use crate::flamegraph::{collect_and_generate_flamegraph, load_collector_config, build_callstack_urls};
+    use crate::flamegraph::{
+        build_callstack_urls, collect_and_generate_flamegraph, load_collector_config,
+    };
 
     let config = load_collector_config("./config/collector.json")
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
@@ -227,8 +259,11 @@ pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
         return Err(ServerFnError::new("No nodes found"));
     }
 
-    let svg = collect_and_generate_flamegraph("all_nodes", all_urls).await
-        .map_err(|e| ServerFnError::new(format!("Failed to generate combined flamegraph: {}", e)))?;
+    let svg = collect_and_generate_flamegraph("all_nodes", all_urls)
+        .await
+        .map_err(|e| {
+            ServerFnError::new(format!("Failed to generate combined flamegraph: {}", e))
+        })?;
 
     Ok(svg)
 }
@@ -289,11 +324,11 @@ pub async fn get_global_step_metrics() -> Result<crate::models::GlobalStepMetric
     #[cfg(feature = "ssr")]
     {
         use crate::adapter::{get_global_step_metrics as fetch_global_step, is_step_show_enabled};
-        
+
         if !is_step_show_enabled() {
             return Err(ServerFnError::new("Step 显示功能未启用 (STEP_SHOW=true)"));
         }
-        
+
         match fetch_global_step().await {
             Ok(metrics) => Ok(metrics),
             Err(e) => Err(ServerFnError::new(format!("获取 Step 指标失败: {}", e))),
@@ -315,14 +350,17 @@ pub async fn get_rank_step_metrics(
     #[cfg(feature = "ssr")]
     {
         use crate::adapter::{get_rank_step_metrics as fetch_rank_step, is_step_show_enabled};
-        
+
         if !is_step_show_enabled() {
             return Err(ServerFnError::new("Step 显示功能未启用 (STEP_SHOW=true)"));
         }
-        
+
         match fetch_rank_step(&ip, local_rank, rank_id).await {
             Ok(metrics) => Ok(metrics),
-            Err(e) => Err(ServerFnError::new(format!("获取 Rank Step 指标失败: {}", e))),
+            Err(e) => Err(ServerFnError::new(format!(
+                "获取 Rank Step 指标失败: {}",
+                e
+            ))),
         }
     }
     #[cfg(not(feature = "ssr"))]

@@ -1,12 +1,12 @@
+mod flamegraph_generator;
+mod process_data;
 mod stack_collector;
 mod stack_merger;
-mod process_data;
-mod flamegraph_generator;
 
+use flamegraph_generator::generate_flamegraph_svg;
+use process_data::process_callstacks;
 use stack_collector::fetch_and_save_urls;
 use stack_merger::merge_stacks;
-use process_data::process_callstacks;
-use flamegraph_generator::generate_flamegraph_svg;
 
 use serde::Deserialize;
 use std::fs::File;
@@ -21,11 +21,13 @@ pub struct CollectorConfig {
 }
 
 fn default_step_query_port_offset() -> u16 {
-    1  // 默认偏移量为 1
+    1 // 默认偏移量为 1
 }
 
 /// Load collector config from `config/collector.json`.
-pub fn load_collector_config(config_path: &str) -> Result<CollectorConfig, Box<dyn std::error::Error>> {
+pub fn load_collector_config(
+    config_path: &str,
+) -> Result<CollectorConfig, Box<dyn std::error::Error>> {
     let mut file = File::open(config_path)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
@@ -36,7 +38,13 @@ pub fn load_collector_config(config_path: &str) -> Result<CollectorConfig, Box<d
 /// Build callstack URLs for a node: one URL per rank, port = base_port + local_rank.
 pub fn build_callstack_urls(ip: &str, rank_count: u8, base_port: u16) -> Vec<String> {
     (0..rank_count)
-        .map(|i| format!("http://{}:{}/apis/pythonext/callstack", ip, base_port + i as u16))
+        .map(|i| {
+            format!(
+                "http://{}:{}/apis/pythonext/callstack",
+                ip,
+                base_port + i as u16
+            )
+        })
         .collect()
 }
 
@@ -53,9 +61,8 @@ pub async fn collect_and_generate_flamegraph(
     let processed_path = format!("./output/processed_{}.txt", node_ip.replace('.', "_"));
     let processed_path_clone = processed_path.clone();
 
-    tokio::task::spawn_blocking(move || {
-        process_callstacks(&input_path, &processed_path_clone)
-    }).await??;
+    tokio::task::spawn_blocking(move || process_callstacks(&input_path, &processed_path_clone))
+        .await??;
 
     // 3. Merge stacks and generate folded format
     let folded = tokio::task::spawn_blocking(move || -> Result<String, std::io::Error> {
@@ -79,7 +86,8 @@ pub async fn collect_and_generate_flamegraph(
         }
 
         Ok(String::from_utf8_lossy(&folded_buf).into_owned())
-    }).await??;
+    })
+    .await??;
 
     // 4. Generate SVG
     let svg = generate_flamegraph_svg(&folded)?;
@@ -96,13 +104,16 @@ mod tests {
         let config_content = r#"{"callstack_base_port": 9933}"#;
         let temp_file = "/tmp/test_collector_config.json";
         fs::write(temp_file, config_content).expect("Failed to write test config");
-        
+
         let result = load_collector_config(temp_file);
         assert!(result.is_ok(), "Should load valid config successfully");
-        
+
         let config = result.unwrap();
-        assert_eq!(config.callstack_base_port, 9933, "Should parse port correctly");
-        
+        assert_eq!(
+            config.callstack_base_port, 9933,
+            "Should parse port correctly"
+        );
+
         // Cleanup
         let _ = fs::remove_file(temp_file);
     }
@@ -111,10 +122,10 @@ mod tests {
     fn test_load_collector_config_invalid_json() {
         let temp_file = "/tmp/test_invalid_config.json";
         fs::write(temp_file, "{invalid json}").expect("Failed to write test file");
-        
+
         let result = load_collector_config(temp_file);
         assert!(result.is_err(), "Should fail on invalid JSON");
-        
+
         // Cleanup
         let _ = fs::remove_file(temp_file);
     }
@@ -130,14 +141,26 @@ mod tests {
         let ip = "192.168.1.100";
         let rank_count = 4;
         let base_port = 9933;
-        
+
         let urls = build_callstack_urls(ip, rank_count, base_port);
-        
+
         assert_eq!(urls.len(), 4, "Should generate URL for each rank");
-        assert_eq!(urls[0], "http://192.168.1.100:9933/apis/pythonext/callstack");
-        assert_eq!(urls[1], "http://192.168.1.100:9934/apis/pythonext/callstack");
-        assert_eq!(urls[2], "http://192.168.1.100:9935/apis/pythonext/callstack");
-        assert_eq!(urls[3], "http://192.168.1.100:9936/apis/pythonext/callstack");
+        assert_eq!(
+            urls[0],
+            "http://192.168.1.100:9933/apis/pythonext/callstack"
+        );
+        assert_eq!(
+            urls[1],
+            "http://192.168.1.100:9934/apis/pythonext/callstack"
+        );
+        assert_eq!(
+            urls[2],
+            "http://192.168.1.100:9935/apis/pythonext/callstack"
+        );
+        assert_eq!(
+            urls[3],
+            "http://192.168.1.100:9936/apis/pythonext/callstack"
+        );
     }
 
     #[test]

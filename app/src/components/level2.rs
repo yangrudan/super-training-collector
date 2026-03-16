@@ -1,8 +1,8 @@
+use crate::api::{get_all_nodes_flamegraph, get_nodes};
+use crate::components::common::*;
+use crate::models::*;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-use crate::api::{get_nodes, get_all_nodes_flamegraph};
-use crate::models::*;
-use crate::components::common::*;
 
 /// Level 2: 节点聚合视图 (带 Tab)
 #[component]
@@ -50,7 +50,14 @@ fn NodesTableTab() -> impl IntoView {
     let (refresh_trigger, set_refresh_trigger) = signal(0u32);
 
     let nodes_resource = Resource::new(
-        move || (sort_field.get(), sort_order.get(), status_filter.get(), refresh_trigger.get()),
+        move || {
+            (
+                sort_field.get(),
+                sort_order.get(),
+                status_filter.get(),
+                refresh_trigger.get(),
+            )
+        },
         |(field, order, filter, _)| get_nodes(Some(field), Some(order), Some(filter)),
     );
 

@@ -1,25 +1,19 @@
-use leptos::prelude::*;
-use crate::api::{get_global_metrics, get_step_show_enabled, get_global_step_metrics};
+use crate::api::{get_global_metrics, get_global_step_metrics, get_step_show_enabled};
 use crate::components::common::*;
+use leptos::prelude::*;
 
 /// Level 1: 全局态势视图
 #[component]
 pub fn Level1View() -> impl IntoView {
     let (refresh_trigger, set_refresh_trigger) = signal(0u32);
-    
-    let global_resource = Resource::new(
-        move || refresh_trigger.get(),
-        |_| get_global_metrics()
-    );
+
+    let global_resource = Resource::new(move || refresh_trigger.get(), |_| get_global_metrics());
 
     // Step 功能开关资源
     let step_enabled_resource = Resource::new(|| (), |_| get_step_show_enabled());
-    
+
     // Step 指标资源（仅当 step_enabled 为 true 时有效）
-    let step_resource = Resource::new(
-        move || refresh_trigger.get(),
-        |_| get_global_step_metrics()
-    );
+    let step_resource = Resource::new(move || refresh_trigger.get(), |_| get_global_step_metrics());
 
     let retry_callback = Callback::new(move |_| {
         set_refresh_trigger.update(|n| *n += 1);
@@ -86,14 +80,14 @@ pub fn Level1View() -> impl IntoView {
                                         <h2>"训练进度"</h2>
                                         <div class="progress-grid">
                                             // 当前 Step：优先使用实时 Step 数据
-                                            <Suspense fallback=move || view! { 
-                                                <KpiCard title="当前 Step" value=format!("{}", metrics.current_step) /> 
+                                            <Suspense fallback=move || view! {
+                                                <KpiCard title="当前 Step" value=format!("{}", metrics.current_step) />
                                             }>
                                                 {move || {
                                                     let enabled = step_enabled_resource.get()
                                                         .and_then(|r| r.ok())
                                                         .unwrap_or(false);
-                                                    
+
                                                     if enabled {
                                                         step_resource.get().map(|result| {
                                                             match result {
@@ -137,7 +131,7 @@ pub fn Level1View() -> impl IntoView {
                                     </section>
 
                                     // Step 详细指标（Phase 2，条件显示）
-                                    <StepMetricsSection 
+                                    <StepMetricsSection
                                         step_enabled_resource=step_enabled_resource
                                         step_resource=step_resource
                                     />
@@ -165,7 +159,9 @@ pub fn Level1View() -> impl IntoView {
 #[component]
 fn StepMetricsSection(
     step_enabled_resource: Resource<Result<bool, leptos::prelude::ServerFnError>>,
-    step_resource: Resource<Result<crate::models::GlobalStepMetrics, leptos::prelude::ServerFnError>>,
+    step_resource: Resource<
+        Result<crate::models::GlobalStepMetrics, leptos::prelude::ServerFnError>,
+    >,
 ) -> impl IntoView {
     view! {
         <Suspense fallback=|| ()>
@@ -173,11 +169,11 @@ fn StepMetricsSection(
                 let enabled = step_enabled_resource.get()
                     .and_then(|r| r.ok())
                     .unwrap_or(false);
-                
+
                 if !enabled {
                     return None;
                 }
-                
+
                 Some(view! {
                     <section class="step-metrics-section">
                         <h2>"Step 详细指标"</h2>
@@ -206,7 +202,7 @@ fn StepMetricsSection(
                                                     unit="GB"
                                                 />
                                             </div>
-                                            
+
                                             // Step 历史记录表格
                                             {if !step_metrics.records.is_empty() {
                                                 Some(view! {

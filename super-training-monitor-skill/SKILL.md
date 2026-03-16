@@ -1,11 +1,15 @@
 ---
-name: super-training-monitor
-description: |
-  从超级训练监控面板获取节点信息、堆栈信息、step指标等数据的技能。当用户需要监控分布式训练集群的状态、性能指标、堆栈火焰图或step数据时使用此技能。这个技能专门用于与基于Leptos的超级训练监控面板交互，通过其提供的server functions API获取数据。
-
-  确保使用此技能当用户提到以下任何内容时：训练监控、节点信息、GPU利用率、NCCL延迟、堆栈火焰图、step指标、训练进度、健康状态、慢节点、rank详情、拓扑视图、调用栈分析、分布式训练、性能分析、火焰图、GPU显存、训练速度。
-
-  当用户询问训练集群状态、性能问题诊断、节点健康状况、堆栈分析或step数据时，立即使用此技能。即使用户没有明确提到"监控面板"，只要涉及分布式训练监控，就应使用此技能。
+name: super-training-monitor-skill
+description: Fetches node information, stack data, and step metrics from the super training monitoring panel. Interacts with the Leptos-based monitoring panel through its server functions API to get monitoring data for distributed training clusters. Use when user mentions training monitoring, node information, GPU utilization, NCCL latency, flame graphs, step metrics, training progress, health status, slow nodes, rank details, topology view, call stack analysis, distributed training, performance analysis, flame graphs, GPU memory, or training speed. Also use when user asks about training cluster status, performance problem diagnosis, node health, stack analysis, or step data.
+license: MIT
+compatibility: Requires WebFetch tool access and a running super training monitoring panel service.
+allowed-tools: "WebFetch"
+metadata:
+  author: Super Training Collector Team
+  version: 1.0.0
+  category: monitoring
+  tags: [training, monitoring, distributed-systems, performance, gpu]
+  documentation: https://gitlab.zhejianglab.com/research-center-for-high-efficiency-computing-infrastructure/nhhal/supertrainningcollector
 ---
 
 # 超级训练监控技能

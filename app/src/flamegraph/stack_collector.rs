@@ -1,7 +1,7 @@
+use futures::future::join_all;
 use serde_json::Value;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
-use futures::future::join_all;
 use std::time::Duration;
 
 /// Fetches JSON data from a list of URLs and saves the combined data to a file.

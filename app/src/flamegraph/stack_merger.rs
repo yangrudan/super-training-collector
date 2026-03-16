@@ -1,4 +1,4 @@
-use std::collections::{HashMap, BTreeSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
@@ -44,14 +44,17 @@ impl StackTrie {
         if stack.is_empty() {
             return;
         }
-        
+
         let mut node = &mut self.root;
         for frame in stack {
             // Skip empty frame names
             if frame.is_empty() {
                 continue;
             }
-            node = node.children.entry(frame.to_string()).or_insert_with(TrieNode::new);
+            node = node
+                .children
+                .entry(frame.to_string())
+                .or_insert_with(TrieNode::new);
             node.add_rank(rank);
         }
         node.is_end_of_stack = true;
@@ -60,11 +63,8 @@ impl StackTrie {
 
     fn format_rank_str(&self, ranks: &BTreeSet<u32>) -> String {
         let ranks_vec: Vec<_> = ranks.iter().cloned().collect();
-        
-        let leak_ranks: Vec<_> = self.all_ranks
-            .difference(ranks)
-            .cloned()
-            .collect();
+
+        let leak_ranks: Vec<_> = self.all_ranks.difference(ranks).cloned().collect();
 
         fn inner_format(ranks: &[u32]) -> String {
             let mut str_buf = String::new();
@@ -102,7 +102,11 @@ impl StackTrie {
         format!("@{}|{}", has_stack_ranks, leak_stack_ranks)
     }
 
-    pub fn traverse_with_all_stack<'a>(&'a self, node: &'a TrieNode, path: Vec<&str>) -> Vec<(Vec<String>, String)> {
+    pub fn traverse_with_all_stack<'a>(
+        &'a self,
+        node: &'a TrieNode,
+        path: Vec<&str>,
+    ) -> Vec<(Vec<String>, String)> {
         let mut result = Vec::new();
         for (frame, child) in &node.children {
             let rank_str = self.format_rank_str(&child.ranks);
@@ -153,7 +157,10 @@ mod tests {
         let trie = merge_stacks(stacks);
         // Empty stacks should be skipped, so we should only have 1 stack
         let results = trie.traverse_with_all_stack(&trie.root, Vec::new());
-        assert!(!results.is_empty(), "Should have at least one result for non-empty stack");
+        assert!(
+            !results.is_empty(),
+            "Should have at least one result for non-empty stack"
+        );
     }
 
     #[test]
@@ -162,35 +169,35 @@ mod tests {
         let trie = merge_stacks(stacks);
         let results = trie.traverse_with_all_stack(&trie.root, Vec::new());
         // Should handle empty frames gracefully
-        assert!(!results.is_empty(), "Should process stacks despite empty frames");
+        assert!(
+            !results.is_empty(),
+            "Should process stacks despite empty frames"
+        );
     }
 
     #[test]
     fn test_merge_stacks_basic() {
-        let stacks = vec![
-            "main;func1;func2",
-            "main;func1;func3",
-        ];
+        let stacks = vec!["main;func1;func2", "main;func1;func3"];
         let trie = merge_stacks(stacks);
         let results = trie.traverse_with_all_stack(&trie.root, Vec::new());
         assert_eq!(results.len(), 2, "Should have 2 distinct paths");
     }
 }
 
-    //////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 
-    // let stacks = vec![
-    //     "main;func1;func2;func3",
-    //     "main;func1;func2;func4",
-    //     "main;func1;func3;func5",
-    //     "main;func1;func3;func6",
-    // ];
+// let stacks = vec![
+//     "main;func1;func2;func3",
+//     "main;func1;func2;func4",
+//     "main;func1;func3;func5",
+//     "main;func1;func3;func6",
+// ];
 
-    // let trie = merge_stacks(stacks);
+// let trie = merge_stacks(stacks);
 
-    // let mut output = File::create("./output/merged_stacks.txt")?;
-    // for (path, rank_str) in trie.traverse_with_all_stack(&trie.root, Vec::new()) {
-    //     writeln!(output, "{} {} 1", path.join(";"), rank_str)?;
-    // }
+// let mut output = File::create("./output/merged_stacks.txt")?;
+// for (path, rank_str) in trie.traverse_with_all_stack(&trie.root, Vec::new()) {
+//     writeln!(output, "{} {} 1", path.join(";"), rank_str)?;
+// }
 
-    ////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////

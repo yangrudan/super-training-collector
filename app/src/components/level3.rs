@@ -1,9 +1,9 @@
-use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
-use crate::api::{get_node_ranks, get_step_show_enabled, get_rank_step_metrics};
-use crate::models::*;
+use crate::api::{get_node_ranks, get_rank_step_metrics, get_step_show_enabled};
 use crate::components::common::*;
 use crate::components::stack_view::StackAnalysisPanel;
+use crate::models::*;
+use leptos::prelude::*;
+use leptos_router::hooks::use_params_map;
 
 /// Level 3: Rank 详情视图
 #[component]
@@ -11,9 +11,7 @@ pub fn Level3View() -> impl IntoView {
     let params = use_params_map();
     let (refresh_trigger, set_refresh_trigger) = signal(0u32);
 
-    let ip = move || {
-        params.read().get("ip").unwrap_or_default()
-    };
+    let ip = move || params.read().get("ip").unwrap_or_default();
 
     let ranks_resource = Resource::new(
         move || (ip(), refresh_trigger.get()),
@@ -40,7 +38,7 @@ pub fn Level3View() -> impl IntoView {
                     let step_enabled = step_enabled_resource.get()
                         .and_then(|r| r.ok())
                         .unwrap_or(false);
-                    
+
                     ranks_resource.get().map(|result| {
                         match result {
                             Ok(response) => view! {
@@ -230,7 +228,7 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
     let rank_id = rank.rank_id;
     let local_rank = rank.local_rank;
     let ip_clone = node_ip.clone();
-    
+
     // Step 指标资源（条件加载）
     let step_resource = Resource::new(
         move || (step_enabled, ip_clone.clone(), local_rank, rank_id),
@@ -240,7 +238,7 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
             } else {
                 None
             }
-        }
+        },
     );
 
     view! {

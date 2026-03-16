@@ -1,5 +1,5 @@
-use leptos::prelude::*;
 use crate::models::HealthStatus;
+use leptos::prelude::*;
 
 /// 状态徽章组件
 #[component]
@@ -17,10 +17,7 @@ pub fn StatusBadge(status: HealthStatus) -> impl IntoView {
 
 /// 热力色块组件 (根据比例 0.0-1.0 显示颜色)
 #[component]
-pub fn HeatCell(
-    #[prop(into)] value: f32,
-    #[prop(optional)] show_value: bool,
-) -> impl IntoView {
+pub fn HeatCell(#[prop(into)] value: f32, #[prop(optional)] show_value: bool) -> impl IntoView {
     let level = heat_level(value);
     let class = format!("heat-cell heat-level-{}", level);
 
@@ -167,8 +164,7 @@ pub fn MockModeBanner() -> impl IntoView {
 
 /// 面包屑导航
 #[component]
-pub fn Breadcrumb(
-    #[prop(into)] items: Vec<(String, String)>, // (label, href)
+pub fn Breadcrumb(#[prop(into)] items: Vec<(String, String)>, // (label, href)
 ) -> impl IntoView {
     let items_len = items.len();
     view! {

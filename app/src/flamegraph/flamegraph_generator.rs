@@ -1,5 +1,5 @@
-use std::io::{BufReader, Cursor};
 use inferno::flamegraph::{self, Options, Palette};
+use std::io::{BufReader, Cursor};
 
 /// Generates a flamegraph SVG from folded stack input string and returns the SVG content.
 pub fn generate_flamegraph_svg(folded_stacks: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -22,7 +22,7 @@ pub fn generate_flamegraph_svg(folded_stacks: &str) -> Result<String, Box<dyn st
 //     fn test_generate_flamegraph_svg_basic() {
 //         let folded_input = "main;func1;func2 1";
 //         let result = generate_flamegraph_svg(folded_input);
-        
+
 //         assert!(result.is_ok(), "Should generate SVG successfully");
 //         let svg = result.unwrap();
 //         assert!(svg.contains("<svg"), "Output should be valid SVG");
@@ -34,7 +34,7 @@ pub fn generate_flamegraph_svg(folded_stacks: &str) -> Result<String, Box<dyn st
 //     fn test_generate_flamegraph_svg_empty_input() {
 //         let folded_input = "";
 //         let result = generate_flamegraph_svg(folded_input);
-        
+
 //         // Empty input should still generate a valid (though minimal) SVG
 //         assert!(result.is_ok(), "Should handle empty input gracefully");
 //         let svg = result.unwrap();
@@ -45,7 +45,7 @@ pub fn generate_flamegraph_svg(folded_stacks: &str) -> Result<String, Box<dyn st
 //     fn test_generate_flamegraph_svg_multiple_stacks() {
 //         let folded_input = "main;func1 1\nmain;func2 1";
 //         let result = generate_flamegraph_svg(folded_input);
-        
+
 //         assert!(result.is_ok(), "Should handle multiple stacks");
 //         let svg = result.unwrap();
 //         assert!(svg.contains("func1") || svg.contains("func2"), "Should contain multiple stack frames");
@@ -55,7 +55,7 @@ pub fn generate_flamegraph_svg(folded_stacks: &str) -> Result<String, Box<dyn st
 //     fn test_generate_flamegraph_svg_complex_stack() {
 //         let folded_input = "main;torch::distributed::init;training_loop;model.forward 1";
 //         let result = generate_flamegraph_svg(folded_input);
-        
+
 //         assert!(result.is_ok(), "Should handle complex nested stacks");
 //         let svg = result.unwrap();
 //         assert!(svg.len() > 100, "SVG should have substantial content");

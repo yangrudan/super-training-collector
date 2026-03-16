@@ -464,7 +464,13 @@ pub fn merge_stacks(stacks: &[RankStack]) -> MergedStackFrame {
     root
 }
 
-fn insert_stack(node: &mut MergedStackFrame, frames: &[String], rank_id: u32, total_ranks: u32, depth: u32) {
+fn insert_stack(
+    node: &mut MergedStackFrame,
+    frames: &[String],
+    rank_id: u32,
+    total_ranks: u32,
+    depth: u32,
+) {
     if frames.is_empty() {
         return;
     }
@@ -473,7 +479,11 @@ fn insert_stack(node: &mut MergedStackFrame, frames: &[String], rank_id: u32, to
     let remaining = &frames[1..];
 
     // 查找或创建子节点
-    let child = if let Some(existing) = node.children.iter_mut().find(|c| &c.frame_name == frame_name) {
+    let child = if let Some(existing) = node
+        .children
+        .iter_mut()
+        .find(|c| &c.frame_name == frame_name)
+    {
         existing
     } else {
         node.children.push(MergedStackFrame {
@@ -504,20 +514,37 @@ mod tests {
     #[test]
     fn test_generate_all_ranks_count() {
         let ranks = generate_all_ranks();
-        assert_eq!(ranks.len(), TOTAL_RANKS, "Should generate exactly {} ranks", TOTAL_RANKS);
+        assert_eq!(
+            ranks.len(),
+            TOTAL_RANKS,
+            "Should generate exactly {} ranks",
+            TOTAL_RANKS
+        );
     }
 
     #[test]
     fn test_generate_all_ranks_distribution() {
         let ranks = generate_all_ranks();
-        
-        let healthy = ranks.iter().filter(|r| r.status == HealthStatus::Healthy).count();
-        let warning = ranks.iter().filter(|r| r.status == HealthStatus::Warning).count();
-        let critical = ranks.iter().filter(|r| r.status == HealthStatus::Critical).count();
-        
+
+        let healthy = ranks
+            .iter()
+            .filter(|r| r.status == HealthStatus::Healthy)
+            .count();
+        let warning = ranks
+            .iter()
+            .filter(|r| r.status == HealthStatus::Warning)
+            .count();
+        let critical = ranks
+            .iter()
+            .filter(|r| r.status == HealthStatus::Critical)
+            .count();
+
         assert!(healthy > 0, "Should have healthy ranks");
-        assert!(healthy + warning + critical == TOTAL_RANKS, "All ranks should be accounted for");
-        
+        assert!(
+            healthy + warning + critical == TOTAL_RANKS,
+            "All ranks should be accounted for"
+        );
+
         // Check distribution is reasonable (not too skewed)
         let healthy_ratio = healthy as f64 / TOTAL_RANKS as f64;
         assert!(healthy_ratio > 0.5, "Majority should be healthy");
@@ -526,9 +553,13 @@ mod tests {
     #[test]
     fn test_generate_all_ranks_rank_ids_sequential() {
         let ranks = generate_all_ranks();
-        
+
         for i in 0..TOTAL_RANKS {
-            assert!(ranks.iter().any(|r| r.rank_id == i as u32), "Should have rank {}", i);
+            assert!(
+                ranks.iter().any(|r| r.rank_id == i as u32),
+                "Should have rank {}",
+                i
+            );
         }
     }
 
@@ -536,11 +567,20 @@ mod tests {
     fn test_aggregate_nodes_correctness() {
         let ranks = generate_all_ranks();
         let nodes = aggregate_nodes(&ranks);
-        
-        assert_eq!(nodes.len(), NODE_COUNT, "Should generate exactly {} nodes", NODE_COUNT);
-        
+
+        assert_eq!(
+            nodes.len(),
+            NODE_COUNT,
+            "Should generate exactly {} nodes",
+            NODE_COUNT
+        );
+
         for node in &nodes {
-            assert_eq!(node.rank_count, GPUS_PER_NODE as u8, "Each node should have {} ranks", GPUS_PER_NODE);
+            assert_eq!(
+                node.rank_count, GPUS_PER_NODE as u8,
+                "Each node should have {} ranks",
+                GPUS_PER_NODE
+            );
             assert_eq!(
                 node.healthy_count + node.warning_count + node.critical_count,
                 node.rank_count,
@@ -553,14 +593,28 @@ mod tests {
     fn test_aggregate_nodes_performance_metrics() {
         let ranks = generate_all_ranks();
         let nodes = aggregate_nodes(&ranks);
-        
+
         for node in &nodes {
-            assert!(node.avg_step_time_ms > 0.0, "Average step time should be positive");
-            assert!(node.p50_step_time_ms > 0.0, "P50 step time should be positive");
-            assert!(node.p99_step_time_ms >= node.p50_step_time_ms, "P99 should be >= P50");
-            assert!(node.avg_gpu_utilization >= 0.0 && node.avg_gpu_utilization <= 100.0, 
-                "GPU utilization should be 0-100%");
-            assert!(node.slow_ratio >= 0.0 && node.slow_ratio <= 1.0, "Slow ratio should be 0-1");
+            assert!(
+                node.avg_step_time_ms > 0.0,
+                "Average step time should be positive"
+            );
+            assert!(
+                node.p50_step_time_ms > 0.0,
+                "P50 step time should be positive"
+            );
+            assert!(
+                node.p99_step_time_ms >= node.p50_step_time_ms,
+                "P99 should be >= P50"
+            );
+            assert!(
+                node.avg_gpu_utilization >= 0.0 && node.avg_gpu_utilization <= 100.0,
+                "GPU utilization should be 0-100%"
+            );
+            assert!(
+                node.slow_ratio >= 0.0 && node.slow_ratio <= 1.0,
+                "Slow ratio should be 0-1"
+            );
         }
     }
 
@@ -569,7 +623,7 @@ mod tests {
         let ranks = generate_all_ranks();
         let nodes = aggregate_nodes(&ranks);
         let global = generate_global_metrics(&nodes, &ranks);
-        
+
         assert_eq!(global.total_nodes, NODE_COUNT as u16);
         assert_eq!(global.total_ranks, TOTAL_RANKS as u16);
         assert_eq!(
@@ -589,9 +643,9 @@ mod tests {
         let ranks = generate_all_ranks();
         let nodes = aggregate_nodes(&ranks);
         let topology = generate_topology(&nodes);
-        
+
         assert_eq!(topology.racks.len(), 4, "Should have 4 racks");
-        
+
         let total_nodes: usize = topology.racks.iter().map(|r| r.nodes.len()).sum();
         assert_eq!(total_nodes, NODE_COUNT, "All nodes should be in topology");
     }
@@ -599,21 +653,24 @@ mod tests {
     #[test]
     fn test_mock_data_store_consistency() {
         let store = MockDataStore::new();
-        
+
         assert_eq!(store.ranks.len(), TOTAL_RANKS);
         assert_eq!(store.nodes.len(), NODE_COUNT);
-        
+
         // Check that all ranks are in some node
         for rank in &store.ranks {
             let node_ranks = store.get_ranks_by_ip(&rank.node_ip);
             assert!(!node_ranks.is_empty(), "Rank should belong to a node");
         }
-        
+
         // Check that node data is consistent
         for node in &store.nodes {
             let node_ranks = store.get_ranks_by_ip(&node.node_ip);
-            assert_eq!(node_ranks.len(), node.rank_count as usize, 
-                "Node rank count should match actual ranks");
+            assert_eq!(
+                node_ranks.len(),
+                node.rank_count as usize,
+                "Node rank count should match actual ranks"
+            );
         }
     }
 
@@ -621,12 +678,20 @@ mod tests {
     fn test_generate_node_stacks() {
         let ranks = generate_all_ranks();
         let node_ip = "192.168.1.1";
-        let node_ranks: Vec<_> = ranks.iter().filter(|r| r.node_ip == node_ip).cloned().collect();
-        
+        let node_ranks: Vec<_> = ranks
+            .iter()
+            .filter(|r| r.node_ip == node_ip)
+            .cloned()
+            .collect();
+
         let stacks = generate_node_stacks(node_ip, &node_ranks);
-        
-        assert_eq!(stacks.len(), node_ranks.len(), "Should generate stack for each rank");
-        
+
+        assert_eq!(
+            stacks.len(),
+            node_ranks.len(),
+            "Should generate stack for each rank"
+        );
+
         for stack in &stacks {
             assert!(!stack.callstack.is_empty(), "Callstack should not be empty");
             assert_eq!(stack.node_ip, node_ip);
@@ -637,13 +702,20 @@ mod tests {
     fn test_merge_stacks_integration() {
         let ranks = generate_all_ranks();
         let node_ip = "192.168.1.1";
-        let node_ranks: Vec<_> = ranks.iter().filter(|r| r.node_ip == node_ip).cloned().collect();
-        
+        let node_ranks: Vec<_> = ranks
+            .iter()
+            .filter(|r| r.node_ip == node_ip)
+            .cloned()
+            .collect();
+
         let stacks = generate_node_stacks(node_ip, &node_ranks);
         let merged = merge_stacks(&stacks);
-        
+
         assert_eq!(merged.total_ranks, stacks.len() as u32);
         assert_eq!(merged.frame_name, "root");
-        assert!(!merged.children.is_empty(), "Merged root should have children");
+        assert!(
+            !merged.children.is_empty(),
+            "Merged root should have children"
+        );
     }
 }
