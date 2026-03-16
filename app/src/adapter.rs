@@ -556,7 +556,7 @@ pub fn is_step_show_enabled() -> bool {
 #[cfg(feature = "ssr")]
 /// 向指定 URL 发送 Step 查询请求
 pub async fn query_step_metrics(url: &str, limit: u32) -> Result<StepQueryResponse, Error> {
-    println!("[Step Query] Requesting URL: {}, limit: {}", url, limit);
+    // debug!("[Step Query] Requesting URL: {}, limit: {}", url, limit);
 
     let client = reqwest::Client::new();
     let request = StepQueryRequest::new(limit);
@@ -569,44 +569,44 @@ pub async fn query_step_metrics(url: &str, limit: u32) -> Result<StepQueryRespon
         .await
     {
         Ok(r) => {
-            println!("[Step Query] Got response, status: {}", r.status());
+            // debug!("[Step Query] Got response, status: {}", r.status());
             r
         }
         Err(e) => {
-            println!("[Step Query] Request failed: {}", e);
+            // debug!("[Step Query] Request failed: {}", e);
             return Err(e);
         }
     };
 
     let body = resp.text().await.unwrap_or_default();
-    println!(
-        "[Step Query] Response body (first 500 chars): {}",
-        &body.chars().take(500).collect::<String>()
-    );
+    // debug!(
+    //     "[Step Query] Response body (first 500 chars): {}",
+    //     &body.chars().take(500).collect::<String>()
+    // );
 
     // 先尝试解析为 DataFrame 格式（实际 API 返回格式）
     if let Ok(raw_response) = serde_json::from_str::<StepQueryRawResponse>(&body) {
         let records = raw_response.to_records();
-        println!(
-            "[Step Query] Parsed DataFrame format, got {} records",
-            records.len()
-        );
-        if let Some(first) = records.first() {
-            println!(
-                "[Step Query] First record: step={}, duration={:?}, allocated={:?}",
-                first.step, first.duration, first.allocated
-            );
-        }
+        // debug!(
+        //     "[Step Query] Parsed DataFrame format, got {} records",
+        //     records.len()
+        // );
+        // if let Some(first) = records.first() {
+        //     debug!(
+        //         "[Step Query] First record: step={}, duration={:?}, allocated={:?}",
+        //         first.step, first.duration, first.allocated
+        //     );
+        // }
         return Ok(StepQueryResponse { records });
     }
 
     // 回退：尝试直接解析为 StepQueryResponse 格式
-    let response: StepQueryResponse = serde_json::from_str(&body).unwrap_or_else(|e| {
-        println!("[Step Query] Failed to parse response: {}", e);
+    let response: StepQueryResponse = serde_json::from_str(&body).unwrap_or_else(|_e| {
+        // debug!("[Step Query] Failed to parse response: {}", e);
         StepQueryResponse { records: vec![] }
     });
 
-    println!("[Step Query] Parsed {} records", response.records.len());
+    // debug!("[Step Query] Parsed {} records", response.records.len());
     Ok(response)
 }
 
@@ -614,19 +614,19 @@ pub async fn query_step_metrics(url: &str, limit: u32) -> Result<StepQueryRespon
 /// 获取全局 Step 指标（首页使用）
 /// 端口 = callstack_base_port + step_query_port_offset
 pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, BoxError> {
-    println!("[Global Step] Loading config...");
+    // debug!("[Global Step] Loading config...");
     let config = load_collector_config("./config/collector.json").map_err(|e| -> BoxError {
-        println!("[Global Step] Config load failed: {}", e);
+        // debug!("[Global Step] Config load failed: {}", e);
         e.to_string().into()
     })?;
 
     let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = config.callstack_base_port + config.step_query_port_offset;
     let url = format!("http://{}:{}/query", host, port);
-    println!(
-        "[Global Step] Config loaded. callstack_base_port={}, step_query_port_offset={}, URL={}",
-        config.callstack_base_port, config.step_query_port_offset, url
-    );
+    // debug!(
+    //     "[Global Step] Config loaded. callstack_base_port={}, step_query_port_offset={}, URL={}",
+    //     config.callstack_base_port, config.step_query_port_offset, url
+    // );
 
     let response = query_step_metrics(&url, 3).await?;
 
@@ -642,10 +642,10 @@ pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, BoxError> {
         .and_then(|r| r.allocated)
         .map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
 
-    println!(
-        "[Global Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",
-        current_step, latest_duration_ms, latest_allocated_gb
-    );
+    // debug!(
+    //     "[Global Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",
+    //     current_step, latest_duration_ms, latest_allocated_gb
+    // );
 
     Ok(GlobalStepMetrics {
         current_step,
@@ -663,21 +663,21 @@ pub async fn get_rank_step_metrics(
     local_rank: u8,
     rank_id: u32,
 ) -> Result<RankStepMetrics, BoxError> {
-    println!(
-        "[Rank Step] rank_id={}, ip={}, local_rank={}",
-        rank_id, ip, local_rank
-    );
+    // debug!(
+    //     "[Rank Step] rank_id={}, ip={}, local_rank={}",
+    //     rank_id, ip, local_rank
+    // );
     let config = load_collector_config("./config/collector.json").map_err(|e| -> BoxError {
-        println!("[Rank Step] Config load failed: {}", e);
+        // debug!("[Rank Step] Config load failed: {}", e);
         e.to_string().into()
     })?;
 
     let port = config.callstack_base_port + local_rank as u16;
     let url = format!("http://{}:{}/query", ip, port);
-    println!(
-        "[Rank Step] callstack_base_port={}, URL={}",
-        config.callstack_base_port, url
-    );
+    // debug!(
+    //     "[Rank Step] callstack_base_port={}, URL={}",
+    //     config.callstack_base_port, url
+    // );
 
     let response = query_step_metrics(&url, 3).await?;
 
@@ -693,10 +693,10 @@ pub async fn get_rank_step_metrics(
         .and_then(|r| r.allocated)
         .map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
 
-    println!(
-        "[Rank Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",
-        current_step, latest_duration_ms, latest_allocated_gb
-    );
+    // debug!(
+    //     "[Rank Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",
+    //     current_step, latest_duration_ms, latest_allocated_gb
+    // );
 
     Ok(RankStepMetrics {
         rank_id,

@@ -3,9 +3,16 @@ use axum::Router;
 use leptos::logging::log;
 use leptos::prelude::*;
 use leptos_axum::{generate_route_list, LeptosRoutes};
+// use simple_logger::SimpleLogger;
 
 #[tokio::main]
 async fn main() {
+    // 初始化日志，从 RUST_LOG 环境变量读取级别，默认为 Info
+    // SimpleLogger::new()
+    //     .env()
+    //     .init()
+    //     .unwrap();
+
     let conf = get_configuration(None).unwrap();
     let addr = conf.leptos_options.site_addr;
     let leptos_options = conf.leptos_options;
