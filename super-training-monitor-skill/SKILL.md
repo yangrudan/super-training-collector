@@ -1,15 +1,6 @@
 ---
 name: super-training-monitor-skill
 description: Fetches node information, stack data, and step metrics from the super training monitoring panel. Interacts with the Leptos-based monitoring panel through its server functions API to get monitoring data for distributed training clusters. Use when user mentions training monitoring, node information, GPU utilization, NCCL latency, flame graphs, step metrics, training progress, health status, slow nodes, rank details, topology view, call stack analysis, distributed training, performance analysis, flame graphs, GPU memory, or training speed. Also use when user asks about training cluster status, performance problem diagnosis, node health, stack analysis, or step data.
-license: MIT
-compatibility: Requires WebFetch tool access and a running super training monitoring panel service.
-allowed-tools: "WebFetch"
-metadata:
-  author: Super Training Collector Team
-  version: 1.0.0
-  category: monitoring
-  tags: [training, monitoring, distributed-systems, performance, gpu]
-  documentation: https://gitlab.zhejianglab.com/research-center-for-high-efficiency-computing-infrastructure/nhhal/supertrainningcollector
 ---
 
 # 超级训练监控技能
@@ -38,19 +29,7 @@ metadata:
 | 特定Rank的Step指标 | `get_rank_step_metrics` | `{"ip": "192.168.1.100", "local_rank": 0, "rank_id": 0}` |
 
 ### 第三步：发送HTTP请求
-使用WebFetch工具发送POST请求：
-
-```javascript
-// 示例：获取全局指标
-const response = await fetch('http://127.0.0.1:3000/api/get_global_metrics', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({}),
-});
-const data = await response.json();
-```
+使用scripts/example_usage.py脚本发送POST请求：
 
 ### 第四步：解析和展示结果
 根据API响应类型，提取关键信息并以清晰格式展示：
