@@ -10,6 +10,9 @@ pub mod api;
 pub mod components;
 #[cfg(feature = "ssr")]
 pub mod flamegraph;
+#[cfg(feature = "ssr")]
+pub mod hang_detector;
+pub mod hang_types;
 pub mod mock;
 pub mod models;
 

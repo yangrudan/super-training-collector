@@ -1,5 +1,6 @@
 use crate::api::{get_global_metrics, get_global_step_metrics, get_step_show_enabled};
 use crate::components::common::*;
+use crate::components::hang_indicator::HangIndicatorCompact;
 use leptos::prelude::*;
 
 /// Level 1: 全局态势视图
@@ -21,7 +22,10 @@ pub fn Level1View() -> impl IntoView {
 
     view! {
         <div class="level1-view">
-            <h1 class="page-title">"训练任务监控面板"</h1>
+            <div class="page-header">
+                <h1 class="page-title">"训练任务监控面板"</h1>
+                <HangIndicatorCompact />
+            </div>
 
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || {

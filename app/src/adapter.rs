@@ -159,10 +159,10 @@ mod tests {
             Ok(nodes) => {
                 assert_eq!(nodes.len(), 1);
                 let node = &nodes[0];
-                assert_eq!(node.host, "test-host");
-                assert_eq!(node.rank, 0);
-                assert_eq!(node.status, "running");
-                assert_eq!(node.role_name, "default");
+                assert_eq!(node.host, Some("test-host".to_string()));
+                assert_eq!(node.rank, Some(0));
+                assert_eq!(node.status, Some("running".to_string()));
+                assert_eq!(node.role_name, Some("default".to_string()));
             }
             Err(e) => panic!("Test failed with error: {}", e),
         }

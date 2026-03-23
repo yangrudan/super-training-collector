@@ -368,3 +368,39 @@ pub async fn get_rank_step_metrics(
         Err(ServerFnError::new("SSR feature required"))
     }
 }
+
+// ============ HANG 检测 API (Phase 3) ============
+
+/// 获取 HANG 检测状态
+#[server(GetHangStatus)]
+pub async fn get_hang_status() -> Result<crate::hang_types::HangStatusSnapshot, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::hang_detector::state::get_hang_state;
+        
+        let state = get_hang_state();
+        let state = state.read().map_err(|e| {
+            ServerFnError::new(format!("获取 HANG 状态失败: {}", e))
+        })?;
+        
+        Ok(state.snapshot())
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Err(ServerFnError::new("SSR feature required"))
+    }
+}
+
+/// 检查 HANG 检测是否启用
+#[server(GetHangCheckEnabled)]
+pub async fn get_hang_check_enabled() -> Result<bool, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::hang_detector::config::HangConfig;
+        Ok(HangConfig::from_env().enabled)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Ok(false)
+    }
+}

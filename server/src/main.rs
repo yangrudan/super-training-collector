@@ -13,6 +13,11 @@ async fn main() {
     //     .init()
     //     .unwrap();
 
+    // 启动 HANG 检测调度器
+    tokio::spawn(async {
+        app::hang_detector::start_hang_detector_scheduler().await
+    });
+
     let conf = get_configuration(None).unwrap();
     let addr = conf.leptos_options.site_addr;
     let leptos_options = conf.leptos_options;
@@ -35,3 +40,4 @@ async fn main() {
         .await
         .unwrap();
 }
+
