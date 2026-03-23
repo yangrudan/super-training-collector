@@ -6,8 +6,10 @@ use std::collections::HashSet;
 /// 
 /// Jaccard 相似度 = |A ∩ B| / |A ∪ B|
 pub fn jaccard_similarity(set1: &HashSet<String>, set2: &HashSet<String>) -> f64 {
-    if set1.is_empty() && set2.is_empty() {
-        return 1.0;
+    // 如果任一集合为空，返回 0.0（无法判断相似度）
+    // 这样可以避免采集失败时误判为 HANG
+    if set1.is_empty() || set2.is_empty() {
+        return 0.0;
     }
     
     let intersection = set1.intersection(set2).count() as f64;

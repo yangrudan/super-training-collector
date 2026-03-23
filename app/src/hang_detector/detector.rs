@@ -67,14 +67,23 @@ impl HangDetector {
         // 合并所有 rank 的堆栈为一个集合
         let current_set = self.merge_rank_stacks(&stacks);
         
+        // 如果当前堆栈为空，说明采集失败，不更新状态
+        if current_set.is_empty() {
+            return (false, 0.0);
+        }
+        
         // 获取或创建该节点的历史记录
         let history = state.node_history
             .entry(node_ip.to_string())
             .or_insert_with(NodeStackHistory::default);
         
-        // 计算与上一次的相似度
-        let similarity = if let Some(previous) = history.previous() {
-            jaccard_similarity(previous, &current_set)
+        // 计算与上一次的相似度（使用 last() 而不是 previous()）
+        let similarity = if let Some(last) = history.last() {
+            if last.is_empty() {
+                0.0  // 上次采集也失败了
+            } else {
+                jaccard_similarity(last, &current_set)
+            }
         } else {
             0.0  // 没有历史数据，无法比较
         };
