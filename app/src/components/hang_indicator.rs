@@ -85,30 +85,46 @@ pub fn HangIndicator() -> impl IntoView {
     }
 }
 
-/// 简化版 HANG 指示灯（只显示图标）
+/// 简化版 HANG 指示灯（只显示图标，带颜色说明提示）
 #[component]
 pub fn HangIndicatorCompact() -> impl IntoView {
     use crate::api::get_hang_status;
     
     let hang_status = Resource::new(|| (), |_| get_hang_status());
     
+    // 颜色说明
+    let color_legend = "HANG 检测状态:\n\
+        🔴 红灯: 训练已 HANG（堆栈连续3次无变化）\n\
+        🟡 黄灯: 可能 HANG（部分节点异常）\n\
+        🟢 绿灯: 运行正常\n\
+        🔵 蓝灯: 正在采集样本\n\
+        ⚪ 白灯: 检测未启用\n\
+        ❌ 错误: 检测过程出错";
+    
     view! {
-        <Suspense fallback=move || view! { <span class="hang-dot">"⏳"</span> }>
+        <Suspense fallback=move || view! { <span class="hang-dot" title="加载中...">"⏳"</span> }>
             {move || {
                 hang_status.get().map(|result| {
                     match result {
                         Ok(snapshot) => {
-                            let (icon, title) = match &snapshot.status {
+                            let (icon, status_text) = match &snapshot.status {
                                 HangStatus::Hang => ("🔴", "训练已 HANG"),
                                 HangStatus::Warning => ("🟡", "可能 HANG"),
                                 HangStatus::Normal => ("🟢", "运行正常"),
                                 HangStatus::Collecting => ("🔵", "采集中"),
-                                HangStatus::Disabled => ("⚪", "HANG 检测未启用"),
+                                HangStatus::Disabled => ("⚪", "检测未启用"),
                                 HangStatus::Error(_) => ("❌", "检测错误"),
                             };
-                            view! { <span class="hang-dot" title=title>{icon}</span> }.into_any()
+                            
+                            // 组合当前状态和颜色说明
+                            let tooltip = format!("当前: {}\n\n{}", status_text, color_legend);
+                            
+                            view! { <span class="hang-dot" title=tooltip>{icon}</span> }.into_any()
                         }
-                        Err(_) => view! { <span class="hang-dot" title="HANG 检测未启用">"⚪"</span> }.into_any()
+                        Err(_) => {
+                            let tooltip = format!("当前: 检测未启用\n\n{}", color_legend);
+                            view! { <span class="hang-dot" title=tooltip>"⚪"</span> }.into_any()
+                        }
                     }
                 })
             }}
