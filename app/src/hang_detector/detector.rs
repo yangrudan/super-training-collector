@@ -165,6 +165,11 @@ impl HangDetector {
             // 还在收集样本
             HangStatus::Collecting
         } else {
+            // 关键修复：当判定为 Normal 时，重置所有节点的高相似度计数
+            // 这确保了高相似度计数不会跨轮次累积，避免了误报
+            for history in state.node_history.values_mut() {
+                history.high_similarity_count = 0;
+            }
             HangStatus::Normal
         };
         
