@@ -11,10 +11,23 @@ pub fn HangIndicator() -> impl IntoView {
     use crate::api::get_hang_status;
     
     // 定期刷新状态（每 10 秒）
-    let (refresh_trigger, _set_refresh_trigger) = signal(0u32);
+    let (refresh_trigger, set_refresh_trigger) = signal(0u32);
     
-    // 注意：自动刷新功能需要在实际部署时启用
-    // 目前简化实现，依赖手动刷新或页面重载
+    // 客户端自动刷新
+    #[cfg(not(feature = "ssr"))]
+    {
+        use leptos::task::spawn_local;
+        spawn_local(async move {
+            loop {
+                gloo_timers::future::TimeoutFuture::new(10_000).await;
+                set_refresh_trigger.update(|n| *n = n.wrapping_add(1));
+            }
+        });
+    }
+    
+    // 避免 SSR 时的未使用警告
+    #[cfg(feature = "ssr")]
+    let _ = set_refresh_trigger;
     
     let hang_status = Resource::new(
         move || refresh_trigger.get(),
@@ -85,15 +98,37 @@ pub fn HangIndicator() -> impl IntoView {
     }
 }
 
-/// 简化版 HANG 指示灯（只显示图标，带颜色说明提示）
+/// 简化版 HANG 指示灯（只显示图标，带颜色说明提示，每10秒自动刷新）
 #[component]
 pub fn HangIndicatorCompact() -> impl IntoView {
     use crate::api::get_hang_status;
     
-    let hang_status = Resource::new(|| (), |_| get_hang_status());
+    // 定期刷新状态（每 10 秒）
+    let (refresh_trigger, set_refresh_trigger) = signal(0u32);
+    
+    // 客户端自动刷新
+    #[cfg(not(feature = "ssr"))]
+    {
+        use leptos::task::spawn_local;
+        spawn_local(async move {
+            loop {
+                gloo_timers::future::TimeoutFuture::new(10_000).await;
+                set_refresh_trigger.update(|n| *n = n.wrapping_add(1));
+            }
+        });
+    }
+    
+    // 避免 SSR 时的未使用警告
+    #[cfg(feature = "ssr")]
+    let _ = set_refresh_trigger;
+    
+    let hang_status = Resource::new(
+        move || refresh_trigger.get(),
+        |_| get_hang_status(),
+    );
     
     // 颜色说明
-    let color_legend = "HANG 检测状态:\n\
+    let color_legend = "HANG 检测状态 (每10秒自动刷新):\n\
         🔴 红灯: 训练已 HANG（堆栈连续3次无变化）\n\
         🟡 黄灯: 可能 HANG（部分节点异常）\n\
         🟢 绿灯: 运行正常\n\
