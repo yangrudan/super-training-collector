@@ -1,6 +1,6 @@
 mod flamegraph_generator;
 mod process_data;
-mod stack_collector;
+pub mod stack_collector;
 pub mod stack_merger;
 
 use flamegraph_generator::generate_flamegraph_svg;

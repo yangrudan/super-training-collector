@@ -59,6 +59,131 @@ mod performance_validation_tests {
     }
 
     #[test]
+    fn test_large_scale_10k_performance() {
+        let generator = FlameGraphDataGenerator::new(50, 5);
+        
+        // 测试 10000 个 rank 的生成性能
+        let start = Instant::now();
+        let data = generator.generate_flamegraph_data(10000);
+        let generation_time = start.elapsed();
+        
+        println!("Generated 10000 flamegraphs in {:?}", generation_time);
+        assert_eq!(data.len(), 10000);
+        
+        // 验证生成数据的合理性
+        let avg_stack_size: usize = data.values()
+            .map(|s| s.len())
+            .sum::<usize>() / data.len();
+        println!("Average stack size: {} bytes", avg_stack_size);
+        assert!(avg_stack_size > 0);
+        assert!(avg_stack_size < 10000); // 每个堆栈应该小于 10KB
+        
+        // 测试一次性合并 10000 个堆栈
+        let stacks: Vec<&str> = data.values().map(|s| s.as_str()).collect();
+        let start = Instant::now();
+        let _trie_all = merge_stacks(stacks);
+        let merge_time = start.elapsed();
+        
+        println!("Merged 10000 stacks all-at-once in {:?}", merge_time);
+        // 10k 数据合并应该在合理时间内完成（比如 30 秒内）
+        assert!(merge_time.as_secs() < 30);
+        
+        // 测试增量合并 10000 个堆栈
+        let generator = FlameGraphDataGenerator::new(50, 5);
+        let batches = generator.generate_large_dataset(10000, 500); // 每批 500 个
+        
+        let start = Instant::now();
+        let mut trie_incremental = StackTrie::with_total_ranks(10000);
+        
+        for batch in batches {
+            let batch_data: Vec<(u32, &str)> = batch.iter()
+                .map(|(rank, stack)| (*rank, stack.as_str()))
+                .collect();
+            trie_incremental.insert_batch(batch_data);
+        }
+        
+        let incremental_merge_time = start.elapsed();
+        println!("Incrementally merged 10000 stacks in {:?}", incremental_merge_time);
+        
+        // 验证增量合并结果
+        let results = trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
+        println!("Incremental merge produced {} unique paths", results.len());
+        assert!(results.len() > 0);
+        
+        // 增量合并时间也应该在合理范围内
+        assert!(incremental_merge_time.as_secs() < 60);
+    }
+
+    #[test]
+    fn test_memory_efficiency_10k() {
+        use std::mem;
+        use memory_stats::memory_stats;
+        
+        let generator = FlameGraphDataGenerator::new(50, 5);
+        
+        // 获取初始内存
+        let start_memory = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        
+        // 生成 10000 个 stack
+        let data = generator.generate_flamegraph_data(10000);
+        
+        // 估算数据大小
+        let total_string_size: usize = data.values()
+            .map(|s| s.len())
+            .sum();
+        let estimated_data_mb = total_string_size as f64 / 1024.0 / 1024.0;
+        
+        println!("Estimated data size for 10000 stacks: {:.2}MB", estimated_data_mb);
+        println!("Average stack: {:.1} bytes", total_string_size as f64 / data.len() as f64);
+        
+        // 执行合并操作
+        let stacks: Vec<&str> = data.values().map(|s| s.as_str()).collect();
+        let trie = merge_stacks(stacks);
+        
+        // 获取结束内存
+        let end_memory = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        
+        if let (Some(start), Some(end)) = (start_memory, end_memory) {
+            let memory_used_mb = end - start;
+            println!("Memory used for 10k merge: {:.2}MB", memory_used_mb);
+            
+            // 内存使用应该在合理范围内（比如不超过 1GB）
+            assert!(memory_used_mb < 1024.0);
+            
+            // 计算每个 stack 的平均内存消耗
+            let mem_per_rank = memory_used_mb / data.len() as f64;
+            println!("Memory per rank: {:.4}MB", mem_per_rank);
+        }
+        // 测试增量合并内存使用
+        let generator = FlameGraphDataGenerator::new(50, 5);
+        let batches = generator.generate_large_dataset(10000, 500); // 每批 500 个
+        
+        let start_mem = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        let mut trie_incremental = StackTrie::with_total_ranks(10000);
+        
+        for batch in batches {
+            let batch_data: Vec<(u32, &str)> = batch.iter()
+                .map(|(rank, stack)| (*rank, stack.as_str()))
+                .collect();
+            trie_incremental.insert_batch(batch_data);
+        }
+        let end_mem = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        
+        if let (Some(start), Some(end)) = (start_mem, end_mem) {
+            let memory_used_mb = end - start;
+            println!("!!!Memory used for 10k incremental merge: {:.2}MB", memory_used_mb);
+            assert!(memory_used_mb < 1024.0);
+            let mem_per_rank = memory_used_mb / data.len() as f64;
+            println!("Memory per rank (incremental): {:.4}MB", mem_per_rank);
+            
+            // 验证增量合并结果
+            let results = trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
+            println!("Incremental merge produced {} unique paths", results.len());
+            assert!(results.len() > 0);
+        }
+    }
+
+    #[test]
     fn test_memory_usage_estimation() {
         use std::mem;
         
@@ -142,7 +267,84 @@ mod performance_validation_tests {
         assert!(results_all.len() > 0);
         assert!(results_incremental.len() > 0);
     }
+
+    #[tokio::test]
+    async fn test_fetch_urls_batched_10k_performance() {
+        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use std::sync::{Arc, Mutex};
+        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
+        
+        // 启动 Mock 服务器提供 10000 个 ranks 的数据
+        let config = MockServerConfig {
+            ports: vec![19933, 19934, 19935, 19936], // 4 个端口
+            ranks_per_port: 2500, // 每个端口 2500 个，共 10000 个
+            max_stack_depth: 50,
+            response_delay_ms: 5, // 5ms 延迟
+            error_rate: 0.0,
+        };
+
+        let server = MockFlameGraphServer::new(config);
+        let _handles = server.start_all().await.unwrap();
+
+        // 等待服务器启动
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        
+        // 构建 10000 个 URL
+        let urls: Vec<String> = (0..4)
+            .flat_map(|port_idx| {
+                let port = 19933 + port_idx;
+                (0..2500).map(move |rank| {
+                    format!("http://127.0.0.1:{}/callstack?rank={}&batch_size=1", port, rank)
+                })
+            })
+            .collect();
+        
+        println!("Total URLs to fetch: {}", urls.len());
+        assert_eq!(urls.len(), 10000, "Should have 10000 URLs");
+        
+        // 使用 Arc<Mutex<Vec<_>>> 收集处理的数据
+        // fetch_urls_batched 使用 usize 作为 rank index
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data_clone = collected_data.clone();
+        
+        // 测试 fetch_urls_batched 的性能，batch_size=500
+        let start_time = std::time::Instant::now();
+        let result = fetch_urls_batched(
+            urls,
+            500, // batch_size=500
+            |batch| {
+                let data = collected_data_clone.clone();
+                async move {
+                    let mut data_guard = data.lock().unwrap();
+                    data_guard.extend(batch);
+                    Ok(())
+                }
+            }
+        ).await;
+        let elapsed = start_time.elapsed();
+        
+        assert!(result.is_ok(), "Should successfully fetch all URLs");
+        
+        let collected = collected_data.lock().unwrap();
+        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+        
+        // 验证数据完整性
+        assert_eq!(collected.len(), 10000, "Should have collected all 10000 items");
+        
+        // 性能断言：10000 个请求应该在合理时间内完成
+        // 考虑 5ms 延迟 + 网络开销，每个 batch 约需 500 * 5ms = 2.5 秒
+        // 总共约 20 个 batches，预计总时间 10-60 秒之间
+        println!("Average time per request: {:?}", elapsed / 10000);
+        assert!(elapsed.as_secs() < 120, "Should complete within 2 minutes");
+        
+        // 验证数据格式正确性（随机抽样检查）
+        assert!(
+            collected.iter().any(|(_, v)| v.get("stack").is_some()),
+            "Should have stacks in the data"
+        );
+    }
 }
+
 
 #[cfg(test)]
 mod integration_tests {
