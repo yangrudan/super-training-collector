@@ -39,6 +39,29 @@ impl StackTrie {
         }
     }
 
+    /// Create a new StackTrie with known total rank count.
+    /// Use this when processing ranks in batches but need consistent rank formatting.
+    pub fn with_total_ranks(total_ranks: u32) -> Self {
+        let all_ranks: Vec<u32> = (0..total_ranks).collect();
+        let all_ranks_set: BTreeSet<_> = all_ranks.into_iter().collect();
+        StackTrie {
+            root: TrieNode::new(),
+            all_ranks: all_ranks_set,
+        }
+    }
+
+    /// Insert a batch of stacks with their rank IDs.
+    /// Can be called multiple times to incrementally build the trie.
+    ///
+    /// # Arguments
+    /// * `stacks` - Vector of (rank_id, folded_stack_string) pairs
+    pub fn insert_batch(&mut self, stacks: Vec<(u32, &str)>) {
+        for (rank, stack) in stacks {
+            let stack_frames: Vec<&str> = stack.split(';').collect();
+            self.insert(stack_frames, rank);
+        }
+    }
+
     fn insert(&mut self, stack: Vec<&str>, rank: u32) {
         // Skip empty stacks
         if stack.is_empty() {
@@ -181,6 +204,74 @@ mod tests {
         let trie = merge_stacks(stacks);
         let results = trie.traverse_with_all_stack(&trie.root, Vec::new());
         assert_eq!(results.len(), 2, "Should have 2 distinct paths");
+    }
+
+    #[test]
+    fn test_with_total_ranks_creates_correct_ranks() {
+        let trie = StackTrie::with_total_ranks(5);
+        assert_eq!(trie.all_ranks.len(), 5);
+        assert!(trie.all_ranks.contains(&0));
+        assert!(trie.all_ranks.contains(&4));
+        assert!(!trie.all_ranks.contains(&5));
+    }
+
+    #[test]
+    fn test_insert_batch_multiple_calls() {
+        let mut trie = StackTrie::with_total_ranks(4);
+
+        // First batch: ranks 0 and 1
+        trie.insert_batch(vec![(0, "main;func1;func2"), (1, "main;func1;func3")]);
+
+        // Second batch: ranks 2 and 3
+        trie.insert_batch(vec![(2, "main;func1;func2"), (3, "main;func2;func4")]);
+
+        let results = trie.traverse_with_all_stack(&trie.root, Vec::new());
+        // Should have 3 distinct paths: func2 (ranks 0,2), func3 (rank 1), func4 (rank 3)
+        assert_eq!(results.len(), 3, "Should have 3 distinct paths");
+    }
+
+    #[test]
+    fn test_incremental_vs_all_at_once_consistency() {
+        // Process all at once using merge_stacks
+        let stacks_all = vec![
+            "main;func1;func2",
+            "main;func1;func3",
+            "main;func1;func2",
+            "main;func2;func4",
+        ];
+        let trie_all = merge_stacks(stacks_all);
+        let results_all = trie_all.traverse_with_all_stack(&trie_all.root, Vec::new());
+
+        // Process incrementally using with_total_ranks + insert_batch
+        let mut trie_incremental = StackTrie::with_total_ranks(4);
+        trie_incremental.insert_batch(vec![(0, "main;func1;func2"), (1, "main;func1;func3")]);
+        trie_incremental.insert_batch(vec![(2, "main;func1;func2"), (3, "main;func2;func4")]);
+        let results_incremental =
+            trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
+
+        // Both should produce the same number of paths
+        assert_eq!(
+            results_all.len(),
+            results_incremental.len(),
+            "Incremental and all-at-once should produce same number of paths"
+        );
+
+        // Convert results to comparable format (sort for deterministic comparison)
+        let mut paths_all: Vec<_> = results_all
+            .iter()
+            .map(|(p, r)| (p.clone(), r.clone()))
+            .collect();
+        let mut paths_incremental: Vec<_> = results_incremental
+            .iter()
+            .map(|(p, r)| (p.clone(), r.clone()))
+            .collect();
+        paths_all.sort();
+        paths_incremental.sort();
+
+        assert_eq!(
+            paths_all, paths_incremental,
+            "Incremental and all-at-once should produce identical results"
+        );
     }
 }
 

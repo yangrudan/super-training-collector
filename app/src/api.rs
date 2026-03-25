@@ -220,7 +220,7 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 
     let urls = build_callstack_urls(&ip, rank_count, config.callstack_base_port);
 
-    let svg = collect_and_generate_flamegraph(&ip, urls)
+    let svg = collect_and_generate_flamegraph(&ip, urls, Some(config.batch_size))
         .await
         .map_err(|e| ServerFnError::new(format!("Failed to generate flamegraph: {}", e)))?;
 
@@ -259,7 +259,7 @@ pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
         return Err(ServerFnError::new("No nodes found"));
     }
 
-    let svg = collect_and_generate_flamegraph("all_nodes", all_urls)
+    let svg = collect_and_generate_flamegraph("all_nodes", all_urls, Some(config.batch_size))
         .await
         .map_err(|e| {
             ServerFnError::new(format!("Failed to generate combined flamegraph: {}", e))

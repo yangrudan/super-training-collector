@@ -1,1 +1,1 @@
-{"callstack_base_port": 9933, "step_query_port_offset": 1}
+{"callstack_base_port": 9933, "step_query_port_offset": 1, "batch_size": 500}
