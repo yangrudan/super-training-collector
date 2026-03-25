@@ -103,7 +103,7 @@ mod performance_validation_tests {
         }
         
         let incremental_merge_time = start.elapsed();
-        println!("Incrementally merged 10000 stacks in {:?}", incremental_merge_time);
+        println!("!!! ===time=== Incrementally merged 10000 stacks in {:?}", incremental_merge_time);
         
         // 验证增量合并结果
         let results = trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
@@ -111,7 +111,7 @@ mod performance_validation_tests {
         assert!(results.len() > 0);
         
         // 增量合并时间也应该在合理范围内
-        assert!(incremental_merge_time.as_secs() < 60);
+        assert!(incremental_merge_time.as_secs() < 30);
     }
 
     #[test]
@@ -171,11 +171,11 @@ mod performance_validation_tests {
         
         if let (Some(start), Some(end)) = (start_mem, end_mem) {
             let memory_used_mb = end - start;
-            println!("!!!Memory used for 10k incremental merge: {:.2}MB", memory_used_mb);
+            println!("!!! ===Memory=== used for 10k incremental merge: {:.2}MB", memory_used_mb);
             assert!(memory_used_mb < 1024.0);
             let mem_per_rank = memory_used_mb / data.len() as f64;
-            println!("Memory per rank (incremental): {:.4}MB", mem_per_rank);
-            
+            println!("!!! ===Memory=== per rank (incremental): {:.4}MB", mem_per_rank);
+
             // 验证增量合并结果
             let results = trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
             println!("Incremental merge produced {} unique paths", results.len());
@@ -274,9 +274,9 @@ mod performance_validation_tests {
         use std::sync::{Arc, Mutex};
         use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
         
-        // 启动 Mock 服务器提供 10000 个 ranks 的数据
+        // 启动 Mock 服务器提供 10000 个 ranks 的数据（减少并发压力）
         let config = MockServerConfig {
-            ports: vec![19933, 19934, 19935, 19936], // 4 个端口
+            ports: vec![19933, 19934,19935,19936], // 4 个端口
             ranks_per_port: 2500, // 每个端口 2500 个，共 10000 个
             max_stack_depth: 50,
             response_delay_ms: 5, // 5ms 延迟
@@ -294,7 +294,7 @@ mod performance_validation_tests {
             .flat_map(|port_idx| {
                 let port = 19933 + port_idx;
                 (0..2500).map(move |rank| {
-                    format!("http://127.0.0.1:{}/callstack?rank={}&batch_size=1", port, rank)
+                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
                 })
             })
             .collect();
@@ -304,14 +304,15 @@ mod performance_validation_tests {
         
         // 使用 Arc<Mutex<Vec<_>>> 收集处理的数据
         // fetch_urls_batched 使用 usize 作为 rank index
+        // Mock 服务器返回 {"rank": u32, "stack": String, "timestamp": u64}
         let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
         let collected_data_clone = collected_data.clone();
         
-        // 测试 fetch_urls_batched 的性能，batch_size=500
+        // 测试 fetch_urls_batched 的性能，使用较小的 batch_size 减少并发
         let start_time = std::time::Instant::now();
         let result = fetch_urls_batched(
             urls,
-            500, // batch_size=500
+            500, // batch_size=500 (减少并发数)
             |batch| {
                 let data = collected_data_clone.clone();
                 async move {
@@ -331,20 +332,19 @@ mod performance_validation_tests {
         // 验证数据完整性
         assert_eq!(collected.len(), 10000, "Should have collected all 10000 items");
         
-        // 性能断言：10000 个请求应该在合理时间内完成
-        // 考虑 5ms 延迟 + 网络开销，每个 batch 约需 500 * 5ms = 2.5 秒
-        // 总共约 20 个 batches，预计总时间 10-60 秒之间
-        println!("Average time per request: {:?}", elapsed / 10000);
-        assert!(elapsed.as_secs() < 120, "Should complete within 2 minutes");
+        // 性能断言
+        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        assert!(elapsed.as_secs() < 60, "Should complete within 60 seconds");
         
-        // 验证数据格式正确性（随机抽样检查）
-        assert!(
-            collected.iter().any(|(_, v)| v.get("stack").is_some()),
-            "Should have stacks in the data"
-        );
+        // 验证数据格式正确性 - Mock 服务器返回 {"rank", "stack", "timestamp"}
+        let has_stacks = collected.iter().any(|(_, v)| {
+            v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
+        });
+        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+        
+        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
     }
-}
-
+}  
 
 #[cfg(test)]
 mod integration_tests {
