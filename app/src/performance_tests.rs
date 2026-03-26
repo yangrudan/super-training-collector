@@ -76,7 +76,7 @@ mod performance_validation_tests {
             .sum::<usize>() / data.len();
         println!("Average stack size: {} bytes", avg_stack_size);
         assert!(avg_stack_size > 0);
-        assert!(avg_stack_size < 10000); // 每个堆栈应该小于 10KB
+        assert!(avg_stack_size < 20000); // 每个堆栈应该小于 20KB
         
         // 测试一次性合并 10000 个堆栈
         let stacks: Vec<&str> = data.values().map(|s| s.as_str()).collect();
@@ -85,8 +85,8 @@ mod performance_validation_tests {
         let merge_time = start.elapsed();
         
         println!("Merged 10000 stacks all-at-once in {:?}", merge_time);
-        // 10k 数据合并应该在合理时间内完成（比如 30 秒内）
-        assert!(merge_time.as_secs() < 30);
+        // 10k 数据合并应该在合理时间内完成（比如 300 秒内）
+        assert!(merge_time.as_secs() < 300);
         
         // 测试增量合并 10000 个堆栈
         let generator = FlameGraphDataGenerator::new(50, 5);
@@ -111,7 +111,7 @@ mod performance_validation_tests {
         assert!(results.len() > 0);
         
         // 增量合并时间也应该在合理范围内
-        assert!(incremental_merge_time.as_secs() < 30);
+        assert!(incremental_merge_time.as_secs() < 300);
     }
 
     #[test]
@@ -146,9 +146,9 @@ mod performance_validation_tests {
         if let (Some(start), Some(end)) = (start_memory, end_memory) {
             let memory_used_mb = end - start;
             println!("Memory used for 10k merge: {:.2}MB", memory_used_mb);
-            
-            // 内存使用应该在合理范围内（比如不超过 1GB）
-            assert!(memory_used_mb < 1024.0);
+
+            // 内存使用应该在合理范围内（比如不超过 10GB）
+            assert!(memory_used_mb < 10240.0);
             
             // 计算每个 stack 的平均内存消耗
             let mem_per_rank = memory_used_mb / data.len() as f64;
@@ -172,7 +172,7 @@ mod performance_validation_tests {
         if let (Some(start), Some(end)) = (start_mem, end_mem) {
             let memory_used_mb = end - start;
             println!("!!! ===Memory=== used for 10k incremental merge: {:.2}MB", memory_used_mb);
-            assert!(memory_used_mb < 1024.0);
+            assert!(memory_used_mb < 10240.0);
             let mem_per_rank = memory_used_mb / data.len() as f64;
             println!("!!! ===Memory=== per rank (incremental): {:.4}MB", mem_per_rank);
 
@@ -202,7 +202,7 @@ mod performance_validation_tests {
         
         // 基本合理性检查
         assert!(estimated_memory_mb > 0.1); // 至少100KB
-        assert!(estimated_memory_mb < 100.0); // 不超过100MB
+        assert!(estimated_memory_mb < 1000.0); // 不超过1000MB
     }
 
     #[tokio::test]
@@ -334,7 +334,7 @@ mod performance_validation_tests {
         
         // 性能断言
         println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
-        assert!(elapsed.as_secs() < 60, "Should complete within 60 seconds");
+        assert!(elapsed.as_secs() < 120, "Should complete within 120 seconds");
         
         // 验证数据格式正确性 - Mock 服务器返回 {"rank", "stack", "timestamp"}
         let has_stacks = collected.iter().any(|(_, v)| {

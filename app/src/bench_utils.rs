@@ -18,40 +18,113 @@ impl FlameGraphDataGenerator {
         }
     }
 
-    /// 生成逼真的函数名列表
+    /// 生成逼真的函数名列表 - 增加长度和复杂度
     fn generate_realistic_function_names() -> Vec<String> {
         let prefixes = vec![
-            "cuda", "nccl", "torch", "allreduce", "allgather", "broadcast", "reduce_scatter",
-            "forward", "backward", "optimizer", "gradient", "loss", "activation", "linear",
-            "conv", "batch_norm", "dropout", "attention", "transformer", "embedding",
+            "cuda_nccl_communicator",
+            "torch_distributed_allreduce",
+            "torch_distributed_allgather",
+            "torch_distributed_broadcast",
+            "torch_distributed_reduce_scatter",
+            "torch_tensor_forward_pass",
+            "torch_tensor_backward_pass",
+            "torch_optimizer_parameter_update",
+            "torch_nn_linear_layer",
+            "torch_nn_conv2d_layer",
+            "torch_nn_batch_norm",
+            "torch_nn_dropout",
+            "torch_nn_attention_module",
+            "torch_nn_transformer_block",
+            "torch_nn_embedding_layer",
+            "torch_autograd_backward",
+            "torch_autograd_forward",
+            "torch_tensor_cuda_memory_copy",
+            "torch_tensor_cuda_kernel_launch",
+            "torch_tensor_cuda_stream_synchronize",
+            "torch_tensor_cuda_event_wait",
+            "torch_tensor_cuda_device_synchronize",
+            "nccl_collective_reduce",
+            "nccl_collective_broadcast",
+            "nccl_collective_all_gather",
+            "nccl_comm_initialize",
+            "nccl_comm_destroy",
+            "nccl_group_start",
+            "nccl_group_end",
+            "nccl_reduce_scatter",
+            "cuda_runtime_api_wrapper",
+            "cuda_memory_pool_allocate",
+            "cuda_memory_pool_free",
+            "cuda_stream_create",
+            "cuda_stream_destroy",
+            "cuda_stream_synchronize",
+            "cuda_memset_async",
+            "cuda_memcpy_async",
+            "thrust_sort",
+            "thrust_reduce",
+            "thrust_scan",
+            "cub_device_scan",
+            "cub_device_reduce",
+            "mpi_allreduce",
+            "mpi_bcast",
+            "mpi_gather",
+            "mpi_scatter",
+            "mpi_send",
+            "mpi_receive",
+            "mpi_comm_rank",
+            "mpi_comm_size",
         ];
         
         let suffixes = vec![
-            "kernel", "launch", "sync", "async", "compute", "memory", "transfer", "wait",
-            "execute", "process", "handle", "callback", "init", "finalize", "update",
+            "_kernel_launch",
+            "_sync_operation",
+            "_async_compute",
+            "_memory_transfer",
+            "_device_callback",
+            "_host_init",
+            "_device_finalize",
+            "_stream_wait",
+            "_event_synchronize",
+            "_buffer_handle",
+            "_resource_manager",
+            "_cache_loader",
+            "_gradient_accumulator",
+            "_loss_calculator",
+            "_activation_function",
+            "_optimizer_step",
+            "_parameter_gradient",
+            "_weight_update",
+            "_tensor_operations",
+            "_matrix_multiplication",
+            "_convolution_compute",
+            "_attention_calculation",
+            "_normalization",
+            "_pooling_operation",
         ];
 
         let mut names = Vec::new();
         
-        // 基础函数名
+        // 生成所有组合 - 产生大量长函数名
         for prefix in &prefixes {
             for suffix in &suffixes {
                 names.push(format!("{}_{}", prefix, suffix));
                 names.push(format!("_{}_impl", prefix));
-                names.push(format!("{}_{}_{}", prefix, suffix, "v2"));
+                names.push(format!("{}_{}_v2", prefix, suffix));
+                names.push(format!("torch_{}_internal", prefix));
             }
         }
 
-        // 添加一些深度调用栈
+        // 添加深度调用栈
         names.extend(vec![
             "main".to_string(),
-            "train_epoch".to_string(),
-            "forward_pass".to_string(),
-            "backward_pass".to_string(),
-            "parameter_update".to_string(),
-            "__cuda_runtime_api_wrapper".to_string(),
-            "__device_synchronize".to_string(),
-            "nccl_all_reduce_ring".to_string(),
+            "train_epoch_full".to_string(),
+            "train_step_forward_backward".to_string(),
+            "model_forward_inference".to_string(),
+            "model_backward_gradient".to_string(),
+            "optimizer_step_parameters".to_string(),
+            "cuda_runtime_wrapper_full".to_string(),
+            "device_synchronize_full".to_string(),
+            "nccl_all_reduce_ring_full".to_string(),
+            "distributed_communication_full".to_string(),
         ]);
 
         names
@@ -71,51 +144,58 @@ impl FlameGraphDataGenerator {
         data
     }
 
-    /// 生成单个rank的调用栈
+    /// 生成单个 rank 的调用栈 - 增加深度以产生 15KB 的堆栈
     fn generate_single_stack(&self, rng: &mut impl Rng, rank: u32) -> String {
-        let depth = rng.gen_range(15..=self.max_depth);
+        // 增加深度到 200-250，以产生更大的堆栈
+        let depth = rng.gen_range(200..=250);
         let mut stack = Vec::new();
         
-        // 添加一些共同的基础调用栈
+        // 添加共同的基础调用栈
         stack.push("main".to_string());
+        stack.push("train_epoch_full".to_string());
         
-        if rank % 4 == 0 {
-            stack.push("train_epoch".to_string());
-            stack.push("forward_pass".to_string());
-        } else if rank % 4 == 1 {
-            stack.push("train_epoch".to_string());
-            stack.push("backward_pass".to_string());
-        } else if rank % 4 == 2 {
-            stack.push("train_epoch".to_string());
-            stack.push("parameter_update".to_string());
-        } else {
-            stack.push("sync_all_reduce".to_string());
+        // 根据 rank 选择不同的路径
+        match rank % 4 {
+            0 => {
+                stack.push("forward_pass_full".to_string());
+                stack.push("model_inference_compute".to_string());
+            }
+            1 => {
+                stack.push("backward_pass_full".to_string());
+                stack.push("gradient_computation".to_string());
+            }
+            2 => {
+                stack.push("optimizer_step_full".to_string());
+                stack.push("parameter_update_calculation".to_string());
+            }
+            _ => {
+                stack.push("sync_all_reduce_full".to_string());
+                stack.push("distributed_communication".to_string());
+            }
         }
 
-        // 生成剩余的调用栈
+        // 生成剩余的调用栈 - 使用更长的函数名
         while stack.len() < depth {
             let func = self.function_names.choose(rng).unwrap();
             
-            // 添加一些随机性，某些函数更容易出现在特定深度
-            if stack.len() > 10 && rng.gen_bool(0.3) {
-                // 深层调用更可能是CUDA相关
+            // 添加重复模拟递归/循环调用
+            if rng.gen_bool(0.4) && stack.len() > 10 {
+                let idx = rng.gen_range(2..stack.len());
+                let repeated_func = stack[idx].clone();
+                stack.push(repeated_func);
+            } else {
+                stack.push(func.clone());
+            }
+            
+            // 深层调用更可能是 CUDA/NCCL 相关
+            if stack.len() > 50 && rng.gen_bool(0.5) {
                 let cuda_funcs: Vec<_> = self.function_names.iter()
                     .filter(|f| f.contains("cuda") || f.contains("nccl") || f.contains("kernel"))
                     .collect();
                 if !cuda_funcs.is_empty() {
                     stack.push(cuda_funcs.choose(rng).unwrap().to_string());
-                    continue;
                 }
             }
-            
-            stack.push(func.clone());
-        }
-
-        // 有一定概率添加重复的函数调用（模拟递归或循环调用）
-        if rng.gen_bool(0.2) && stack.len() > 5 {
-            let idx = rng.gen_range(2..stack.len());
-            let func = stack[idx].clone();
-            stack.push(func);
         }
 
         stack.join(";")
