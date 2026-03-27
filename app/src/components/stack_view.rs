@@ -33,7 +33,7 @@ pub fn StackAnalysisPanel(#[prop(into)] node_ip: String) -> impl IntoView {
                 <div class="stack-actions">
                     <Show when=move || flamegraph_svg.get().is_some()>
                         <button
-                            class="download-btn"
+                            class="collect-btn"
                             on:click=move |_| {
                                 if let Some(_svg_content) = flamegraph_svg.get() {
                                     let _filename = format!("flamegraph_{}.svg", download_node_ip.get_value());

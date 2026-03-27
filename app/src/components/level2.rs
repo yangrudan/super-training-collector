@@ -205,7 +205,7 @@ fn AllStacksTab() -> impl IntoView {
                 
                 <Show when=move || combined_svg.get().is_some()>
                     <button
-                        class="download-btn"
+                        class="collect-btn collect-btn-combined"
                         on:click=move |_| {
                             if let Some(_svg_content) = combined_svg.get() {
                                 let _filename = "flamegraph_all_nodes.svg".to_string();
