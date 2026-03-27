@@ -146,9 +146,11 @@ impl FlameGraphDataGenerator {
 
     /// 生成单个 rank 的调用栈 - 增加深度以产生 15KB 的堆栈
     fn generate_single_stack(&self, rng: &mut impl Rng, rank: u32) -> String {
-        // 增加深度到 200-250，以产生更大的堆栈
-        let depth = rng.gen_range(200..=250);
-        let mut stack = Vec::new();
+        // 每个函数名平均约 40-60 字符，100KB 需要约 1700-2500 层
+        // 100KB = 102400 字节，除以平均 45 字符/函数 ≈ 2275 层
+        // 使用 2000-2500 层深度
+        let depth = rng.gen_range(2000..=2500);
+        let mut stack = Vec::with_capacity(depth);
         
         // 添加共同的基础调用栈
         stack.push("main".to_string());
@@ -179,7 +181,7 @@ impl FlameGraphDataGenerator {
             let func = self.function_names.choose(rng).unwrap();
             
             // 添加重复模拟递归/循环调用
-            if rng.gen_bool(0.4) && stack.len() > 10 {
+            if rng.gen_bool(0.3) && stack.len() > 10 {
                 let idx = rng.gen_range(2..stack.len());
                 let repeated_func = stack[idx].clone();
                 stack.push(repeated_func);
@@ -188,7 +190,7 @@ impl FlameGraphDataGenerator {
             }
             
             // 深层调用更可能是 CUDA/NCCL 相关
-            if stack.len() > 50 && rng.gen_bool(0.5) {
+            if stack.len() > 50 && rng.gen_bool(0.6) {
                 let cuda_funcs: Vec<_> = self.function_names.iter()
                     .filter(|f| f.contains("cuda") || f.contains("nccl") || f.contains("kernel"))
                     .collect();
@@ -198,8 +200,17 @@ impl FlameGraphDataGenerator {
             }
         }
 
-        stack.join(";")
-    }
+        // 使用预分配容量提升性能
+        // 100KB = 102400 字节，每层平均约 46 字符（39+1 分号）
+        let mut result = String::with_capacity(depth * 46);
+        for (i, frame) in stack.iter().enumerate() {
+            if i > 0 {
+                result.push(';');
+            }
+            result.push_str(frame);
+        }
+        result
+    } 
 
     /// 生成符合HTTP响应格式的火焰图数据
     pub fn generate_http_response_data(&self, rank_count: u32) -> Vec<String> {
