@@ -202,6 +202,39 @@ fn AllStacksTab() -> impl IntoView {
                 >
                     {move || if combined_loading.get() { "合并生成中..." } else { "生成全局合并火焰图" }}
                 </button>
+                
+                <Show when=move || combined_svg.get().is_some()>
+                    <button
+                        class="download-btn"
+                        on:click=move |_| {
+                            if let Some(_svg_content) = combined_svg.get() {
+                                let _filename = "flamegraph_all_nodes.svg".to_string();
+                                
+                                #[cfg(feature = "hydrate")]
+                                {
+                                    use wasm_bindgen::JsCast;
+                                    let document = web_sys::window().unwrap().document().unwrap();
+                                    let blob = web_sys::Blob::new_with_str_sequence_and_options(
+                                        &js_sys::Array::of1(&_svg_content.into()),
+                                        web_sys::BlobPropertyBag::new().type_("image/svg+xml"),
+                                    ).unwrap();
+                                    let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+                                    
+                                    let a = document.create_element("a").unwrap().dyn_into::<web_sys::HtmlAnchorElement>().unwrap();
+                                    a.set_href(&url);
+                                    a.set_download(&_filename);
+                                    a.click();
+                                    
+                                    web_sys::Url::revoke_object_url(&url).unwrap();
+                                }
+                            }
+                        }
+                        title="下载全局合并火焰图 SVG"
+                    >
+                        <span class="download-icon">"📥"</span>
+                        "下载 SVG"
+                    </button>
+                </Show>
             </div>
 
             // 全局合并火焰图展示区

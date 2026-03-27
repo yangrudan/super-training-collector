@@ -122,6 +122,7 @@ dependencies = [
  "gloo-timers",
  "http 1.4.0",
  "inferno",
+ "js-sys",
  "leptos",
  "leptos_axum",
  "leptos_meta",
@@ -136,6 +137,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
