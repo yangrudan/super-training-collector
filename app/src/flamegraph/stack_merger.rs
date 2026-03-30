@@ -1,24 +1,55 @@
-use std::collections::{BTreeSet, HashMap};
+use roaring::RoaringBitmap;
+use rustc_hash::FxHashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
+/// A simple string interner that maps unique strings to compact `u32` IDs.
+/// Identical strings share the same ID, reducing allocations in the trie.
+#[derive(Default)]
+struct StringInterner {
+    map: FxHashMap<String, u32>,
+    strings: Vec<String>,
+}
+
+impl StringInterner {
+    /// Return the ID for `s`, inserting it if not already present.
+    fn intern(&mut self, s: &str) -> u32 {
+        if let Some(&id) = self.map.get(s) {
+            return id;
+        }
+        let id = self.strings.len() as u32;
+        let owned = s.to_string();
+        self.map.insert(owned.clone(), id);
+        self.strings.push(owned);
+        id
+    }
+
+    /// Look up the string for a given ID.
+    #[inline]
+    fn get(&self, id: u32) -> &str {
+        &self.strings[id as usize]
+    }
+}
+
 /// Represents a node in the Trie structure for stack traces.
-#[derive(Debug, Clone)]
+/// Children are keyed by interned string IDs for memory efficiency.
+#[derive(Debug)]
 pub struct TrieNode {
-    children: HashMap<String, TrieNode>,
+    children: FxHashMap<u32, TrieNode>,
     is_end_of_stack: bool,
-    ranks: BTreeSet<u32>,
+    ranks: RoaringBitmap,
 }
 
 impl TrieNode {
     fn new() -> Self {
         TrieNode {
-            children: HashMap::new(),
+            children: FxHashMap::default(),
             is_end_of_stack: false,
-            ranks: BTreeSet::new(),
+            ranks: RoaringBitmap::new(),
         }
     }
 
+    #[inline]
     fn add_rank(&mut self, rank: u32) {
         self.ranks.insert(rank);
     }
@@ -27,26 +58,28 @@ impl TrieNode {
 /// Represents a Trie structure for merging stack traces.
 pub struct StackTrie {
     pub root: TrieNode,
-    all_ranks: BTreeSet<u32>,
+    all_ranks: RoaringBitmap,
+    interner: StringInterner,
 }
 
 impl StackTrie {
     fn new(all_ranks: Vec<u32>) -> Self {
-        let all_ranks_set: BTreeSet<_> = all_ranks.into_iter().collect();
+        let all_ranks_bitmap: RoaringBitmap = all_ranks.into_iter().collect();
         StackTrie {
             root: TrieNode::new(),
-            all_ranks: all_ranks_set,
+            all_ranks: all_ranks_bitmap,
+            interner: StringInterner::default(),
         }
     }
 
     /// Create a new StackTrie with known total rank count.
     /// Use this when processing ranks in batches but need consistent rank formatting.
     pub fn with_total_ranks(total_ranks: u32) -> Self {
-        let all_ranks: Vec<u32> = (0..total_ranks).collect();
-        let all_ranks_set: BTreeSet<_> = all_ranks.into_iter().collect();
+        let all_ranks_bitmap: RoaringBitmap = (0..total_ranks).collect();
         StackTrie {
             root: TrieNode::new(),
-            all_ranks: all_ranks_set,
+            all_ranks: all_ranks_bitmap,
+            interner: StringInterner::default(),
         }
     }
 
@@ -74,9 +107,10 @@ impl StackTrie {
             if frame.is_empty() {
                 continue;
             }
+            let id = self.interner.intern(frame);
             node = node
                 .children
-                .entry(frame.to_string())
+                .entry(id)
                 .or_insert_with(TrieNode::new);
             node.add_rank(rank);
         }
@@ -84,43 +118,38 @@ impl StackTrie {
         node.add_rank(rank);
     }
 
-    fn format_rank_str(&self, ranks: &BTreeSet<u32>) -> String {
-        let ranks_vec: Vec<_> = ranks.iter().cloned().collect();
+    fn format_rank_str(&self, ranks: &RoaringBitmap) -> String {
+        let leak_ranks: RoaringBitmap = &self.all_ranks - ranks;
 
-        let leak_ranks: Vec<_> = self.all_ranks.difference(ranks).cloned().collect();
-
-        fn inner_format(ranks: &[u32]) -> String {
-            let mut str_buf = String::new();
-            let mut low = 0;
-            let mut high = 0;
-            if ranks.is_empty() {
-                return str_buf;
+        fn inner_format(bitmap: &RoaringBitmap) -> String {
+            if bitmap.is_empty() {
+                return String::new();
             }
-            while high < ranks.len() - 1 {
-                let low_value = ranks[low];
-                let mut high_value = ranks[high];
-                while high < ranks.len() - 1 && high_value + 1 == ranks[high + 1] {
-                    high += 1;
-                    high_value = ranks[high];
+            // Estimate capacity: ~6 chars per element (e.g. "12345/") as a reasonable average.
+            // Ranges like "0-9999" use fewer slots; single values like "12345" use more.
+            let mut buf = String::with_capacity(bitmap.len() as usize * 6);
+            let mut iter = bitmap.iter().peekable();
+            let mut first_segment = true;
+            while let Some(start) = iter.next() {
+                let mut end = start;
+                // Extend run as long as values are consecutive
+                while iter.peek() == Some(&(end + 1)) {
+                    end = iter.next().unwrap();
                 }
-                low = high + 1;
-                high += 1;
-                if low_value != high_value {
-                    str_buf.push_str(&format!("{}-{}", low_value, high_value));
+                if !first_segment {
+                    buf.push('/');
+                }
+                first_segment = false;
+                if start == end {
+                    buf.push_str(&start.to_string());
                 } else {
-                    str_buf.push_str(&low_value.to_string());
-                }
-                if high < ranks.len() {
-                    str_buf.push('/');
+                    buf.push_str(&format!("{}-{}", start, end));
                 }
             }
-            if high == ranks.len() - 1 {
-                str_buf.push_str(&ranks[high].to_string());
-            }
-            str_buf
+            buf
         }
 
-        let has_stack_ranks = inner_format(&ranks_vec);
+        let has_stack_ranks = inner_format(ranks);
         let leak_stack_ranks = inner_format(&leak_ranks);
         format!("@{}|{}", has_stack_ranks, leak_stack_ranks)
     }
@@ -131,7 +160,8 @@ impl StackTrie {
         path: Vec<&str>,
     ) -> Vec<(Vec<String>, String)> {
         let mut result = Vec::new();
-        for (frame, child) in &node.children {
+        for (&id, child) in &node.children {
+            let frame = self.interner.get(id);
             let rank_str = self.format_rank_str(&child.ranks);
             if child.is_end_of_stack {
                 let path_str = path.join(";");
@@ -140,7 +170,6 @@ impl StackTrie {
             let mut child_path = path.clone();
             let frame_rank = format!("{}{}", frame, rank_str);
             child_path.push(&frame_rank[..]);
-            // child_path.push(rank_str.as_str());
             result.extend(self.traverse_with_all_stack(child, child_path));
         }
         result
@@ -210,9 +239,9 @@ mod tests {
     fn test_with_total_ranks_creates_correct_ranks() {
         let trie = StackTrie::with_total_ranks(5);
         assert_eq!(trie.all_ranks.len(), 5);
-        assert!(trie.all_ranks.contains(&0));
-        assert!(trie.all_ranks.contains(&4));
-        assert!(!trie.all_ranks.contains(&5));
+        assert!(trie.all_ranks.contains(0));
+        assert!(trie.all_ranks.contains(4));
+        assert!(!trie.all_ranks.contains(5));
     }
 
     #[test]
@@ -292,3 +321,4 @@ mod tests {
 // }
 
 ////////////////////////////////////////////////////////////////////////////////
+

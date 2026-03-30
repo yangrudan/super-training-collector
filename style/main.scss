@@ -547,6 +547,36 @@ section {
         h2 {
             margin-bottom: 0;
         }
+
+        .stack-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+    }
+
+    .download-btn {
+        padding: 8px 16px;
+        background: rgba(255, 255, 255, 0.05);
+        color: $color-text;
+        border: 1px solid $color-border;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.2s, border-color 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: #3b82f6;
+        }
+
+        .download-icon {
+            font-size: 1.1rem;
+        }
     }
 
 
