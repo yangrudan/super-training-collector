@@ -51,6 +51,8 @@ pub async fn start_hang_detector_scheduler() {
         
         // 检查是否需要选择新的节点
         if detector.needs_new_nodes() {
+            // 重置轮次计数，开始新一轮检测
+            detector.reset_round();
             let selected = detector.select_nodes(&all_nodes);
             detector.set_selected_nodes(selected.clone());
             tracing::debug!("Selected nodes for sampling: {:?}", selected);

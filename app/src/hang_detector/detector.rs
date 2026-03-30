@@ -161,11 +161,11 @@ impl HangDetector {
         } else if hang_count > 0 {
             // 有节点高相似度，但未达到阈值
             HangStatus::Warning
-        } else if state.sample_round < self.config.sample_count as u8 {
-            // 还在收集样本
+        } else if state.sample_round <= self.config.sample_count as u8 {
+            // 还在收集样本（需要 sample_count + 1 次采样，因为第1次没有历史用于比较）
             HangStatus::Collecting
         } else {
-            // 关键修复：当判定为 Normal 时，重置所有节点的高相似度计数
+            // 完成一轮采样但没有检测到 HANG，重置高相似度计数
             // 这确保了高相似度计数不会跨轮次累积，避免了误报
             for history in state.node_history.values_mut() {
                 history.high_similarity_count = 0;
@@ -219,7 +219,7 @@ impl HangDetector {
         let state = get_hang_state();
         let state = state.read().unwrap();
         state.selected_nodes.is_empty() || 
-        state.sample_round >= self.config.sample_count as u8
+        state.sample_round > self.config.sample_count as u8
     }
 }
 
