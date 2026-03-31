@@ -311,6 +311,7 @@ mod performance_validation_tests {
         const BASE_PORT: u16 = 30000;
         const NUM_PORTS: u16 = 100;
         const RANKS_PER_PORT: u32 = 1;
+        // 100 URLs × 8MB = 800MB total (same as 10k × 80KB)
 
         let config = MockServerConfig {
             ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
@@ -318,7 +319,7 @@ mod performance_validation_tests {
             max_stack_depth: 50,
             response_delay_ms: 0,
             error_rate: 0.0,
-            stack_size_bytes: Some(80 * 1024),
+            stack_size_bytes: Some(8 * 1024 * 1024), // 8MB per URL
         };
 
         let server = MockFlameGraphServer::new(config);
@@ -385,6 +386,7 @@ mod performance_validation_tests {
         const BASE_PORT: u16 = 31000;
         const NUM_PORTS: u16 = 1000;
         const RANKS_PER_PORT: u32 = 1;
+        // 1000 URLs × 800KB = 800MB total (same as 10k × 80KB)
 
         let config = MockServerConfig {
             ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
@@ -392,7 +394,7 @@ mod performance_validation_tests {
             max_stack_depth: 50,
             response_delay_ms: 0,
             error_rate: 0.0,
-            stack_size_bytes: Some(80 * 1024),
+            stack_size_bytes: Some(800 * 1024), // 800KB per URL
         };
 
         let server = MockFlameGraphServer::new(config);
@@ -459,6 +461,7 @@ mod performance_validation_tests {
         const BASE_PORT: u16 = 32000;
         const NUM_PORTS: u16 = 2000;
         const RANKS_PER_PORT: u32 = 1;
+        // 2000 URLs × 400KB = 800MB total (same as 10k × 80KB)
 
         let config = MockServerConfig {
             ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
@@ -466,7 +469,7 @@ mod performance_validation_tests {
             max_stack_depth: 50,
             response_delay_ms: 0,
             error_rate: 0.0,
-            stack_size_bytes: Some(80 * 1024),
+            stack_size_bytes: Some(400 * 1024), // 400KB per URL
         };
 
         let server = MockFlameGraphServer::new(config);
@@ -533,6 +536,7 @@ mod performance_validation_tests {
         const BASE_PORT: u16 = 34000;
         const NUM_PORTS: u16 = 5000;
         const RANKS_PER_PORT: u32 = 1;
+        // 5000 URLs × 160KB = 800MB total (same as 10k × 80KB)
 
         let config = MockServerConfig {
             ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
@@ -540,7 +544,7 @@ mod performance_validation_tests {
             max_stack_depth: 50,
             response_delay_ms: 0,
             error_rate: 0.0,
-            stack_size_bytes: Some(80 * 1024),
+            stack_size_bytes: Some(160 * 1024), // 160KB per URL
         };
 
         let server = MockFlameGraphServer::new(config);
