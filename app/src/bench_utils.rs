@@ -1,5 +1,6 @@
 use rand::{thread_rng, Rng, seq::SliceRandom};
 use std::collections::HashMap;
+use std::path::Path;
 
 /// 火焰图数据生成器，用于性能测试
 pub struct FlameGraphDataGenerator {
@@ -144,12 +145,16 @@ impl FlameGraphDataGenerator {
         data
     }
 
-    /// 生成单个 rank 的调用栈 - 增加深度以产生 15KB 的堆栈
+    /// 生成单个 rank 的调用栈
+    /// - max_depth >= 2000: 生成深栈（~100KB），用于性能测试 fixture
+    /// - max_depth < 2000: 按 max_depth 生成浅栈，用于 mock server 等快速场景
     fn generate_single_stack(&self, rng: &mut impl Rng, rank: u32) -> String {
-        // 每个函数名平均约 40-60 字符，100KB 需要约 1700-2500 层
-        // 100KB = 102400 字节，除以平均 45 字符/函数 ≈ 2275 层
-        // 使用 2000-2500 层深度
-        let depth = rng.gen_range(2000..=2500);
+        let depth = if self.max_depth >= 2000 {
+            rng.gen_range(2000..=2500)
+        } else {
+            let lo = (self.max_depth / 2).max(5);
+            rng.gen_range(lo..=self.max_depth)
+        };
         let mut stack = Vec::with_capacity(depth);
         
         // 添加共同的基础调用栈
@@ -224,6 +229,38 @@ impl FlameGraphDataGenerator {
             .collect()
     }
 
+    /// 将 rank→stack 数据保存到 fixture 文件（每行一个 stack，按 rank 升序）
+    pub fn save_fixture_data(stacks: &HashMap<u32, String>, path: &str) {
+        if let Some(parent) = Path::new(path).parent() {
+            std::fs::create_dir_all(parent).expect("create fixture dir");
+        }
+        let mut sorted: Vec<_> = stacks.iter().collect();
+        sorted.sort_by_key(|(r, _)| *r);
+        let content: String = sorted
+            .iter()
+            .map(|(_, s)| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(path, content).expect("write fixture file");
+    }
+
+    /// 从 fixture 文件加载 base stacks，并扩展到 total_ranks（rank N → base[N % base_count]）
+    pub fn load_fixture_data(path: &str, total_ranks: u32) -> HashMap<u32, String> {
+        let content = std::fs::read_to_string(path).expect("read fixture file");
+        let base_stacks: Vec<&str> = content.split('\n').collect();
+        let base_count = base_stacks.len() as u32;
+        let mut data = HashMap::with_capacity(total_ranks as usize);
+        for rank in 0..total_ranks {
+            data.insert(rank, base_stacks[(rank % base_count) as usize].to_string());
+        }
+        data
+    }
+
+    /// fixture 路径是否存在
+    pub fn fixture_exists(path: &str) -> bool {
+        Path::new(path).exists()
+    }
+
     /// 生成大规模测试数据集，用于压力测试
     pub fn generate_large_dataset(&self, total_ranks: u32, batch_size: u32) -> Vec<Vec<(u32, String)>> {
         let mut batches = Vec::new();
@@ -251,6 +288,20 @@ impl FlameGraphDataGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 运行一次生成 fixture 文件（100 个 rank），之后测试直接加载它。
+    /// 执行方式：cargo test generate_fixture_stacks --features "bench ssr" --lib -- --ignored
+    #[test]
+    #[ignore]
+    fn generate_fixture_stacks() {
+        let generator = FlameGraphDataGenerator::new(2500, 5); // 明确使用深栈（~100KB）
+        let data = generator.generate_flamegraph_data(100);
+        let path = "tests/fixtures/flamegraph_stacks.txt";
+        FlameGraphDataGenerator::save_fixture_data(&data, path);
+        println!("Saved {} base stacks to {}", data.len(), path);
+        let total_size: usize = data.values().map(|s| s.len()).sum();
+        println!("Total fixture size: {:.2} MB", total_size as f64 / 1024.0 / 1024.0);
+    }
 
     #[test]
     fn test_generate_flamegraph_data() {
