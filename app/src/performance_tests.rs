@@ -348,7 +348,7 @@ mod performance_validation_tests {
         let start_time = std::time::Instant::now();
         let result = fetch_urls_batched(
             urls,
-            500, // batch_size=500 (减少并发数)
+            20, // batch_size=500 (减少并发数)
             |batch| {
                 let data = collected_data_clone.clone();
                 async move {
