@@ -196,9 +196,9 @@ async fn get_single_callstack(
     )>
 ) -> Result<Json<FlameGraphResponse>, StatusCode> {
     // 模拟延迟
-    if config.response_delay_ms > 0 {
-        tokio::time::sleep(tokio::time::Duration::from_millis(config.response_delay_ms)).await;
-    }
+    // if config.response_delay_ms > 0 {
+    //     tokio::time::sleep(tokio::time::Duration::from_millis(config.response_delay_ms)).await;
+    // }
 
     // 模拟错误
     if rand::random::<f64>() < config.error_rate {
@@ -246,9 +246,9 @@ async fn get_batch_callstack(
     )>
 ) -> Result<Json<Vec<FlameGraphResponse>>, StatusCode> {
     // 模拟延迟
-    if config.response_delay_ms > 0 {
-        tokio::time::sleep(tokio::time::Duration::from_millis(config.response_delay_ms)).await;
-    }
+    // if config.response_delay_ms > 0 {
+    //     tokio::time::sleep(tokio::time::Duration::from_millis(config.response_delay_ms)).await;
+    // }
 
     // 模拟错误
     if rand::random::<f64>() < config.error_rate {

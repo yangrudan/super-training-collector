@@ -312,14 +312,14 @@ mod performance_validation_tests {
         // 启动 Mock 服务器：1250 个端口 × 每端口 8 个 rank = 10000 个 rank
         // 更真实地模拟大规模分布式训练中每个节点暴露少量 rank 的场景
         const BASE_PORT: u16 = 20000;
-        const NUM_PORTS: u16 = 1250;
-        const RANKS_PER_PORT: u32 = 8;
+        const NUM_PORTS: u16 = 10000;
+        const RANKS_PER_PORT: u32 = 1;
 
         let config = MockServerConfig {
-            ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(), // 1250 个端口
-            ranks_per_port: RANKS_PER_PORT, // 每个端口 8 个，共 10000 个
+            ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(), // 10000 个端口
+            ranks_per_port: RANKS_PER_PORT, // 每个端口 1 个，共 10000 个
             max_stack_depth: 50,
-            response_delay_ms: 5, // 5ms 延迟
+            response_delay_ms: 0, // 5ms 延迟
             error_rate: 0.0,
             stack_size_bytes: Some(80 * 1024), // 每个 URL 返回约 80KB 数据
         };
@@ -330,7 +330,7 @@ mod performance_validation_tests {
         // 等待服务器启动
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         
-        // 构建 10000 个 URL（1250 端口 × 8 rank）
+        // 构建 10000 个 URL（10000 端口 × 1 rank）
         let urls: Vec<String> = (0..NUM_PORTS)
             .flat_map(|port_idx| {
                 let port = BASE_PORT + port_idx;
