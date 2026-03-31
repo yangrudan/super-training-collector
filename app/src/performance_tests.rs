@@ -247,6 +247,7 @@ mod performance_validation_tests {
             max_stack_depth: 20,
             response_delay_ms: 0,
             error_rate: 0.0,
+            stack_size_bytes: None,
         };
 
         let server = MockFlameGraphServer::new(config);
@@ -315,6 +316,7 @@ mod performance_validation_tests {
             max_stack_depth: 50,
             response_delay_ms: 5, // 5ms 延迟
             error_rate: 0.0,
+            stack_size_bytes: Some(80 * 1024), // 每个 URL 返回约 80KB 数据
         };
 
         let server = MockFlameGraphServer::new(config);
@@ -346,7 +348,7 @@ mod performance_validation_tests {
         let start_time = std::time::Instant::now();
         let result = fetch_urls_batched(
             urls,
-            2000, // batch_size=500 (减少并发数)
+            500, // batch_size=500 (减少并发数)
             |batch| {
                 let data = collected_data_clone.clone();
                 async move {
@@ -394,6 +396,7 @@ mod integration_tests {
             max_stack_depth: 30,
             response_delay_ms: 1,
             error_rate: 0.0,
+            stack_size_bytes: None,
         };
 
         let server = MockFlameGraphServer::new(config.clone());

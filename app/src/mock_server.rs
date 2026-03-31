@@ -22,6 +22,9 @@ pub struct MockServerConfig {
     pub max_stack_depth: usize,
     pub response_delay_ms: u64,
     pub error_rate: f64,
+    /// 若设置，则每个 callstack 响应的 stack 字段大小约为此字节数，
+    /// 使用按需生成（不预计算），适合大数据量性能测试。
+    pub stack_size_bytes: Option<usize>,
 }
 
 impl Default for MockServerConfig {
@@ -32,6 +35,7 @@ impl Default for MockServerConfig {
             max_stack_depth: 50,
             response_delay_ms: 10,
             error_rate: 0.01, // 1%错误率
+            stack_size_bytes: None,
         }
     }
 }
@@ -131,6 +135,57 @@ impl MockFlameGraphServer {
     }
 }
 
+/// 按需生成指定字节大小的调用栈字符串（确定性，基于 rank 做偏移）
+fn generate_stack_for_rank(rank: u32, target_bytes: usize) -> String {
+    const FUNC_NAMES: &[&str] = &[
+        "cuda_nccl_communicator_kernel_launch",
+        "torch_distributed_allreduce_sync_operation",
+        "torch_distributed_allgather_async_compute",
+        "torch_distributed_broadcast_memory_transfer",
+        "torch_distributed_reduce_scatter_device_callback",
+        "torch_tensor_forward_pass_host_init",
+        "torch_tensor_backward_pass_device_finalize",
+        "torch_optimizer_parameter_update_stream_wait",
+        "torch_nn_linear_layer_event_synchronize",
+        "torch_nn_conv2d_layer_buffer_handle",
+        "torch_nn_batch_norm_resource_manager",
+        "torch_nn_dropout_cache_loader",
+        "torch_nn_attention_module_gradient_accumulator",
+        "torch_nn_transformer_block_loss_calculator",
+        "torch_nn_embedding_layer_activation_function",
+        "torch_autograd_backward_optimizer_step",
+        "torch_autograd_forward_parameter_gradient",
+        "torch_tensor_cuda_memory_copy_weight_update",
+        "torch_tensor_cuda_kernel_launch_tensor_operations",
+        "torch_tensor_cuda_stream_synchronize_matrix_multiplication",
+        "nccl_collective_reduce_convolution_compute",
+        "nccl_collective_broadcast_attention_calculation",
+        "nccl_collective_all_gather_normalization",
+        "nccl_comm_initialize_pooling_operation",
+        "cuda_runtime_api_wrapper_async_compute",
+        "cuda_memory_pool_allocate_memory_transfer",
+        "cuda_memory_pool_free_device_callback",
+        "cuda_stream_create_host_init",
+        "cuda_stream_synchronize_device_finalize",
+        "mpi_allreduce_stream_wait",
+        "mpi_bcast_event_synchronize",
+        "mpi_gather_buffer_handle",
+        "mpi_scatter_resource_manager",
+    ];
+
+    let mut result = String::with_capacity(target_bytes + 64);
+    result.push_str("main;train_epoch_full");
+
+    let mut i = 0usize;
+    while result.len() < target_bytes {
+        result.push(';');
+        let name = FUNC_NAMES[(rank as usize * 7 + i * 13) % FUNC_NAMES.len()];
+        result.push_str(name);
+        i += 1;
+    }
+    result
+}
+
 /// 获取单个rank的调用栈
 async fn get_single_callstack(
     Path(rank): Path<u32>,
@@ -150,12 +205,23 @@ async fn get_single_callstack(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    let state_guard = state.read().await;
-    
-    // 计算这个端口对应的rank范围
     let base_rank = port_idx as u32 * config.ranks_per_port;
     let actual_rank = base_rank + rank;
-    
+
+    // 若配置了目标字节大小，则按需生成，无需预计算数据
+    if let Some(target_bytes) = config.stack_size_bytes {
+        let stack = generate_stack_for_rank(actual_rank, target_bytes);
+        return Ok(Json(FlameGraphResponse {
+            rank: actual_rank,
+            stack,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        }));
+    }
+
+    let state_guard = state.read().await;
     if let Some(stack) = state_guard.flamegraph_data.get(&actual_rank) {
         Ok(Json(FlameGraphResponse {
             rank: actual_rank,
@@ -275,6 +341,7 @@ mod tests {
             max_stack_depth: 20,
             response_delay_ms: 0,
             error_rate: 0.0,
+            stack_size_bytes: None,
         };
 
         let server = MockFlameGraphServer::new(config);
@@ -305,6 +372,7 @@ mod tests {
             max_stack_depth: 20,
             response_delay_ms: 0,
             error_rate: 0.0,
+            stack_size_bytes: None,
         };
 
         let server = MockFlameGraphServer::new(config);
