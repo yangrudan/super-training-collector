@@ -309,10 +309,15 @@ mod performance_validation_tests {
         use std::sync::{Arc, Mutex};
         use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
         
-        // 启动 Mock 服务器提供 10000 个 ranks 的数据（减少并发压力）
+        // 启动 Mock 服务器：1250 个端口 × 每端口 8 个 rank = 10000 个 rank
+        // 更真实地模拟大规模分布式训练中每个节点暴露少量 rank 的场景
+        const BASE_PORT: u16 = 20000;
+        const NUM_PORTS: u16 = 1250;
+        const RANKS_PER_PORT: u32 = 8;
+
         let config = MockServerConfig {
-            ports: vec![19933, 19934,19935,19936], // 4 个端口
-            ranks_per_port: 2500, // 每个端口 2500 个，共 10000 个
+            ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(), // 1250 个端口
+            ranks_per_port: RANKS_PER_PORT, // 每个端口 8 个，共 10000 个
             max_stack_depth: 50,
             response_delay_ms: 5, // 5ms 延迟
             error_rate: 0.0,
@@ -325,11 +330,11 @@ mod performance_validation_tests {
         // 等待服务器启动
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         
-        // 构建 10000 个 URL
-        let urls: Vec<String> = (0..4)
+        // 构建 10000 个 URL（1250 端口 × 8 rank）
+        let urls: Vec<String> = (0..NUM_PORTS)
             .flat_map(|port_idx| {
-                let port = 19933 + port_idx;
-                (0..2500).map(move |rank| {
+                let port = BASE_PORT + port_idx;
+                (0..RANKS_PER_PORT).map(move |rank| {
                     format!("http://127.0.0.1:{}/callstack/{}", port, rank)
                 })
             })
@@ -348,7 +353,7 @@ mod performance_validation_tests {
         let start_time = std::time::Instant::now();
         let result = fetch_urls_batched(
             urls,
-            20, // batch_size=500 (减少并发数)
+            2000, // batch_size=500 (减少并发数)
             |batch| {
                 let data = collected_data_clone.clone();
                 async move {
