@@ -300,6 +300,302 @@ mod performance_validation_tests {
         assert!(results_incremental.len() > 0);
     }
 
+    /// cargo test test_fetch_urls_batched_100_performance --features "bench ssr" --lib -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn test_fetch_urls_batched_100_performance() {
+        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use std::sync::{Arc, Mutex};
+        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
+
+        const BASE_PORT: u16 = 30000;
+        const NUM_PORTS: u16 = 100;
+        const RANKS_PER_PORT: u32 = 1;
+
+        let config = MockServerConfig {
+            ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
+            ranks_per_port: RANKS_PER_PORT,
+            max_stack_depth: 50,
+            response_delay_ms: 0,
+            error_rate: 0.0,
+            stack_size_bytes: Some(80 * 1024),
+        };
+
+        let server = MockFlameGraphServer::new(config);
+        let _handles = server.start_all().await.unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        let urls: Vec<String> = (0..NUM_PORTS)
+            .flat_map(|port_idx| {
+                let port = BASE_PORT + port_idx;
+                (0..RANKS_PER_PORT).map(move |rank| {
+                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
+                })
+            })
+            .collect();
+
+        println!("Total URLs to fetch: {}", urls.len());
+        assert_eq!(urls.len(), 100, "Should have 100 URLs");
+
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data_clone = collected_data.clone();
+
+        let start_time = std::time::Instant::now();
+        let result = fetch_urls_batched(
+            urls,
+            200,
+            |batch| {
+                let data = collected_data_clone.clone();
+                async move {
+                    let mut data_guard = data.lock().unwrap();
+                    data_guard.extend(batch);
+                    Ok(())
+                }
+            }
+        ).await;
+        let elapsed = start_time.elapsed();
+
+        assert!(result.is_ok(), "Should successfully fetch all URLs");
+
+        let collected = collected_data.lock().unwrap();
+        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+
+        assert_eq!(collected.len(), 100, "Should have collected all 100 items");
+
+        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        assert!(elapsed.as_secs() < 30, "Should complete within 30 seconds");
+
+        let has_stacks = collected.iter().any(|(_, v)| {
+            v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
+        });
+        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+
+        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+    }
+
+    /// cargo test test_fetch_urls_batched_1k_performance --features "bench ssr" --lib -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn test_fetch_urls_batched_1k_performance() {
+        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use std::sync::{Arc, Mutex};
+        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
+
+        const BASE_PORT: u16 = 31000;
+        const NUM_PORTS: u16 = 1000;
+        const RANKS_PER_PORT: u32 = 1;
+
+        let config = MockServerConfig {
+            ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
+            ranks_per_port: RANKS_PER_PORT,
+            max_stack_depth: 50,
+            response_delay_ms: 0,
+            error_rate: 0.0,
+            stack_size_bytes: Some(80 * 1024),
+        };
+
+        let server = MockFlameGraphServer::new(config);
+        let _handles = server.start_all().await.unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        let urls: Vec<String> = (0..NUM_PORTS)
+            .flat_map(|port_idx| {
+                let port = BASE_PORT + port_idx;
+                (0..RANKS_PER_PORT).map(move |rank| {
+                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
+                })
+            })
+            .collect();
+
+        println!("Total URLs to fetch: {}", urls.len());
+        assert_eq!(urls.len(), 1000, "Should have 1000 URLs");
+
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data_clone = collected_data.clone();
+
+        let start_time = std::time::Instant::now();
+        let result = fetch_urls_batched(
+            urls,
+            500,
+            |batch| {
+                let data = collected_data_clone.clone();
+                async move {
+                    let mut data_guard = data.lock().unwrap();
+                    data_guard.extend(batch);
+                    Ok(())
+                }
+            }
+        ).await;
+        let elapsed = start_time.elapsed();
+
+        assert!(result.is_ok(), "Should successfully fetch all URLs");
+
+        let collected = collected_data.lock().unwrap();
+        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+
+        assert_eq!(collected.len(), 1000, "Should have collected all 1000 items");
+
+        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        assert!(elapsed.as_secs() < 60, "Should complete within 60 seconds");
+
+        let has_stacks = collected.iter().any(|(_, v)| {
+            v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
+        });
+        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+
+        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+    }
+
+    /// cargo test test_fetch_urls_batched_2k_performance --features "bench ssr" --lib -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn test_fetch_urls_batched_2k_performance() {
+        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use std::sync::{Arc, Mutex};
+        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
+
+        const BASE_PORT: u16 = 32000;
+        const NUM_PORTS: u16 = 2000;
+        const RANKS_PER_PORT: u32 = 1;
+
+        let config = MockServerConfig {
+            ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
+            ranks_per_port: RANKS_PER_PORT,
+            max_stack_depth: 50,
+            response_delay_ms: 0,
+            error_rate: 0.0,
+            stack_size_bytes: Some(80 * 1024),
+        };
+
+        let server = MockFlameGraphServer::new(config);
+        let _handles = server.start_all().await.unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        let urls: Vec<String> = (0..NUM_PORTS)
+            .flat_map(|port_idx| {
+                let port = BASE_PORT + port_idx;
+                (0..RANKS_PER_PORT).map(move |rank| {
+                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
+                })
+            })
+            .collect();
+
+        println!("Total URLs to fetch: {}", urls.len());
+        assert_eq!(urls.len(), 2000, "Should have 2000 URLs");
+
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data_clone = collected_data.clone();
+
+        let start_time = std::time::Instant::now();
+        let result = fetch_urls_batched(
+            urls,
+            1000,
+            |batch| {
+                let data = collected_data_clone.clone();
+                async move {
+                    let mut data_guard = data.lock().unwrap();
+                    data_guard.extend(batch);
+                    Ok(())
+                }
+            }
+        ).await;
+        let elapsed = start_time.elapsed();
+
+        assert!(result.is_ok(), "Should successfully fetch all URLs");
+
+        let collected = collected_data.lock().unwrap();
+        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+
+        assert_eq!(collected.len(), 2000, "Should have collected all 2000 items");
+
+        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        assert!(elapsed.as_secs() < 60, "Should complete within 60 seconds");
+
+        let has_stacks = collected.iter().any(|(_, v)| {
+            v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
+        });
+        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+
+        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+    }
+
+    /// cargo test test_fetch_urls_batched_5k_performance --features "bench ssr" --lib -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn test_fetch_urls_batched_5k_performance() {
+        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use std::sync::{Arc, Mutex};
+        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
+
+        const BASE_PORT: u16 = 34000;
+        const NUM_PORTS: u16 = 5000;
+        const RANKS_PER_PORT: u32 = 1;
+
+        let config = MockServerConfig {
+            ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(),
+            ranks_per_port: RANKS_PER_PORT,
+            max_stack_depth: 50,
+            response_delay_ms: 0,
+            error_rate: 0.0,
+            stack_size_bytes: Some(80 * 1024),
+        };
+
+        let server = MockFlameGraphServer::new(config);
+        let _handles = server.start_all().await.unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        let urls: Vec<String> = (0..NUM_PORTS)
+            .flat_map(|port_idx| {
+                let port = BASE_PORT + port_idx;
+                (0..RANKS_PER_PORT).map(move |rank| {
+                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
+                })
+            })
+            .collect();
+
+        println!("Total URLs to fetch: {}", urls.len());
+        assert_eq!(urls.len(), 5000, "Should have 5000 URLs");
+
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data_clone = collected_data.clone();
+
+        let start_time = std::time::Instant::now();
+        let result = fetch_urls_batched(
+            urls,
+            2000,
+            |batch| {
+                let data = collected_data_clone.clone();
+                async move {
+                    let mut data_guard = data.lock().unwrap();
+                    data_guard.extend(batch);
+                    Ok(())
+                }
+            }
+        ).await;
+        let elapsed = start_time.elapsed();
+
+        assert!(result.is_ok(), "Should successfully fetch all URLs");
+
+        let collected = collected_data.lock().unwrap();
+        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+
+        assert_eq!(collected.len(), 5000, "Should have collected all 5000 items");
+
+        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        assert!(elapsed.as_secs() < 90, "Should complete within 90 seconds");
+
+        let has_stacks = collected.iter().any(|(_, v)| {
+            v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
+        });
+        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+
+        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+    }
+
     /// 耗时约 60s+（10k HTTP 请求），需要显式运行：
     /// cargo test test_fetch_urls_batched_10k_performance --features "bench ssr" --lib -- --ignored --nocapture
     #[tokio::test]
