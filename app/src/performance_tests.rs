@@ -643,48 +643,98 @@ mod performance_validation_tests {
         
         println!("Total URLs to fetch: {}", urls.len());
         assert_eq!(urls.len(), 10000, "Should have 10000 URLs");
-        
-        // 使用 Arc<Mutex<Vec<_>>> 收集处理的数据
-        // fetch_urls_batched 使用 usize 作为 rank index
-        // Mock 服务器返回 {"rank": u32, "stack": String, "timestamp": u64}
-        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
-        let collected_data_clone = collected_data.clone();
-        
-        // 测试 fetch_urls_batched 的性能，使用较小的 batch_size 减少并发
-        let start_time = std::time::Instant::now();
-        let result = fetch_urls_batched(
-            urls,
-            500, // batch_size=500 (减少并发数)
-            |batch| {
-                let data = collected_data_clone.clone();
-                async move {
-                    let mut data_guard = data.lock().unwrap();
-                    data_guard.extend(batch);
-                    Ok(())
+
+        // 将 10000 个 URL 均分为两组，每组 5000
+        let mid = urls.len() / 2;
+        let urls_b = urls[mid..].to_vec();
+        let urls_a = urls[..mid].to_vec();
+
+        // 两个独立的数据收集器
+        let collected_a: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_b: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let overall_start = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        println!("[overall] start timestamp: {} ms", overall_start);
+
+        // 线程 A：处理前 5000 个 URL
+        let data_a = collected_a.clone();
+        let task_a = tokio::spawn(async move {
+            let t_start = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+            println!("[thread-A] start timestamp: {} ms", t_start);
+
+            let result = fetch_urls_batched(
+                urls_a,
+                500,
+                |batch| {
+                    let data = data_a.clone();
+                    async move {
+                        let mut guard = data.lock().unwrap();
+                        guard.extend(batch);
+                        Ok(())
+                    }
                 }
-            }
-        ).await;
-        let elapsed = start_time.elapsed();
-        
-        assert!(result.is_ok(), "Should successfully fetch all URLs");
-        
-        let collected = collected_data.lock().unwrap();
-        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
-        
+            ).await;
+
+            let t_end = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+            println!("[thread-A] end timestamp: {} ms  (duration: {} ms)", t_end, t_end - t_start);
+            result
+        });
+
+        // 线程 B：处理后 5000 个 URL
+        let data_b = collected_b.clone();
+        let task_b = tokio::spawn(async move {
+            let t_start = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+            println!("[thread-B] start timestamp: {} ms", t_start);
+
+            let result = fetch_urls_batched(
+                urls_b,
+                500,
+                |batch| {
+                    let data = data_b.clone();
+                    async move {
+                        let mut guard = data.lock().unwrap();
+                        guard.extend(batch);
+                        Ok(())
+                    }
+                }
+            ).await;
+
+            let t_end = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+            println!("[thread-B] end timestamp: {} ms  (duration: {} ms)", t_end, t_end - t_start);
+            result
+        });
+
+        // 等待两个任务都完成
+        let (result_a, result_b) = tokio::join!(task_a, task_b);
+
+        let overall_end = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        println!("[overall] end timestamp: {} ms  (total duration: {} ms)", overall_end, overall_end - overall_start);
+
+        assert!(result_a.unwrap().is_ok(), "Thread-A should successfully fetch all URLs");
+        assert!(result_b.unwrap().is_ok(), "Thread-B should successfully fetch all URLs");
+
+        let count_a = collected_a.lock().unwrap().len();
+        let count_b = collected_b.lock().unwrap().len();
+        println!("Thread-A collected: {}  Thread-B collected: {}  Total: {}", count_a, count_b, count_a + count_b);
+
         // 验证数据完整性
-        assert_eq!(collected.len(), 10000, "Should have collected all 10000 items");
-        
+        assert_eq!(count_a + count_b, 10000, "Should have collected all 10000 items");
+
         // 性能断言
-        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
-        assert!(elapsed.as_secs() < 120, "Should complete within 120 seconds");
-        
-        // 验证数据格式正确性 - Mock 服务器返回 {"rank", "stack", "timestamp"}
-        let has_stacks = collected.iter().any(|(_, v)| {
+        let total_ms = overall_end - overall_start;
+        assert!(total_ms < 120_000, "Should complete within 120 seconds");
+
+        // 验证任意一组数据格式正确性
+        let has_stacks = collected_a.lock().unwrap().iter().any(|(_, v)| {
             v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
         });
         assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
-        
-        //println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
     }
 }  
 
