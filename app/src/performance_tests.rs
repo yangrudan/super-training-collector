@@ -602,7 +602,8 @@ mod performance_validation_tests {
 
     /// 耗时约 60s+（10k HTTP 请求），需要显式运行：
     /// cargo test test_fetch_urls_batched_10k_performance --features "bench ssr" --lib -- --ignored --nocapture
-    #[tokio::test]
+    ///#[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn test_fetch_urls_batched_10k_performance() {
         use crate::flamegraph::stack_collector::fetch_urls_batched;
@@ -653,7 +654,7 @@ mod performance_validation_tests {
         let start_time = std::time::Instant::now();
         let result = fetch_urls_batched(
             urls,
-            2000, // batch_size=500 (减少并发数)
+            500, // batch_size=500 (减少并发数)
             |batch| {
                 let data = collected_data_clone.clone();
                 async move {
@@ -683,7 +684,7 @@ mod performance_validation_tests {
         });
         assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
         
-        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+        //println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
     }
 }  
 
