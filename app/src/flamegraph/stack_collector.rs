@@ -2,6 +2,7 @@ use futures::future::join_all;
 use serde_json::Value;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Fetches JSON data from URLs in batches, calling the handler for each batch.
@@ -9,7 +10,10 @@ use std::time::Duration;
 ///
 /// # Arguments
 /// * `urls` - List of URLs to fetch JSON data from
-/// * `batch_size` - Number of URLs to process in each batch
+/// * `batch_size` - Number of URLs fetched concurrently within each worker's batch
+/// * `num_workers` - Number of independent parallel workers. Each worker owns a
+///   contiguous slice of the URL list and processes it sequentially batch by batch.
+///   Use `1` for fully sequential behaviour; `2`–`4` works well in practice.
 /// * `handler` - Async callback that receives `Vec<(usize, serde_json::Value)>` where
 ///               the usize is the global rank index across all URLs
 ///
@@ -18,75 +22,114 @@ use std::time::Duration;
 pub async fn fetch_urls_batched<F, Fut>(
     urls: Vec<String>,
     batch_size: usize,
+    num_workers: usize,
     handler: F,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
-    F: Fn(Vec<(usize, Value)>) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send,
+    F: Fn(Vec<(usize, Value)>) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
+        + Send
+        + 'static,
 {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(10)
-        .build()?;
+    let num_workers = num_workers.max(1);
+    let total = urls.len();
+    if total == 0 {
+        return Ok(());
+    }
 
-    let mut failed_urls = Vec::new();
-    let mut global_index = 0usize;
+    // Each worker gets a roughly equal contiguous slice of the URL list.
+    // Workers run as independent tokio tasks so the multi-thread scheduler
+    // distributes them across OS threads (true CPU parallelism).
+    let failed_urls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let handler = Arc::new(handler);
 
-    for chunk in urls.chunks(batch_size) {
-        let chunk_start_index = global_index;
-        let mut tasks = Vec::new();
+    let segment_size = (total + num_workers - 1) / num_workers;
+    let mut worker_handles = Vec::new();
 
-        for (local_idx, url) in chunk.iter().enumerate() {
-            let client = client.clone();
-            let url_clone = url.clone();
-            let rank_index = chunk_start_index + local_idx;
-            tasks.push(async move {
-                match client.get(&url_clone).send().await {
-                    Ok(res) => {
-                        let body = res.text().await?;
-                        match serde_json::from_str::<Value>(&body) {
-                            Ok(json) => Ok((rank_index, Some(json), url_clone)),
+    for w in 0..num_workers {
+        let start = w * segment_size;
+        if start >= total {
+            break;
+        }
+        let end = (start + segment_size).min(total);
+        let segment: Vec<String> = urls[start..end].to_vec();
+        let global_offset = start;
+
+        // Each worker owns its own client — avoids pool-mutex contention across workers.
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(10)
+            .build()?;
+        let failed_urls = failed_urls.clone();
+        let handler = handler.clone();
+
+        worker_handles.push(tokio::spawn(async move {
+            let mut local_index = 0usize;
+
+            for chunk in segment.chunks(batch_size) {
+                let chunk_start = global_offset + local_index;
+
+                let tasks = chunk.iter().enumerate().map(|(local_idx, url)| {
+                    let client = client.clone();
+                    let url_clone = url.clone();
+                    let rank_index = chunk_start + local_idx;
+                    async move {
+                        match client.get(&url_clone).send().await {
+                            Ok(res) => {
+                                let body = res.text().await?;
+                                match serde_json::from_str::<Value>(&body) {
+                                    Ok(json) => Ok((rank_index, Some(json), url_clone)),
+                                    Err(e) => {
+                                        eprintln!("Error parsing JSON from {}: {}", url_clone, e);
+                                        Ok((rank_index, None, url_clone))
+                                    }
+                                }
+                            }
                             Err(e) => {
-                                eprintln!("Error parsing JSON from {}: {}", url_clone, e);
+                                eprintln!("Error fetching {}: {}", url_clone, e);
                                 Ok((rank_index, None, url_clone))
                             }
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Error fetching {}: {}", url_clone, e);
-                        Ok((rank_index, None, url_clone))
+                });
+
+                let fetch_results: Vec<Result<(usize, Option<Value>, String), reqwest::Error>> =
+                    join_all(tasks).await;
+
+                let mut batch_data = Vec::with_capacity(chunk.len());
+                for res in fetch_results {
+                    match res {
+                        Ok((rank_index, Some(json), _url)) => {
+                            batch_data.push((rank_index, json));
+                        }
+                        Ok((rank_index, None, url)) => {
+                            failed_urls.lock().unwrap().push(url);
+                            batch_data.push((rank_index, Value::Array(Vec::new())));
+                        }
+                        Err(e) => eprintln!("Unexpected error: {}", e),
                     }
                 }
-            });
-        }
 
-        let results: Vec<Result<(usize, Option<Value>, String), reqwest::Error>> =
-            join_all(tasks).await;
+                batch_data.sort_by_key(|(idx, _)| *idx);
+                handler(batch_data).await?;
 
-        let mut batch_data = Vec::with_capacity(chunk.len());
-        for result in results {
-            match result {
-                Ok((rank_index, Some(json), _url)) => {
-                    batch_data.push((rank_index, json));
-                }
-                Ok((rank_index, None, url)) => {
-                    failed_urls.push(url);
-                    batch_data.push((rank_index, Value::Array(Vec::new())));
-                }
-                Err(e) => eprintln!("Unexpected error: {}", e),
+                local_index += chunk.len();
             }
-        }
 
-        // Sort by rank_index to maintain order
-        batch_data.sort_by_key(|(idx, _)| *idx);
-
-        handler(batch_data).await?;
-        global_index += chunk.len();
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        }));
     }
 
-    if !failed_urls.is_empty() {
-        eprintln!("\n⚠️  Failed to fetch data from {} URLs", failed_urls.len());
-        for url in &failed_urls {
+    for handle in worker_handles {
+        handle
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)??;
+    }
+
+    let failed = failed_urls.lock().unwrap();
+    if !failed.is_empty() {
+        eprintln!("\n⚠️  Failed to fetch data from {} URLs", failed.len());
+        for url in failed.iter() {
             eprintln!("  - {}", url);
         }
     }
@@ -185,7 +228,7 @@ mod tests {
         let batch_count = Arc::new(Mutex::new(0));
         let batch_count_clone = batch_count.clone();
 
-        let result = fetch_urls_batched(vec![], 5, |_batch| {
+        let result = fetch_urls_batched(vec![], 5, 1, move |_batch| {
             let counter = batch_count_clone.clone();
             async move {
                 let mut count = counter.lock().unwrap();
@@ -226,7 +269,7 @@ mod tests {
             Arc::new(Mutex::new(Vec::new()));
         let received_batches_clone = received_batches.clone();
 
-        let result = fetch_urls_batched(urls, 2, |batch| {
+        let result = fetch_urls_batched(urls, 2, 1, move |batch| {
             let batches = received_batches_clone.clone();
             async move {
                 let mut batches_guard = batches.lock().unwrap();
@@ -276,7 +319,7 @@ mod tests {
         let received_data: Arc<Mutex<Vec<(usize, Value)>>> = Arc::new(Mutex::new(Vec::new()));
         let received_data_clone = received_data.clone();
 
-        let result = fetch_urls_batched(urls, 10, |batch| {
+        let result = fetch_urls_batched(urls, 10, 1, move |batch| {
             let data = received_data_clone.clone();
             async move {
                 let mut data_guard = data.lock().unwrap();

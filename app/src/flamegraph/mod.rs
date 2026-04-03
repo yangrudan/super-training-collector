@@ -91,7 +91,7 @@ pub async fn collect_and_generate_flamegraph(
 
     // Process URLs in batches
     let trie_clone = trie.clone();
-    fetch_urls_batched(urls, batch_size, move |batch| {
+    fetch_urls_batched(urls, batch_size, 4, move |batch| {
         let trie_inner = trie_clone.clone();
         async move {
             // Process this batch of JSON data into folded stack strings
