@@ -16,6 +16,10 @@ pub mod hang_types;
 pub mod mock;
 pub mod models;
 
+// 测试工具模块 - benches 需要通过 lib 访问
+#[cfg(any(test, feature = "bench"))]
+pub mod bench_utils;
+
 use api::get_mock_mode_status;
 use components::{Level1View, Level2View, Level3View, MockModeBanner};
 
