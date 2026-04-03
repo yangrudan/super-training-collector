@@ -208,23 +208,32 @@ fn AllStacksTab() -> impl IntoView {
                         class="collect-btn collect-btn-combined"
                         on:click=move |_| {
                             if let Some(_svg_content) = combined_svg.get() {
-                                let _filename = "flamegraph_all_nodes.svg".to_string();
-                                
                                 #[cfg(feature = "hydrate")]
                                 {
                                     use wasm_bindgen::JsCast;
+                                    let _filename = format!("flamegraph_all_nodes_{}.svg", {
+                                        use js_sys::Date;
+                                        let date = Date::new_0();
+                                        let year = date.get_full_year();
+                                        let month = date.get_month() + 1; // 0-indexed
+                                        let day = date.get_date();
+                                        let hours = date.get_hours();
+                                        let minutes = date.get_minutes();
+                                        let seconds = date.get_seconds();
+                                        format!("{:04}{:02}{:02}{:02}{:02}{:02}", year, month, day, hours, minutes, seconds)
+                                    });
                                     let document = web_sys::window().unwrap().document().unwrap();
                                     let blob = web_sys::Blob::new_with_str_sequence_and_options(
                                         &js_sys::Array::of1(&_svg_content.into()),
                                         web_sys::BlobPropertyBag::new().type_("image/svg+xml"),
                                     ).unwrap();
                                     let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
-                                    
+
                                     let a = document.create_element("a").unwrap().dyn_into::<web_sys::HtmlAnchorElement>().unwrap();
                                     a.set_href(&url);
                                     a.set_download(&_filename);
                                     a.click();
-                                    
+
                                     web_sys::Url::revoke_object_url(&url).unwrap();
                                 }
                             }
