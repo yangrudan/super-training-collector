@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 
-use super::bench_utils::FlameGraphDataGenerator;
+use app::bench_utils::FlameGraphDataGenerator;
 
 /// Mock服务器配置
 #[derive(Debug, Clone)]

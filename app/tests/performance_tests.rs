@@ -1,7 +1,11 @@
 use std::time::Instant;
 use std::collections::HashMap;
-use crate::bench_utils::FlameGraphDataGenerator;
-use crate::flamegraph::stack_merger::{StackTrie, merge_stacks};
+
+mod common;
+use common::mock_server::{MockFlameGraphServer, MockServerConfig};
+
+use app::bench_utils::FlameGraphDataGenerator;
+use app::flamegraph::stack_merger::{StackTrie, merge_stacks};
 
 /// fixture 文件路径（相对于 crate 根目录，即 app/）
 const FIXTURE_PATH: &str = "tests/fixtures/flamegraph_stacks.txt";
@@ -239,7 +243,6 @@ mod performance_validation_tests {
 
     #[tokio::test]
     async fn test_mock_server_basic_functionality() {
-        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
         
         let config = MockServerConfig {
             ports: vec![18933], // 使用测试端口
@@ -304,9 +307,8 @@ mod performance_validation_tests {
     #[tokio::test]
     #[ignore]
     async fn test_fetch_urls_batched_100_performance() {
-        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use app::flamegraph::stack_collector::fetch_urls_batched;
         use std::sync::{Arc, Mutex};
-        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
 
         const BASE_PORT: u16 = 30000;
         const NUM_PORTS: u16 = 100;
@@ -380,9 +382,8 @@ mod performance_validation_tests {
     #[tokio::test]
     #[ignore]
     async fn test_fetch_urls_batched_1k_performance() {
-        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use app::flamegraph::stack_collector::fetch_urls_batched;
         use std::sync::{Arc, Mutex};
-        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
 
         const BASE_PORT: u16 = 31000;
         const NUM_PORTS: u16 = 1000;
@@ -456,9 +457,8 @@ mod performance_validation_tests {
     #[tokio::test]
     #[ignore]
     async fn test_fetch_urls_batched_2k_performance() {
-        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use app::flamegraph::stack_collector::fetch_urls_batched;
         use std::sync::{Arc, Mutex};
-        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
 
         const BASE_PORT: u16 = 32000;
         const NUM_PORTS: u16 = 2000;
@@ -532,9 +532,8 @@ mod performance_validation_tests {
     #[tokio::test]
     #[ignore]
     async fn test_fetch_urls_batched_5k_performance() {
-        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use app::flamegraph::stack_collector::fetch_urls_batched;
         use std::sync::{Arc, Mutex};
-        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
 
         const BASE_PORT: u16 = 34000;
         const NUM_PORTS: u16 = 5000;
@@ -610,9 +609,8 @@ mod performance_validation_tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn test_fetch_urls_batched_10k_performance() {
-        use crate::flamegraph::stack_collector::fetch_urls_batched;
+        use app::flamegraph::stack_collector::fetch_urls_batched;
         use std::sync::{Arc, Mutex};
-        use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
         
         // 启动 Mock 服务器：1250 个端口 × 每端口 8 个 rank = 10000 个 rank
         // 更真实地模拟大规模分布式训练中每个节点暴露少量 rank 的场景
@@ -697,7 +695,6 @@ mod performance_validation_tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::mock_server::{MockFlameGraphServer, MockServerConfig};
 
     #[tokio::test]
     async fn test_end_to_end_mini_workflow() {

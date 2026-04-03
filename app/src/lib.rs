@@ -16,13 +16,9 @@ pub mod hang_types;
 pub mod mock;
 pub mod models;
 
-// Add bench utilities for performance testing
+// 测试工具模块 - benches 需要通过 lib 访问
 #[cfg(any(test, feature = "bench"))]
 pub mod bench_utils;
-#[cfg(any(test, feature = "bench"))]  
-pub mod mock_server;
-#[cfg(test)]
-pub mod performance_tests;
 
 use api::get_mock_mode_status;
 use components::{Level1View, Level2View, Level3View, MockModeBanner};
