@@ -78,6 +78,7 @@ mkdir -p "$DEB_ROOT/DEBIAN"
 mkdir -p "$DEB_ROOT/opt/$PACKAGE_NAME/site/pkg"
 mkdir -p "$DEB_ROOT/opt/$PACKAGE_NAME/config"
 mkdir -p "$DEB_ROOT/etc/systemd/system"
+mkdir -p "$DEB_ROOT/usr/local/bin"
 
 # Step 3: Copy files
 echo "[3/5] Copying files..."
@@ -102,6 +103,9 @@ chmod 755 "$DEB_ROOT/DEBIAN/prerm"
 
 # Systemd service
 cp "$PROJECT_ROOT/debian/super-training-collector.service" "$DEB_ROOT/etc/systemd/system/"
+
+# Create symlink for CLI access
+ln -sf /opt/super-training-collector/server "$DEB_ROOT/usr/local/bin/probing-monitor"
 
 # Step 4: Calculate installed size
 echo "[4/5] Calculating package size..."
