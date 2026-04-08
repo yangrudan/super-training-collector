@@ -105,3 +105,9 @@ lib-features = []
 #
 # Optional. Defaults to false.
 lib-default-features = false
+
+# Use system-installed tools to avoid GitHub API rate limiting
+# Install with: sudo apt install binaryen (for wasm-opt)
+# Install sass with: npm install -g sass
+wasm-opt-version = "system"
+sass-version = "system"

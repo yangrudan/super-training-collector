@@ -14,3 +14,11 @@ playwright/.cache/
 
 .claude/
 output/
+
+# DEB packaging
+/build-deb/
+*.deb
+
+# Logs
+*.log
+log.txt
