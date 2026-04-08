@@ -4,7 +4,7 @@ use std::time::Duration;
 
 // Import the modules we'll be testing
 use app::bench_utils::FlameGraphDataGenerator;
-use app::flamegraph::stack_merger::{StackTrie, merge_stacks};
+use app::flamegraph::stack_merger::{StackTrie, merge_stacks, parallel_merge_stacks};
 
 /// 内存使用情况统计
 #[derive(Debug, Clone)]
@@ -300,12 +300,104 @@ fn bench_10k_comprehensive(c: &mut Criterion) {
     group.finish();
 }
 
+/// 基准测试：并行 vs 串行合并对比
+fn bench_parallel_vs_serial(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parallel_vs_serial");
+    group.measurement_time(Duration::from_secs(30));
+    group.sample_size(10);
+    
+    let generator = FlameGraphDataGenerator::new(50, 5);
+    let rank_counts = vec![1000, 5000, 10000];
+    
+    for &rank_count in &rank_counts {
+        group.throughput(Throughput::Elements(rank_count as u64));
+        
+        // Generate test data with owned strings for parallel merge
+        let data = generator.generate_flamegraph_data(rank_count);
+        let stacks_owned: Vec<(u32, String)> = data.iter()
+            .map(|(rank, stack)| (*rank, stack.clone()))
+            .collect();
+        let stacks_refs: Vec<&str> = data.values().map(|s| s.as_str()).collect();
+        
+        // Serial merge benchmark
+        group.bench_with_input(
+            BenchmarkId::new("serial", rank_count),
+            &stacks_refs,
+            |b, stacks| {
+                b.iter_custom(|iters| {
+                    let start_time = std::time::Instant::now();
+                    
+                    for _ in 0..iters {
+                        let _trie = black_box(merge_stacks(stacks.clone()));
+                    }
+                    
+                    start_time.elapsed()
+                });
+            },
+        );
+        
+        // Parallel merge benchmark (4 chunks)
+        group.bench_with_input(
+            BenchmarkId::new("parallel_4", rank_count),
+            &stacks_owned,
+            |b, stacks| {
+                b.iter_custom(|iters| {
+                    let start_time = std::time::Instant::now();
+                    
+                    for _ in 0..iters {
+                        let _trie = black_box(parallel_merge_stacks(stacks.clone(), Some(4)));
+                    }
+                    
+                    start_time.elapsed()
+                });
+            },
+        );
+        
+        // Parallel merge benchmark (8 chunks)
+        group.bench_with_input(
+            BenchmarkId::new("parallel_8", rank_count),
+            &stacks_owned,
+            |b, stacks| {
+                b.iter_custom(|iters| {
+                    let start_time = std::time::Instant::now();
+                    
+                    for _ in 0..iters {
+                        let _trie = black_box(parallel_merge_stacks(stacks.clone(), Some(8)));
+                    }
+                    
+                    start_time.elapsed()
+                });
+            },
+        );
+        
+        // Parallel merge benchmark (auto threads)
+        group.bench_with_input(
+            BenchmarkId::new("parallel_auto", rank_count),
+            &stacks_owned,
+            |b, stacks| {
+                b.iter_custom(|iters| {
+                    let start_time = std::time::Instant::now();
+                    
+                    for _ in 0..iters {
+                        let _trie = black_box(parallel_merge_stacks(stacks.clone(), None));
+                    }
+                    
+                    start_time.elapsed()
+                });
+            },
+        );
+    }
+    
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_flamegraph_generation,
     bench_flamegraph_merging,
     bench_incremental_merging,
     bench_memory_efficiency,
-    bench_10k_comprehensive
+    bench_10k_comprehensive,
+    bench_parallel_vs_serial
 );
 criterion_main!(benches);
