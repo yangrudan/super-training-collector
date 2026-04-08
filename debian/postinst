@@ -3,16 +3,25 @@ set -e
 
 # Create user if not exists
 if ! id -u www-data &>/dev/null; then
-    useradd --system --no-create-home www-data
+    useradd --system --no-create-home www-data 2>/dev/null || true
 fi
 
 # Set permissions
-chown -R www-data:www-data /opt/super-training-collector
+chown -R www-data:www-data /opt/super-training-collector 2>/dev/null || true
 
-# Enable and start service
-systemctl daemon-reload
-systemctl enable super-training-collector.service
-systemctl start super-training-collector.service
-
-echo "Super Training Collector installed successfully!"
-echo "Service is running at http://0.0.0.0:3000"
+# Check if systemd is available
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable super-training-collector.service
+    systemctl start super-training-collector.service
+    echo "Super Training Collector installed successfully!"
+    echo "Service is running at http://0.0.0.0:3000"
+    echo ""
+    echo "Service management:"
+    echo "  sudo systemctl status super-training-collector"
+    echo "  sudo systemctl restart super-training-collector"
+else
+    echo "Super Training Collector installed successfully!"
+    echo ""
+    echo "Run with: probing-monitor"
+fi
