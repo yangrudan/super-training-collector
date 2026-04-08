@@ -61,25 +61,14 @@ impl HangDetector {
         node_ip: &str,
         stacks: Vec<Vec<String>>,  // 各个 rank 的堆栈
     ) -> (bool, f64) {
-        // 调试日志
-        eprintln!("[HANG-DETECTOR] Processing stacks for node {}", node_ip);
-        for (idx, stack) in stacks.iter().enumerate() {
-            eprintln!("[HANG-DETECTOR]   Rank {}: {} frames", idx, stack.len());
-            if !stack.is_empty() {
-                eprintln!("[HANG-DETECTOR]     First frame: {}", stack[0]);
-            }
-        }
         
         let state = get_hang_state();
         let mut state = state.write().unwrap();
         
         // 合并所有 rank 的堆栈为一个集合
-        let current_set = self.merge_rank_stacks(&stacks);
-        eprintln!("[HANG-DETECTOR] Merged set size for {}: {}", node_ip, current_set.len());
-        
+        let current_set = self.merge_rank_stacks(&stacks);        
         // 如果当前堆栈为空，说明采集失败，不更新状态
         if current_set.is_empty() {
-            eprintln!("[HANG-DETECTOR] Empty stack set for node {}", node_ip);
             return (false, 0.0);
         }
         
@@ -102,7 +91,6 @@ impl HangDetector {
         // 更新历史记录
         history.push(current_set.clone(), self.config.sample_count + 1);
         history.last_similarity = similarity;
-        eprintln!("[HANG-DETECTOR] Node {}: similarity={:.3}, high_similarity_count={}", node_ip, similarity, history.high_similarity_count + if similarity >= self.config.jaccard_threshold { 1 } else { 0 });
         
         // 判断是否高相似度
         let is_similar = similarity >= self.config.jaccard_threshold;
@@ -136,7 +124,7 @@ impl HangDetector {
     
     /// 根据各节点的检测结果更新全局状态
     /// 
-    /// 投票机制：>= 50% 节点被判定为 HANG，则全局状态为 HANG
+    /// 投票机制：>= 50% 节点被判定为 HANG，则全局状态为 HANG；否则为 NORMAL
     pub fn update_global_status(
         &self,
         node_results: &[(String, bool, f64)],  // (node_ip, is_hang, similarity)
@@ -145,9 +133,9 @@ impl HangDetector {
         let mut state = state.write().unwrap();
         
         if node_results.is_empty() {
-            state.status = HangStatus::Collecting;
+            state.status = HangStatus::Normal;
             state.touch();
-            return HangStatus::Collecting;
+            return HangStatus::Normal;
         }
         
         let hang_count = node_results.iter().filter(|(_, is_hang, _)| *is_hang).count();
@@ -165,23 +153,14 @@ impl HangDetector {
             .map(|(ip, _, sim)| (ip.clone(), *sim))
             .collect();
         
-        // 投票判定
+        // 投票判定：只分为 HANG 或 NORMAL
         let new_status = if hang_count * 2 >= total_count {
             // >= 50% 节点 HANG
             state.details.consecutive_high_similarity = self.config.sample_count as u8;
             HangStatus::Hang
-        } else if hang_count > 0 {
-            // 有节点高相似度，但未达到阈值
-            HangStatus::Warning
-        } else if state.sample_round <= self.config.sample_count as u8 {
-            // 还在收集样本（需要 sample_count + 1 次采样，因为第1次没有历史用于比较）
-            HangStatus::Collecting
         } else {
-            // 完成一轮采样但没有检测到 HANG，重置高相似度计数
-            // 这确保了高相似度计数不会跨轮次累积，避免了误报
-            for history in state.node_history.values_mut() {
-                history.high_similarity_count = 0;
-            }
+            // 其他情况都是 NORMAL，不在这里重置 high_similarity_count
+            // 让轮次切换时在 reset_round 中统一处理
             HangStatus::Normal
         };
         

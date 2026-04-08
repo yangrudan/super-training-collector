@@ -48,11 +48,10 @@ pub fn HangIndicator() -> impl IntoView {
                             Ok(snapshot) => {
                                 let (icon, label, class) = match &snapshot.status {
                                     HangStatus::Hang => ("🔴", "训练已 HANG", "hang-critical"),
-                                    HangStatus::Warning => ("🟡", "可能 HANG", "hang-warning"),
                                     HangStatus::Normal => ("🟢", "运行正常", "hang-normal"),
-                                    HangStatus::Collecting => ("🔵", "采集中", "hang-collecting"),
                                     HangStatus::Disabled => ("⚪", "未启用", "hang-disabled"),
                                     HangStatus::Error(_) => ("❌", "检测错误", "hang-error"),
+                                    _ => ("⚪", "未启用", "hang-disabled"),
                                 };
                                 
                                 let details_text = if !snapshot.details.hang_nodes.is_empty() {
@@ -129,10 +128,8 @@ pub fn HangIndicatorCompact() -> impl IntoView {
     
     // 颜色说明
     let color_legend = "HANG 检测状态 (每10秒自动刷新):\n\
-        🔴 红灯: 训练已 HANG（堆栈连续3次无变化）\n\
-        🟡 黄灯: 可能 HANG（部分节点异常）\n\
+        🔴 红灯: 训练已 HANG（堆栈连续多次无变化）\n\
         🟢 绿灯: 运行正常\n\
-        🔵 蓝灯: 正在采集样本\n\
         ⚪ 白灯: 检测未启用\n\
         ❌ 错误: 检测过程出错";
     
@@ -144,11 +141,10 @@ pub fn HangIndicatorCompact() -> impl IntoView {
                         Ok(snapshot) => {
                             let (icon, status_text) = match &snapshot.status {
                                 HangStatus::Hang => ("🔴", "训练已 HANG"),
-                                HangStatus::Warning => ("🟡", "可能 HANG"),
                                 HangStatus::Normal => ("🟢", "运行正常"),
-                                HangStatus::Collecting => ("🔵", "采集中"),
                                 HangStatus::Disabled => ("⚪", "检测未启用"),
                                 HangStatus::Error(_) => ("❌", "检测错误"),
+                                _ => ("⚪", "检测未启用"),
                             };
                             
                             // 组合当前状态和颜色说明

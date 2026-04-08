@@ -154,14 +154,10 @@ async fn fetch_callstack(
     let json: serde_json::Value = response.json().await
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
     
-    // 调试日志：打印原始JSON
-    eprintln!("[HANG-DEBUG] Raw JSON response from {}: {}", url, json);
-    
     // 解析堆栈帧列表
     let mut frames = Vec::new();
     
     if let serde_json::Value::Array(frame_array) = json {
-        eprintln!("[HANG-DEBUG] Parsed {} frames from {}", frame_array.len(), url);
         for frame in frame_array {
             // 直接序列化整个原始帧对象，避免格式化导致的信息损失
             let frame_str = frame.to_string();
@@ -169,12 +165,8 @@ async fn fetch_callstack(
                 frames.push(frame_str);
             }
         }
-    } else {
-        // JSON 不是数组，这是问题！
-        eprintln!("[HANG-DEBUG] JSON response from {} is not an array, got: {}", url, json);
     }
     
-    eprintln!("[HANG-DEBUG] Total frames collected from {}: {}", url, frames.len());
     Ok(frames)
 }
 
