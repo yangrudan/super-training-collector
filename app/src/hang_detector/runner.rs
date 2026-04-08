@@ -154,78 +154,32 @@ async fn fetch_callstack(
     let json: serde_json::Value = response.json().await
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
     
+    // 调试日志：打印原始JSON
+    eprintln!("[HANG-DEBUG] Raw JSON response from {}: {}", url, json);
+    
     // 解析堆栈帧列表
     let mut frames = Vec::new();
     
     if let serde_json::Value::Array(frame_array) = json {
+        eprintln!("[HANG-DEBUG] Parsed {} frames from {}", frame_array.len(), url);
         for frame in frame_array {
-            let frame_str = format_frame(&frame);
-            if !frame_str.is_empty() {
+            // 直接序列化整个原始帧对象，避免格式化导致的信息损失
+            let frame_str = frame.to_string();
+            if !frame_str.is_empty() && frame_str != "null" {
                 frames.push(frame_str);
             }
         }
+    } else {
+        // JSON 不是数组，这是问题！
+        eprintln!("[HANG-DEBUG] JSON response from {} is not an array, got: {}", url, json);
     }
     
+    eprintln!("[HANG-DEBUG] Total frames collected from {}: {}", url, frames.len());
     Ok(frames)
 }
 
-/// 格式化单个堆栈帧
-fn format_frame(frame: &serde_json::Value) -> String {
-    let obj = match frame.as_object() {
-        Some(o) => o,
-        None => return String::new(),
-    };
-    
-    // 尝试获取函数名和文件位置
-    let func = obj
-        .get("func")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    
-    let file = obj
-        .get("file")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    
-    let lineno = obj
-        .get("lineno")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    
-    format!("{} ({}:{})", func, file, lineno)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_format_frame_complete() {
-        let json = serde_json::json!({
-            "func": "forward",
-            "file": "model.py",
-            "lineno": 42
-        });
-        
-        let frame_str = format_frame(&json);
-        assert_eq!(frame_str, "forward (model.py:42)");
-    }
-
-    #[test]
-    fn test_format_frame_missing_fields() {
-        let json = serde_json::json!({
-            "func": "backward"
-        });
-        
-        let frame_str = format_frame(&json);
-        assert_eq!(frame_str, "backward (unknown:0)");
-    }
-
-    #[test]
-    fn test_format_frame_empty() {
-        let json = serde_json::json!(null);
-        
-        let frame_str = format_frame(&json);
-        assert_eq!(frame_str, "");
-    }
 }

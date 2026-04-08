@@ -61,14 +61,25 @@ impl HangDetector {
         node_ip: &str,
         stacks: Vec<Vec<String>>,  // 各个 rank 的堆栈
     ) -> (bool, f64) {
+        // 调试日志
+        eprintln!("[HANG-DETECTOR] Processing stacks for node {}", node_ip);
+        for (idx, stack) in stacks.iter().enumerate() {
+            eprintln!("[HANG-DETECTOR]   Rank {}: {} frames", idx, stack.len());
+            if !stack.is_empty() {
+                eprintln!("[HANG-DETECTOR]     First frame: {}", stack[0]);
+            }
+        }
+        
         let state = get_hang_state();
         let mut state = state.write().unwrap();
         
         // 合并所有 rank 的堆栈为一个集合
         let current_set = self.merge_rank_stacks(&stacks);
+        eprintln!("[HANG-DETECTOR] Merged set size for {}: {}", node_ip, current_set.len());
         
         // 如果当前堆栈为空，说明采集失败，不更新状态
         if current_set.is_empty() {
+            eprintln!("[HANG-DETECTOR] Empty stack set for node {}", node_ip);
             return (false, 0.0);
         }
         
@@ -91,6 +102,7 @@ impl HangDetector {
         // 更新历史记录
         history.push(current_set.clone(), self.config.sample_count + 1);
         history.last_similarity = similarity;
+        eprintln!("[HANG-DETECTOR] Node {}: similarity={:.3}, high_similarity_count={}", node_ip, similarity, history.high_similarity_count + if similarity >= self.config.jaccard_threshold { 1 } else { 0 });
         
         // 判断是否高相似度
         let is_similar = similarity >= self.config.jaccard_threshold;
