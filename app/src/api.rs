@@ -166,9 +166,9 @@ pub async fn get_topology() -> Result<Topology, ServerFnError> {
 /// 从 config/collector.json 获取所有节点及其 Rank URL 列表 (IP 来自训练数据, 端口自动递增)
 #[server(GetAllNodesCallstackInfo)]
 pub async fn get_all_nodes_callstack_info() -> Result<Vec<(String, u8, u16)>, ServerFnError> {
-    use crate::flamegraph::load_collector_config;
+    use crate::flamegraph::{get_config_path, load_collector_config};
 
-    let config = load_collector_config("./config/collector.json")
+    let config = load_collector_config(&get_config_path())
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
     let nodes = match get_real_training_data().await {
@@ -195,10 +195,10 @@ pub async fn get_all_nodes_callstack_info() -> Result<Vec<(String, u8, u16)>, Se
 #[server(GetNodeFlamegraph)]
 pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
     use crate::flamegraph::{
-        build_callstack_urls, collect_and_generate_flamegraph, load_collector_config,
+        build_callstack_urls, collect_and_generate_flamegraph, get_config_path, load_collector_config,
     };
 
-    let config = load_collector_config("./config/collector.json")
+    let config = load_collector_config(&get_config_path())
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
     // 获取该节点的 rank_count
@@ -230,10 +230,10 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 #[server(GetAllNodesFlamegraph)]
 pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
     use crate::flamegraph::{
-        build_callstack_urls, collect_and_generate_flamegraph, load_collector_config,
+        build_callstack_urls, collect_and_generate_flamegraph, get_config_path, load_collector_config,
     };
 
-    let config = load_collector_config("./config/collector.json")
+    let config = load_collector_config(&get_config_path())
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
     let nodes = match get_real_training_data().await {

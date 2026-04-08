@@ -20,6 +20,14 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
+/// 配置文件路径的默认值
+const DEFAULT_CONFIG_PATH: &str = "./config/collector.json";
+
+/// 从环境变量获取配置文件路径，如未设置则使用默认值
+pub fn get_config_path() -> String {
+    std::env::var("COLLECTOR_CONFIG_PATH").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string())
+}
+
 /// Default batch size for processing URLs
 const DEFAULT_BATCH_SIZE: usize = 500;
 
@@ -43,7 +51,8 @@ fn default_batch_size() -> usize {
     DEFAULT_BATCH_SIZE
 }
 
-/// Load collector config from `config/collector.json`.
+/// Load collector config from config file.
+/// Path is determined by `COLLECTOR_CONFIG_PATH` env var, defaults to `./config/collector.json`.
 pub fn load_collector_config(
     config_path: &str,
 ) -> Result<CollectorConfig, Box<dyn std::error::Error>> {

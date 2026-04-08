@@ -97,7 +97,8 @@ async fn fetch_all_nodes() -> Result<Vec<String>, String> {
 /// 
 /// 返回堆栈列表，每个堆栈对应一个 rank
 async fn fetch_stacks(node_ip: &str) -> Result<Vec<Vec<String>>, String> {
-    let config = load_collector_config("./config/collector.json")
+    use crate::flamegraph::get_config_path;
+    let config = load_collector_config(&get_config_path())
         .map_err(|e| format!("Failed to load config: {}", e))?;
     
     // 获取该节点的 rank_count

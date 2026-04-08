@@ -47,7 +47,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_node_info_with_real_api() {
-        let port = load_collector_config("./config/collector.json")
+        use crate::flamegraph::get_config_path;
+        let port = load_collector_config(&get_config_path())
             .map(|c| c.callstack_base_port)
             .unwrap_or(9933);
         let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -124,7 +125,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_node_info_with_mock() {
         // 使用mock测试，基于真实数据格式
-        let port = load_collector_config("./config/collector.json")
+        use crate::flamegraph::get_config_path;
+        let port = load_collector_config(&get_config_path())
             .map(|c| c.callstack_base_port)
             .unwrap_or(9933);
         let expected_json = format!(
@@ -416,7 +418,8 @@ pub fn aggregate_ranks_to_node_metrics(
 #[cfg(feature = "ssr")]
 /// 获取真实数据并转换为应用所需格式
 pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetrics>), Error> {
-    let port = load_collector_config("./config/collector.json")
+    use crate::flamegraph::get_config_path;
+    let port = load_collector_config(&get_config_path())
         .map(|c| c.callstack_base_port)
         .unwrap_or(9933);
     let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -614,8 +617,9 @@ pub async fn query_step_metrics(url: &str, limit: u32) -> Result<StepQueryRespon
 /// 获取全局 Step 指标（首页使用）
 /// 端口 = callstack_base_port + step_query_port_offset
 pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, BoxError> {
+    use crate::flamegraph::get_config_path;
     // debug!("[Global Step] Loading config...");
-    let config = load_collector_config("./config/collector.json").map_err(|e| -> BoxError {
+    let config = load_collector_config(&get_config_path()).map_err(|e| -> BoxError {
         // debug!("[Global Step] Config load failed: {}", e);
         e.to_string().into()
     })?;
@@ -663,11 +667,12 @@ pub async fn get_rank_step_metrics(
     local_rank: u8,
     rank_id: u32,
 ) -> Result<RankStepMetrics, BoxError> {
+    use crate::flamegraph::get_config_path;
     // debug!(
     //     "[Rank Step] rank_id={}, ip={}, local_rank={}",
     //     rank_id, ip, local_rank
     // );
-    let config = load_collector_config("./config/collector.json").map_err(|e| -> BoxError {
+    let config = load_collector_config(&get_config_path()).map_err(|e| -> BoxError {
         // debug!("[Rank Step] Config load failed: {}", e);
         e.to_string().into()
     })?;
