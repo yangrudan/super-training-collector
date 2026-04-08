@@ -9,6 +9,28 @@ fi
 # Set permissions
 chown -R www-data:www-data /opt/super-training-collector 2>/dev/null || true
 
+# Add environment variables to user's bashrc
+BASHRC_MARKER="# super-training-collector environment"
+ENV_BLOCK="$BASHRC_MARKER
+export COLLECTOR_CONFIG_PATH=/opt/super-training-collector/config/collector.json
+export HANG_CHECK_ENABLED=true
+export LEPTOS_SITE_ROOT=/opt/super-training-collector/site
+export LEPTOS_SITE_ADDR=0.0.0.0:3000
+export LEPTOS_ENV=PROD"
+
+# Get the actual user (not root) who ran sudo
+ACTUAL_USER="${SUDO_USER:-$USER}"
+if [ -n "$ACTUAL_USER" ] && [ "$ACTUAL_USER" != "root" ]; then
+    USER_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
+    USER_BASHRC="$USER_HOME/.bashrc"
+    if [ -f "$USER_BASHRC" ] && ! grep -q "$BASHRC_MARKER" "$USER_BASHRC"; then
+        echo "" >> "$USER_BASHRC"
+        echo "$ENV_BLOCK" >> "$USER_BASHRC"
+        chown "$ACTUAL_USER:$ACTUAL_USER" "$USER_BASHRC"
+        echo "Environment variables added to $USER_BASHRC"
+    fi
+fi
+
 # Check if systemd is available
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
@@ -25,3 +47,6 @@ else
     echo ""
     echo "Run with: probing-monitor"
 fi
+
+echo ""
+echo "Run 'source ~/.bashrc' or open a new terminal to apply environment variables."

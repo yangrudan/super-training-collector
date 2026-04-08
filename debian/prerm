@@ -6,3 +6,13 @@ if [ -d /run/systemd/system ]; then
     systemctl stop super-training-collector.service || true
     systemctl disable super-training-collector.service || true
 fi
+
+# Remove environment variables from user's bashrc
+ACTUAL_USER="${SUDO_USER:-$USER}"
+if [ -n "$ACTUAL_USER" ] && [ "$ACTUAL_USER" != "root" ]; then
+    USER_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
+    USER_BASHRC="$USER_HOME/.bashrc"
+    if [ -f "$USER_BASHRC" ]; then
+        sed -i '/# super-training-collector environment/,/export LEPTOS_ENV=PROD/d' "$USER_BASHRC"
+    fi
+fi
