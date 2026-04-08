@@ -155,35 +155,29 @@ export LEPTOS_ENV="PROD"
 ./server
 ```
 
-### Systemd 服务（可选）
-
-创建 `/etc/systemd/system/collector.service`：
-
-```ini
-[Unit]
-Description=Super Training Collector
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/collector
-Environment="LEPTOS_SITE_ROOT=target/site"
-Environment="LEPTOS_SITE_ADDR=0.0.0.0:3000"
-Environment="LEPTOS_ENV=PROD"
-ExecStart=/opt/collector/server
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启用服务：
+### deb打包和发布
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable collector
-sudo systemctl start collector
+# 生产环境（安全）- 仅打包已有产物
+./scripts/build-deb.sh
+
+# 开发机器 - 编译 + 打包（需确认）
+./scripts/build-deb.sh --with-build
+```
+
+增加环境变量
+```
+sudo systemctl edit super-training-collector
+```
+在打开的编辑器中添加：
+```bash
+[Service]
+Environment=MASTER_ADDR=192.168.1.100
+Environment=OTHER_VAR=value
+
+# 保存后重启服务：
+
+sudo systemctl restart super-training-collector
 ```
 
 ### 注意事项
