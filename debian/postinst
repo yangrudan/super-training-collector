@@ -1,0 +1,18 @@
+#!/bin/bash
+set -e
+
+# Create user if not exists
+if ! id -u www-data &>/dev/null; then
+    useradd --system --no-create-home www-data
+fi
+
+# Set permissions
+chown -R www-data:www-data /opt/super-training-collector
+
+# Enable and start service
+systemctl daemon-reload
+systemctl enable super-training-collector.service
+systemctl start super-training-collector.service
+
+echo "Super Training Collector installed successfully!"
+echo "Service is running at http://0.0.0.0:3000"

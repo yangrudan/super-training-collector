@@ -1,0 +1,10 @@
+Package: super-training-collector
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: yangrudan@zhejianglab.org
+Depends: libc6 (>= 2.31)
+Description: Super Training Collector
+ A full-stack web application built with Leptos (Rust + WebAssembly)
+ for training data collection and monitoring.

@@ -1,0 +1,18 @@
+[Unit]
+Description=Super Training Collector Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/super-training-collector
+Environment=LEPTOS_SITE_ROOT=/opt/super-training-collector/site
+Environment=LEPTOS_SITE_ADDR=0.0.0.0:3000
+Environment=LEPTOS_ENV=PROD
+ExecStart=/opt/super-training-collector/server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
