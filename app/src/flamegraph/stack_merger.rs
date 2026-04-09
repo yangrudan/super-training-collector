@@ -254,17 +254,20 @@ pub fn merge_stacks(stacks: Vec<&str>) -> StackTrie {
 ///
 /// # Arguments
 /// * `stacks` - Vector of (rank_id, folded_stack_string) pairs
-/// * `num_chunks` - Number of parallel chunks (typically matches CPU cores, default: rayon's thread count)
+/// * `num_chunks` - Number of parallel chunks. If None, uses min(rayon threads, 8) to balance
+///                  parallelism vs merge overhead.
 ///
 /// # Performance
-/// For 10000 ranks with 80KB data each, this can provide 3-4x speedup over serial merge.
+/// For 10000 ranks with 80KB data each, this can provide 2-3x speedup over serial merge.
+/// Optimal chunk count is typically 4-8; more chunks increases merge overhead.
 pub fn parallel_merge_stacks(stacks: Vec<(u32, String)>, num_chunks: Option<usize>) -> StackTrie {
     if stacks.is_empty() {
         return StackTrie::with_total_ranks(0);
     }
 
     let total_ranks = stacks.iter().map(|(r, _)| *r).max().unwrap_or(0) + 1;
-    let num_chunks = num_chunks.unwrap_or_else(rayon::current_num_threads);
+    // Limit auto chunks to 8 max - more chunks means more merge overhead (merge is serial)
+    let num_chunks = num_chunks.unwrap_or_else(|| rayon::current_num_threads().min(8));
     let num_chunks = num_chunks.max(1).min(stacks.len());
     let chunk_size = (stacks.len() + num_chunks - 1) / num_chunks;
 
