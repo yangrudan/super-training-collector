@@ -5,7 +5,7 @@ mod common;
 use common::mock_server::{MockFlameGraphServer, MockServerConfig};
 
 use app::bench_utils::FlameGraphDataGenerator;
-use app::flamegraph::stack_merger::{StackTrie, merge_stacks};
+use app::flamegraph::stack_merger::{StackTrie, merge_stacks, parallel_merge_stacks};
 
 /// fixture 文件路径（相对于 crate 根目录，即 app/）
 const FIXTURE_PATH: &str = "tests/fixtures/flamegraph_stacks.txt";
@@ -218,6 +218,67 @@ mod performance_validation_tests {
             println!("Incremental merge produced {} unique paths", results.len());
             assert!(results.len() > 0);
         }
+    }
+
+    /// 测试并行 merge 性能（对比串行）
+    #[test]
+    #[ignore]
+    fn test_parallel_merge_10k_performance() {
+        use memory_stats::memory_stats;
+        
+        let data = load_10k_data();
+        let items: Vec<(u32, String)> = data.into_iter().collect();
+        
+        // 测试串行 merge
+        let start_mem_serial = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        let start_serial = Instant::now();
+        
+        let stacks_refs: Vec<&str> = items.iter().map(|(_, s)| s.as_str()).collect();
+        let _trie_serial = merge_stacks(stacks_refs);
+        
+        let serial_time = start_serial.elapsed();
+        let end_mem_serial = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        
+        if let (Some(start), Some(end)) = (start_mem_serial, end_mem_serial) {
+            println!("!!! ===Serial merge=== time: {:?}, memory: {:.2}MB", serial_time, end - start);
+        }
+        
+        // 测试并行 merge (4 线程)
+        let start_mem_parallel = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        let start_parallel = Instant::now();
+        
+        let _trie_parallel_4 = parallel_merge_stacks(items.clone(), Some(4));
+        
+        let parallel_4_time = start_parallel.elapsed();
+        let end_mem_parallel = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
+        
+        if let (Some(start), Some(end)) = (start_mem_parallel, end_mem_parallel) {
+            println!("!!! ===Parallel merge (4 threads)=== time: {:?}, memory: {:.2}MB", parallel_4_time, end - start);
+        }
+        
+        // 测试并行 merge (8 线程)
+        let start_parallel_8 = Instant::now();
+        let _trie_parallel_8 = parallel_merge_stacks(items.clone(), Some(8));
+        let parallel_8_time = start_parallel_8.elapsed();
+        println!("!!! ===Parallel merge (8 threads)=== time: {:?}", parallel_8_time);
+        
+        // 测试并行 merge (auto 线程)
+        let start_parallel_auto = Instant::now();
+        let trie_parallel_auto = parallel_merge_stacks(items.clone(), None);
+        let parallel_auto_time = start_parallel_auto.elapsed();
+        println!("!!! ===Parallel merge (auto threads)=== time: {:?}", parallel_auto_time);
+        
+        // 验证结果正确性
+        let results = trie_parallel_auto.traverse_with_all_stack(&trie_parallel_auto.root, Vec::new());
+        println!("Parallel merge produced {} unique paths", results.len());
+        assert!(results.len() > 0);
+        
+        // 打印对比结果
+        println!("\n=== Performance Summary ===");
+        println!("Serial:         {:?}", serial_time);
+        println!("Parallel (4):   {:?} ({:.2}x)", parallel_4_time, serial_time.as_secs_f64() / parallel_4_time.as_secs_f64());
+        println!("Parallel (8):   {:?} ({:.2}x)", parallel_8_time, serial_time.as_secs_f64() / parallel_8_time.as_secs_f64());
+        println!("Parallel (auto): {:?} ({:.2}x)", parallel_auto_time, serial_time.as_secs_f64() / parallel_auto_time.as_secs_f64());
     }
 
     #[test]

@@ -139,6 +139,7 @@ dependencies = [
  "mockito",
  "once_cell",
  "rand 0.8.5",
+ "rayon",
  "reqwest",
  "roaring",
  "rustc-hash",
