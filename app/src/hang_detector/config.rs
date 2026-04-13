@@ -19,6 +19,10 @@ pub struct HangConfig {
     pub jaccard_threshold: f64,
     /// 已知长阻塞模式（白名单）
     pub blocking_patterns: Vec<String>,
+    /// 是否启用 HANG 日志记录
+    pub log_enabled: bool,
+    /// HANG 日志保存目录
+    pub log_dir: String,
 }
 
 impl Default for HangConfig {
@@ -35,6 +39,8 @@ impl Default for HangConfig {
                 "load_data".to_string(),
                 "DataLoader".to_string(),
             ],
+            log_enabled: true,
+            log_dir: "hang_logs".to_string(),
         }
     }
 }
@@ -88,6 +94,18 @@ impl HangConfig {
             }
         }
         
+        // HANG_LOG_ENABLED: 是否启用日志记录
+        if let Ok(val) = env::var("HANG_LOG_ENABLED") {
+            config.log_enabled = val.to_lowercase() == "true" || val == "1";
+        }
+        
+        // HANG_LOG_DIR: 日志保存目录
+        if let Ok(val) = env::var("HANG_LOG_DIR") {
+            if !val.is_empty() {
+                config.log_dir = val;
+            }
+        }
+        
         config
     }
     
@@ -115,6 +133,8 @@ mod tests {
         assert_eq!(config.node_count, 4);
         assert_eq!(config.jaccard_threshold, 0.95);
         assert!(!config.blocking_patterns.is_empty());
+        assert!(config.log_enabled);
+        assert_eq!(config.log_dir, "hang_logs");
     }
 
     #[test]

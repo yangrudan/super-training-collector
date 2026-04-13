@@ -1,4 +1,4 @@
-mod flamegraph_generator;
+pub mod flamegraph_generator;
 mod process_data;
 pub mod stack_collector;
 pub mod stack_merger;

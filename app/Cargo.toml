@@ -35,6 +35,7 @@ tracing = { version = "0.1", optional = true }
 roaring = { version = "0.10", optional = true }
 rustc-hash = { version = "2.0", optional = true }
 rayon = { version = "1.10", optional = true }
+chrono = { version = "0.4", optional = true }
 
 [dev-dependencies]
 mockito = "0.28"
@@ -48,6 +49,8 @@ axum = "0.8"
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors"] }
 rand = "0.8"
+tempfile = "3.15"
+chrono = "0.4"
 
 
 [[bench]]
@@ -57,6 +60,6 @@ harness = false
 [features]
 default = []
 hydrate = ["leptos/hydrate", "dep:web-sys", "dep:js-sys"]
-ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "dep:leptos_axum", "dep:reqwest", "dep:tokio", "dep:inferno", "dep:futures", "dep:serde_json", "dep:rand", "dep:tracing", "dep:roaring", "dep:rustc-hash", "dep:rayon"]
+ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "dep:leptos_axum", "dep:reqwest", "dep:tokio", "dep:inferno", "dep:futures", "dep:serde_json", "dep:rand", "dep:tracing", "dep:roaring", "dep:rustc-hash", "dep:rayon", "dep:chrono"]
 bench = ["dep:rand", "dep:axum", "dep:tower-http", "dep:tokio"]
 

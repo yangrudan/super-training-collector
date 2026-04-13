@@ -226,6 +226,8 @@ mod tests {
             node_count: 4,
             jaccard_threshold: 0.95,
             blocking_patterns: vec!["checkpoint".to_string()],
+            log_enabled: true,
+            log_dir: "hang_logs".to_string(),
         }
     }
 

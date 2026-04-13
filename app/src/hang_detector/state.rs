@@ -71,6 +71,8 @@ pub struct HangDetectorState {
     pub details: HangDetails,
     /// 最后更新时间
     pub last_update: u64,
+    /// 当前 HANG 是否已记录日志（防止重复记录）
+    pub hang_logged: bool,
 }
 
 impl Default for HangDetectorState {
@@ -82,6 +84,7 @@ impl Default for HangDetectorState {
             status: HangStatus::Disabled,
             details: HangDetails::default(),
             last_update: 0,
+            hang_logged: false,
         }
     }
 }
@@ -97,6 +100,21 @@ impl HangDetectorState {
         self.selected_nodes.clear();
         self.sample_round = 0;
         // 保留历史数据，只重置轮次计数
+    }
+    
+    /// 标记当前 HANG 已记录日志
+    pub fn mark_logged(&mut self) {
+        self.hang_logged = true;
+    }
+    
+    /// 重置日志标记（当状态从 HANG 变为非 HANG 时调用）
+    pub fn reset_logged(&mut self) {
+        self.hang_logged = false;
+    }
+    
+    /// 检查是否需要记录日志（HANG 且未记录过）
+    pub fn should_log(&self) -> bool {
+        self.status == HangStatus::Hang && !self.hang_logged
     }
     
     /// 更新时间戳

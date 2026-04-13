@@ -41,7 +41,8 @@ app/src/hang_detector/
 ├── jaccard.rs       # Jaccard 相似度计算
 ├── detector.rs      # 核心检测逻辑
 ├── scheduler.rs     # 定时任务调度
-└── state.rs         # 全局状态管理
+├── state.rs         # 全局状态管理
+└── logger.rs        # HANG 日志记录（SSR only）
 ```
 
 ### 环境变量配置
@@ -54,6 +55,40 @@ app/src/hang_detector/
 | `HANG_NODE_COUNT` | `4` | 采样节点数 |
 | `HANG_JACCARD_THRESHOLD` | `0.95` | Jaccard 判定阈值 |
 | `HANG_BLOCKING_PATTERNS` | `checkpoint,save_model,load_data,DataLoader` | 白名单模式（逗号分隔） |
+| `HANG_LOG_ENABLED` | `true` | 是否启用 HANG 日志记录（需 HANG_CHECK_ENABLED=true） |
+| `HANG_LOG_DIR` | `hang_logs` | HANG 日志保存目录 |
+
+### HANG 日志记录
+
+当检测到 HANG 时，系统会自动将堆栈信息导出到本地文件：
+
+- **日志路径**: `{HANG_LOG_DIR}/hang_YYYYMMDD_HHMMSS.json`
+- **全局火焰图**: `{HANG_LOG_DIR}/hang_YYYYMMDD_HHMMSS.svg`
+- **防重复机制**: 持续处于 HANG 状态时只记录一次，状态解除后才能再次记录
+
+**全局火焰图**: 检测到 HANG 时，系统会采集**所有节点的所有 rank** 的堆栈数据，合并生成一张全局火焰图 SVG，可在浏览器中打开查看 HANG 时的完整堆栈分布。
+
+**日志文件内容**:
+```json
+{
+  "timestamp": "2024-01-01T12:00:00.000+0800",
+  "hang_nodes": ["192.168.1.1", "192.168.1.2"],
+  "node_similarities": {
+    "192.168.1.1": 0.98,
+    "192.168.1.2": 0.96
+  },
+  "node_stacks": {
+    "192.168.1.1": [["frame1", "frame2"], ["frame3", "frame4"]]
+  },
+  "consecutive_high_similarity": 3,
+  "config": {
+    "sample_interval_secs": 30,
+    "sample_count": 3,
+    "node_count": 4,
+    "jaccard_threshold": 0.95
+  }
+}
+```
 
 ### 设计决策
 

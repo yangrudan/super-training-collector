@@ -4,8 +4,11 @@
 
 use super::config::HangConfig;
 use super::detector::HangDetector;
+use super::logger::HangLogger;
+use super::state::HangStatus;
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{build_callstack_urls, load_collector_config};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing;
@@ -25,7 +28,11 @@ pub async fn start_hang_detector_scheduler() {
     tracing::info!("Starting HANG detection scheduler with interval: {}s", config.sample_interval_secs);
     
     let detector = HangDetector::new(config.clone());
+    let logger = HangLogger::new(config.clone());
     let mut tick = interval(Duration::from_secs(config.sample_interval_secs));
+    
+    // 存储本轮各节点的堆栈数据（用于日志记录）
+    let mut round_stacks: HashMap<String, Vec<Vec<String>>> = HashMap::new();
     
     loop {
         tick.tick().await;
@@ -53,6 +60,7 @@ pub async fn start_hang_detector_scheduler() {
         if detector.needs_new_nodes() {
             // 重置轮次计数，开始新一轮检测
             detector.reset_round();
+            round_stacks.clear();  // 清空上一轮的堆栈数据
             let selected = detector.select_nodes(&all_nodes);
             detector.set_selected_nodes(selected.clone());
             tracing::debug!("Selected nodes for sampling: {:?}", selected);
@@ -66,6 +74,9 @@ pub async fn start_hang_detector_scheduler() {
         for node_ip in selected_nodes {
             match fetch_stacks(&node_ip).await {
                 Ok(stacks) => {
+                    // 保存堆栈数据用于日志记录
+                    round_stacks.insert(node_ip.clone(), stacks.clone());
+                    
                     let (is_hang, similarity) = detector.process_node_stacks(&node_ip, stacks);
                     results.push((node_ip.clone(), is_hang, similarity));
                     tracing::debug!("Node {}: hang={}, similarity={:.3}", node_ip, is_hang, similarity);
@@ -79,6 +90,20 @@ pub async fn start_hang_detector_scheduler() {
         // 更新全局状态
         let status = detector.update_global_status(&results);
         tracing::info!("HANG detection round completed, status: {:?}", status);
+        
+        // 根据状态处理日志
+        match &status {
+            HangStatus::Hang => {
+                // 检测到 HANG，尝试记录日志并采集全局火焰图
+                if let Some(log_path) = logger.log_hang_event(round_stacks.clone()).await {
+                    tracing::warn!("HANG detected! Log saved to: {}", log_path);
+                }
+            }
+            _ => {
+                // 状态恢复正常，重置日志标记
+                logger.reset_on_recovery();
+            }
+        }
     }
 }
 

@@ -9,9 +9,13 @@ pub mod detector;
 pub mod scheduler;
 #[cfg(feature = "ssr")]
 pub mod runner;
+#[cfg(feature = "ssr")]
+pub mod logger;
 
 pub use config::HangConfig;
 pub use state::{HangStatus, HangDetectorState, HangStatusSnapshot};
 pub use detector::HangDetector;
 #[cfg(feature = "ssr")]
 pub use runner::start_hang_detector_scheduler;
+#[cfg(feature = "ssr")]
+pub use logger::HangLogger;
