@@ -7,6 +7,12 @@ use leptos_axum::{generate_route_list, LeptosRoutes};
 
 #[tokio::main]
 async fn main() {
+    // 处理 --version 参数
+    if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
+        println!("super-training-collector {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     // 初始化日志，从 RUST_LOG 环境变量读取级别，默认为 Info
     // SimpleLogger::new()
     //     .env()
@@ -14,9 +20,7 @@ async fn main() {
     //     .unwrap();
 
     // 启动 HANG 检测调度器
-    tokio::spawn(async {
-        app::hang_detector::start_hang_detector_scheduler().await
-    });
+    tokio::spawn(async { app::hang_detector::start_hang_detector_scheduler().await });
 
     let conf = get_configuration(None).unwrap();
     let addr = conf.leptos_options.site_addr;
@@ -40,4 +44,3 @@ async fn main() {
         .await
         .unwrap();
 }
-
