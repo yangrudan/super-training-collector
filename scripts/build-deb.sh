@@ -11,7 +11,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-VERSION="0.1.0"
+# 从 Cargo.toml 自动读取版本号
+VERSION=$(grep -m1 'version = "' "$PROJECT_ROOT/Cargo.toml" | sed 's/.*version = "\([^"]*\)".*/\1/')
 PACKAGE_NAME="super-training-collector"
 BUILD_DIR="$PROJECT_ROOT/build-deb"
 DEB_ROOT="$BUILD_DIR/${PACKAGE_NAME}_${VERSION}"
