@@ -404,3 +404,45 @@ pub async fn get_hang_check_enabled() -> Result<bool, ServerFnError> {
         Ok(false)
     }
 }
+
+// ============ 问题 Rank 分析 API ============
+
+/// 手动触发问题 Rank 分析（实时采集堆栈 + 分析）
+#[server(AnalyzeProblematicRanks)]
+pub async fn analyze_problematic_ranks(
+) -> Result<crate::rank_analysis_types::RankAnalysisResult, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::hang_detector::runner::run_rank_analysis_with_trigger;
+        use crate::rank_analyzer::{
+            set_last_analysis, AnalysisTrigger, RankAnalysisConfig,
+        };
+
+        let config = RankAnalysisConfig::from_env();
+        let result = run_rank_analysis_with_trigger(&config, AnalysisTrigger::Manual)
+            .await
+            .map_err(|e| ServerFnError::new(format!("分析失败: {}", e)))?;
+
+        set_last_analysis(result.clone());
+        Ok(result)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Err(ServerFnError::new("SSR feature required"))
+    }
+}
+
+/// 获取最近一次问题 Rank 分析结果（缓存）
+#[server(GetProblematicRanks)]
+pub async fn get_problematic_ranks(
+) -> Result<Option<crate::rank_analysis_types::RankAnalysisResult>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::rank_analyzer::get_last_analysis;
+        Ok(get_last_analysis())
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Err(ServerFnError::new("SSR feature required"))
+    }
+}

@@ -1,5 +1,6 @@
 use crate::api::{get_all_nodes_flamegraph, get_nodes};
 use crate::components::common::*;
+use crate::components::rank_analysis::RankAnalysisPanel;
 use crate::models::*;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
@@ -7,7 +8,7 @@ use leptos_router::hooks::use_navigate;
 /// Level 2: 节点聚合视图 (带 Tab)
 #[component]
 pub fn Level2View() -> impl IntoView {
-    let active_tab = RwSignal::new(0u8); // 0 = 节点列表, 1 = 全部堆栈
+    let active_tab = RwSignal::new(0u8); // 0 = 节点列表, 1 = 全部堆栈, 2 = 问题 Rank 分析
 
     view! {
         <div class="level2-view">
@@ -28,6 +29,10 @@ pub fn Level2View() -> impl IntoView {
                     class=move || if active_tab.get() == 1 { "tab-btn tab-btn-active" } else { "tab-btn" }
                     on:click=move |_| active_tab.set(1)
                 >"全部 Rank 堆栈"</button>
+                <button
+                    class=move || if active_tab.get() == 2 { "tab-btn tab-btn-active" } else { "tab-btn" }
+                    on:click=move |_| active_tab.set(2)
+                >"🔍 问题 Rank 分析"</button>
             </div>
 
             // Tab 内容
@@ -36,6 +41,9 @@ pub fn Level2View() -> impl IntoView {
             </Show>
             <Show when=move || active_tab.get() == 1>
                 <AllStacksTab />
+            </Show>
+            <Show when=move || active_tab.get() == 2>
+                <RankAnalysisPanel />
             </Show>
         </div>
     }

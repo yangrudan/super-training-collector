@@ -8,6 +8,9 @@ use super::logger::HangLogger;
 use super::state::HangStatus;
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{build_callstack_urls, load_collector_config};
+use crate::rank_analyzer::{
+    analyze_trie, set_last_analysis, AnalysisTrigger, RankAnalysisConfig,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::interval;
@@ -97,6 +100,24 @@ pub async fn start_hang_detector_scheduler() {
                 // 检测到 HANG，尝试记录日志并采集全局火焰图
                 if let Some(log_path) = logger.log_hang_event(round_stacks.clone()).await {
                     tracing::warn!("HANG detected! Log saved to: {}", log_path);
+                }
+                
+                // 自动触发问题 Rank 分析
+                let analysis_config = RankAnalysisConfig::from_env();
+                if analysis_config.enabled {
+                    match run_rank_analysis(&analysis_config).await {
+                        Ok(result) => {
+                            let count = result.problematic_ranks.len();
+                            tracing::info!(
+                                "Rank analysis completed: {} problematic ranks found in {}ms",
+                                count, result.analysis_duration_ms
+                            );
+                            set_last_analysis(result);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to run rank analysis: {}", e);
+                        }
+                    }
                 }
             }
             _ => {
@@ -194,6 +215,92 @@ async fn fetch_callstack(
     }
     
     Ok(frames)
+}
+
+/// 采集全局堆栈并运行问题 Rank 分析
+pub async fn run_rank_analysis(
+    config: &RankAnalysisConfig,
+) -> Result<crate::rank_analyzer::RankAnalysisResult, String> {
+    run_rank_analysis_with_trigger(config, AnalysisTrigger::HangDetected).await
+}
+
+/// 采集全局堆栈并运行问题 Rank 分析（指定触发来源）
+pub async fn run_rank_analysis_with_trigger(
+    config: &RankAnalysisConfig,
+    trigger: AnalysisTrigger,
+) -> Result<crate::rank_analyzer::RankAnalysisResult, String> {
+    use crate::flamegraph::{
+        collect_and_generate_flamegraph, get_config_path, process_callstacks_batch,
+        stack_collector::fetch_urls_batched,
+        stack_merger::StackTrie,
+    };
+    use std::sync::{Arc, Mutex};
+
+    let collector_config = load_collector_config(&get_config_path())
+        .map_err(|e| format!("Failed to load collector config: {}", e))?;
+
+    let (_ranks, nodes) = get_real_training_data()
+        .await
+        .map_err(|e| format!("Failed to get training data: {}", e))?;
+
+    if nodes.is_empty() {
+        return Err("No nodes available".to_string());
+    }
+
+    // 构建所有 rank 的 URL
+    let mut all_urls = Vec::new();
+    // rank_id → node_ip 映射
+    let mut rank_to_node: HashMap<u32, String> = HashMap::new();
+    let mut global_rank_offset: u32 = 0;
+
+    for node in &nodes {
+        let urls = build_callstack_urls(
+            &node.node_ip,
+            node.rank_count,
+            collector_config.callstack_base_port,
+        );
+        for i in 0..urls.len() {
+            rank_to_node.insert(global_rank_offset + i as u32, node.node_ip.clone());
+        }
+        global_rank_offset += urls.len() as u32;
+        all_urls.extend(urls);
+    }
+
+    let total_ranks = all_urls.len() as u32;
+    let trie = Arc::new(Mutex::new(StackTrie::with_total_ranks(total_ranks)));
+    let trie_clone = trie.clone();
+
+    fetch_urls_batched(all_urls, collector_config.batch_size, 4, move |batch| {
+        let trie_inner = trie_clone.clone();
+        async move {
+            let processed = process_callstacks_batch(batch);
+            let stacks_refs: Vec<(u32, &str)> = processed
+                .iter()
+                .map(|(rank, stack)| (*rank, stack.as_str()))
+                .collect();
+
+            let mut trie_guard = trie_inner.lock().map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to acquire trie lock: {}", e),
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+            trie_guard.insert_batch(stacks_refs);
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|e| format!("Failed to collect stacks: {}", e))?;
+
+    let trie_guard = trie.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let mut result = analyze_trie(&trie_guard, config, trigger);
+
+    // 填充 node_ip 信息
+    for rank in &mut result.problematic_ranks {
+        rank.node_ip = rank_to_node.get(&rank.rank_id).cloned();
+    }
+
+    Ok(result)
 }
 
 

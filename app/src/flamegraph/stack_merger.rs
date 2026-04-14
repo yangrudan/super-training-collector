@@ -7,14 +7,14 @@ use std::io::{self, BufRead, BufReader};
 /// A simple string interner that maps unique strings to compact `u32` IDs.
 /// Identical strings share the same ID, reducing allocations in the trie.
 #[derive(Default)]
-struct StringInterner {
+pub(crate) struct StringInterner {
     map: FxHashMap<String, u32>,
     strings: Vec<String>,
 }
 
 impl StringInterner {
     /// Return the ID for `s`, inserting it if not already present.
-    fn intern(&mut self, s: &str) -> u32 {
+    pub(crate) fn intern(&mut self, s: &str) -> u32 {
         if let Some(&id) = self.map.get(s) {
             return id;
         }
@@ -27,7 +27,7 @@ impl StringInterner {
 
     /// Look up the string for a given ID.
     #[inline]
-    fn get(&self, id: u32) -> &str {
+    pub(crate) fn get(&self, id: u32) -> &str {
         &self.strings[id as usize]
     }
 }
@@ -36,9 +36,9 @@ impl StringInterner {
 /// Children are keyed by interned string IDs for memory efficiency.
 #[derive(Debug)]
 pub struct TrieNode {
-    children: FxHashMap<u32, TrieNode>,
-    is_end_of_stack: bool,
-    ranks: RoaringBitmap,
+    pub(crate) children: FxHashMap<u32, TrieNode>,
+    pub(crate) is_end_of_stack: bool,
+    pub(crate) ranks: RoaringBitmap,
 }
 
 impl TrieNode {
@@ -80,8 +80,8 @@ impl TrieNode {
 /// Represents a Trie structure for merging stack traces.
 pub struct StackTrie {
     pub root: TrieNode,
-    all_ranks: RoaringBitmap,
-    interner: StringInterner,
+    pub(crate) all_ranks: RoaringBitmap,
+    pub(crate) interner: StringInterner,
 }
 
 impl StackTrie {
