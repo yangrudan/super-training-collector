@@ -59,6 +59,8 @@ if [ "$MY_RANK" -eq 0 ]; then
     export LEPTOS_SITE_ADDR="0.0.0.0:3000"
     export LEPTOS_ENV="PROD"
     export COLLECTOR_CONFIG_PATH="/opt/super-training-collector/config/collector.json"
+
+    export HANG_CHECK_ENABLED=true
 fi
 
 # 所有节点启动探针功能
@@ -74,7 +76,5 @@ if [ "$MY_RANK" -eq 0 ]; then
         echo "Probing monitor started on $(hostname)."
     fi
 fi
-
-echo
 
 echo "====================== STC Environment prepare done! ======================"
