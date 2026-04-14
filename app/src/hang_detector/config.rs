@@ -100,7 +100,17 @@ impl HangConfig {
         }
         
         // HANG_LOG_DIR: 日志保存目录
-        if let Ok(val) = env::var("HANG_LOG_DIR") {
+        // 优先级：OUTPUT_DIR/hang_logs > HANG_LOG_DIR > 默认 hang_logs
+        if let Ok(output_dir) = env::var("OUTPUT_DIR") {
+            if !output_dir.is_empty() {
+                // 使用 OUTPUT_DIR 下的 hang_logs 子目录
+                use std::path::Path;
+                let hang_path = Path::new(&output_dir).join("hang_logs");
+                if let Some(hang_path_str) = hang_path.to_str() {
+                    config.log_dir = hang_path_str.to_string();
+                }
+            }
+        } else if let Ok(val) = env::var("HANG_LOG_DIR") {
             if !val.is_empty() {
                 config.log_dir = val;
             }
@@ -173,5 +183,32 @@ mod tests {
         env::remove_var("HANG_CHECK_ENABLED");
         env::remove_var("HANG_SAMPLE_INTERVAL");
         env::remove_var("HANG_JACCARD_THRESHOLD");
+    }
+
+    #[test]
+    fn test_log_dir_priority() {
+        use std::env;
+        
+        // 清理所有相关环境变量
+        env::remove_var("OUTPUT_DIR");
+        env::remove_var("HANG_LOG_DIR");
+        
+        // 测试默认值
+        let config = HangConfig::from_env();
+        assert_eq!(config.log_dir, "hang_logs");
+        
+        // 测试 HANG_LOG_DIR
+        env::set_var("HANG_LOG_DIR", "/custom/hang/path");
+        let config = HangConfig::from_env();
+        assert_eq!(config.log_dir, "/custom/hang/path");
+        
+        // 测试 OUTPUT_DIR 优先级更高
+        env::set_var("OUTPUT_DIR", "/output/base");
+        let config = HangConfig::from_env();
+        assert_eq!(config.log_dir, "/output/base/hang_logs");
+        
+        // 清理环境变量
+        env::remove_var("OUTPUT_DIR");
+        env::remove_var("HANG_LOG_DIR");
     }
 }

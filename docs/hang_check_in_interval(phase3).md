@@ -56,14 +56,16 @@ app/src/hang_detector/
 | `HANG_JACCARD_THRESHOLD` | `0.95` | Jaccard 判定阈值 |
 | `HANG_BLOCKING_PATTERNS` | `checkpoint,save_model,load_data,DataLoader` | 白名单模式（逗号分隔） |
 | `HANG_LOG_ENABLED` | `true` | 是否启用 HANG 日志记录（需 HANG_CHECK_ENABLED=true） |
-| `HANG_LOG_DIR` | `hang_logs` | HANG 日志保存目录 |
+| `OUTPUT_DIR` | - | 输出目录（hang日志存储在 `$OUTPUT_DIR/hang_logs`） |
+| `HANG_LOG_DIR` | `hang_logs` | HANG 日志保存目录（OUTPUT_DIR 优先级更高） |
 
 ### HANG 日志记录
 
 当检测到 HANG 时，系统会自动将堆栈信息导出到本地文件：
 
-- **日志路径**: `{HANG_LOG_DIR}/hang_YYYYMMDD_HHMMSS.json`
-- **全局火焰图**: `{HANG_LOG_DIR}/hang_YYYYMMDD_HHMMSS.svg`
+- **存储路径优先级**: `$OUTPUT_DIR/hang_logs` > `$HANG_LOG_DIR` > `hang_logs`（相对路径）
+- **日志路径**: `{日志目录}/hang_YYYYMMDD_HHMMSS.json`
+- **全局火焰图**: `{日志目录}/hang_YYYYMMDD_HHMMSS.svg`
 - **防重复机制**: 持续处于 HANG 状态时只记录一次，状态解除后才能再次记录
 
 **全局火焰图**: 检测到 HANG 时，系统会采集**所有节点的所有 rank** 的堆栈数据，合并生成一张全局火焰图 SVG，可在浏览器中打开查看 HANG 时的完整堆栈分布。
