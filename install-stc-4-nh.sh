@@ -39,12 +39,23 @@ if [ "$MY_RANK" -eq 0 ]; then
 
 else
     # 非 RANK 0 节点等待共享文件可见 (处理存储系统延迟)
-    # 在万卡环境下，Lustre 偶尔会有元数据同步延迟
+    # 同时判断 .whl 和 .deb 文件是否存在
     TIMEOUT=30
-    while [ ! -f "$OUTPUT_DIR/super-training-collector_0.1.1.deb" ] && [ $TIMEOUT -gt 0 ]; do
+    WHL_FILE="$OUTPUT_DIR/probing-0.2.0alpha1-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl"
+    DEB_FILE="$OUTPUT_DIR/super-training-collector_0.1.1.deb"
+
+    echo "[STC][RANK $MY_RANK] Waiting for shared files to be synchronized..."
+
+    while { [ ! -f "$WHL_FILE" ] || [ ! -f "$DEB_FILE" ]; } && [ $TIMEOUT -gt 0 ]; do
         sleep 1
         ((TIMEOUT--))
     done
+
+    if [ $TIMEOUT -eq 0 ]; then
+        echo "[STC][ERROR] Timeout waiting for shared files in $OUTPUT_DIR"
+    else
+        echo "[STC][RANK $MY_RANK] All files detected."
+    fi
 fi
 
 # --- 4. 安装与环境变量设置 ---
