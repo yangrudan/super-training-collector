@@ -25,8 +25,14 @@ fi
 MY_RANK=${RANK:-${SLURM_PROCID:-${OMPI_COMM_WORLD_RANK:-0}}}
 
 # --- 3. 只有 RANK 0 执行下载到共享路径 ---
+WHL_FILE="$OUTPUT_DIR/probing-0.2.0alpha1-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl"
+DEB_FILE="$OUTPUT_DIR/super-training-collector_0.1.1.deb"
+
 if [ "$MY_RANK" -eq 0 ]; then
     echo "[STC][RANK 0] Shared directory detected. Checking for updates..."
+
+    # 删除旧文件 (如果存在)
+    rm -f "$WHL_FILE" "$DEB_FILE"
 
     # 使用 -N (仅更新) 和 -P (指定路径)
     wget -N -P "$OUTPUT_DIR" \
@@ -41,8 +47,6 @@ else
     # 非 RANK 0 节点等待共享文件可见 (处理存储系统延迟)
     # 同时判断 .whl 和 .deb 文件是否存在
     TIMEOUT=30
-    WHL_FILE="$OUTPUT_DIR/probing-0.2.0alpha1-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl"
-    DEB_FILE="$OUTPUT_DIR/super-training-collector_0.1.1.deb"
 
     echo "[STC][RANK $MY_RANK] Waiting for shared files to be synchronized..."
 
