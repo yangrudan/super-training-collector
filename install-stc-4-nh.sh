@@ -50,6 +50,9 @@ else
 
     echo "[STC][RANK $MY_RANK] Waiting for shared files to be synchronized..."
 
+    # 不是特别稳健
+    sleep 2
+
     while { [ ! -f "$WHL_FILE" ] || [ ! -f "$DEB_FILE" ]; } && [ $TIMEOUT -gt 0 ]; do
         sleep 1
         ((TIMEOUT--))
