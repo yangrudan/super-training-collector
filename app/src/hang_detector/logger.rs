@@ -14,7 +14,7 @@ use tracing;
 use super::config::HangConfig;
 use super::state::{get_hang_state, HangStatus};
 use crate::adapter::get_real_training_data;
-use crate::flamegraph::{build_callstack_urls, collect_and_generate_flamegraph, load_collector_config, get_config_path};
+use crate::flamegraph::{collect_and_generate_flamegraph, load_collector_config, get_config_path};
 
 /// HANG 日志条目
 #[derive(Debug, Serialize)]
@@ -214,27 +214,33 @@ async fn collect_global_flamegraph() -> Result<String, String> {
         .map_err(|e| format!("Failed to load collector config: {}", e))?;
     
     // 获取所有节点信息
-    let (_ranks, nodes) = get_real_training_data()
+    let (ranks, _nodes) = get_real_training_data()
         .await
         .map_err(|e| format!("Failed to get training data: {}", e))?;
     
-    if nodes.is_empty() {
+    if ranks.is_empty() {
         return Err("No nodes available for flamegraph collection".to_string());
     }
     
-    // 构建所有节点的所有 rank 的 URL
-    let mut all_urls = Vec::new();
-    for node in &nodes {
-        let urls = build_callstack_urls(&node.node_ip, node.rank_count, config.callstack_base_port);
-        all_urls.extend(urls);
-    }
+    // 按 rank_id 排序构建 URL，确保 URL index 与全局 rank ID 一致
+    // ranks 已在 get_real_training_data() 中按 rank_id 排序
+    let all_urls: Vec<String> = ranks
+        .iter()
+        .map(|r| {
+            format!(
+                "http://{}:{}/apis/pythonext/callstack",
+                r.node_ip,
+                config.callstack_base_port + r.local_rank as u16
+            )
+        })
+        .collect();
     
     if all_urls.is_empty() {
         return Err("No URLs to collect stacks from".to_string());
     }
     
-    tracing::info!("Collecting global flamegraph from {} URLs across {} nodes", 
-                   all_urls.len(), nodes.len());
+    tracing::info!("Collecting global flamegraph from {} URLs across {} ranks", 
+                   all_urls.len(), ranks.len());
     
     // 使用现有的全局火焰图采集函数
     let svg = collect_and_generate_flamegraph("global", all_urls, None)
