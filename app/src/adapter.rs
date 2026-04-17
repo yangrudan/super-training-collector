@@ -426,11 +426,12 @@ pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetri
     let url = format!("http://{}:{}/apis/nodes", host, port);
     let node_infos = get_node_info(&url).await?;
 
-    // 转换为RankMetrics
-    let ranks: Vec<RankMetrics> = node_infos
+    // 转换为RankMetrics，按 rank_id 排序确保确定性顺序
+    let mut ranks: Vec<RankMetrics> = node_infos
         .into_iter()
         .map(convert_node_info_to_rank_metrics)
         .collect();
+    ranks.sort_by_key(|r| r.rank_id);
 
     // 按节点IP分组并聚合为NodeMetrics
     let mut nodes_map: HashMap<String, Vec<RankMetrics>> = HashMap::new();
@@ -441,10 +442,11 @@ pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetri
             .push(rank.clone());
     }
 
-    let nodes: Vec<NodeMetrics> = nodes_map
+    let mut nodes: Vec<NodeMetrics> = nodes_map
         .iter()
         .filter_map(|(node_ip, ranks)| aggregate_ranks_to_node_metrics(node_ip, ranks))
         .collect();
+    nodes.sort_by(|a, b| a.node_ip.cmp(&b.node_ip));
 
     Ok((ranks, nodes))
 }

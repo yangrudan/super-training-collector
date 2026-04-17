@@ -230,30 +230,59 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 #[server(GetAllNodesFlamegraph)]
 pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
     use crate::flamegraph::{
-        build_callstack_urls, collect_and_generate_flamegraph, get_config_path, load_collector_config,
+        collect_and_generate_flamegraph, get_config_path, load_collector_config,
     };
 
     let config = load_collector_config(&get_config_path())
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
-    let nodes = match get_real_training_data().await {
-        Ok((_, nodes)) => nodes,
+    let ranks = match get_real_training_data().await {
+        Ok((ranks, _)) => ranks,
         Err(e) => {
             if is_mock_mode() {
+                // mock 模式回退：仍使用 nodes 构建 URL
+                use crate::flamegraph::build_callstack_urls;
                 let store = MockDataStore::new();
-                store.nodes
+                let mut all_urls: Vec<String> = Vec::new();
+                for node in &store.nodes {
+                    let urls = build_callstack_urls(
+                        &node.node_ip,
+                        node.rank_count,
+                        config.callstack_base_port,
+                    );
+                    all_urls.extend(urls);
+                }
+                if all_urls.is_empty() {
+                    return Err(ServerFnError::new("No nodes found"));
+                }
+                let svg = collect_and_generate_flamegraph(
+                    "all_nodes",
+                    all_urls,
+                    Some(config.batch_size),
+                )
+                .await
+                .map_err(|e| {
+                    ServerFnError::new(format!("Failed to generate combined flamegraph: {}", e))
+                })?;
+                return Ok(svg);
             } else {
                 return Err(ServerFnError::new(format!("无法连接训练集群: {}", e)));
             }
         }
     };
 
-    // 收集所有节点的所有 rank URL
-    let mut all_urls: Vec<String> = Vec::new();
-    for node in &nodes {
-        let urls = build_callstack_urls(&node.node_ip, node.rank_count, config.callstack_base_port);
-        all_urls.extend(urls);
-    }
+    // 按 rank_id 排序构建 URL，确保 URL index 与全局 rank ID 一致
+    // ranks 已在 get_real_training_data() 中按 rank_id 排序
+    let all_urls: Vec<String> = ranks
+        .iter()
+        .map(|r| {
+            format!(
+                "http://{}:{}/apis/pythonext/callstack",
+                r.node_ip,
+                config.callstack_base_port + r.local_rank as u16
+            )
+        })
+        .collect();
 
     if all_urls.is_empty() {
         return Err(ServerFnError::new("No nodes found"));
