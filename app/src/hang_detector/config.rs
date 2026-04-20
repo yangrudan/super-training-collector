@@ -115,7 +115,7 @@ impl HangConfig {
                 config.log_dir = val;
             }
         }
-        
+
         config
     }
     
