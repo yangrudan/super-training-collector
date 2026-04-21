@@ -1,5 +1,5 @@
 //! HANG 检测调度模块
-//! 
+//!
 //! 定期触发 HANG 检测的调度逻辑
 
 use super::config::HangConfig;
@@ -17,23 +17,23 @@ impl HangScheduler {
         let detector = HangDetector::new(config.clone());
         Self { detector, config }
     }
-    
+
     /// 从环境变量创建调度器
     pub fn from_env() -> Self {
         let config = HangConfig::from_env();
         Self::new(config)
     }
-    
+
     /// 检查是否启用
     pub fn is_enabled(&self) -> bool {
         self.detector.is_enabled()
     }
-    
+
     /// 获取采样间隔（秒）
     pub fn sample_interval_secs(&self) -> u64 {
         self.config.sample_interval_secs
     }
-    
+
     /// 获取检测器引用
     pub fn detector(&self) -> &HangDetector {
         &self.detector
@@ -56,7 +56,7 @@ mod tests {
             log_enabled: true,
             log_dir: "hang_logs".to_string(),
         };
-        
+
         let scheduler = HangScheduler::new(config);
         assert!(scheduler.is_enabled());
         assert_eq!(scheduler.sample_interval_secs(), 30);

@@ -26,6 +26,8 @@ pub struct ProblematicRank {
     pub rank_id: u32,
     /// 所属节点 IP（如果可用）
     pub node_ip: Option<String>,
+    /// 非分叉类异常说明（如调用栈采集失败）
+    pub issue_reason: Option<String>,
     /// 异常分数（出现在少数派分支的次数）
     pub anomaly_score: u32,
     /// 该 rank 涉及的分叉点列表

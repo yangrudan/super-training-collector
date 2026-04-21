@@ -2,8 +2,8 @@
 //!
 //! 提供手动触发分析和展示分析结果的 UI 组件
 
-use leptos::prelude::*;
 use crate::rank_analysis_types::{AnalysisTrigger, ProblematicRank, RankAnalysisResult};
+use leptos::prelude::*;
 
 /// 问题 Rank 分析面板（完整版，用于 Level2 Tab）
 #[component]
@@ -185,7 +185,7 @@ fn RankAnalysisResultView(result: RankAnalysisResult) -> impl IntoView {
 #[component]
 fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
     let score = rank.anomaly_score;
-    let score_class = if score >= 3 {
+    let score_class = if rank.issue_reason.is_some() || score >= 3 {
         "score-critical"
     } else if score >= 2 {
         "score-warning"
@@ -197,17 +197,30 @@ fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
 
     // 展示最显著的分叉位置（按覆盖率升序，取前 2 个）
     let mut sorted_points = rank.divergence_points.clone();
-    sorted_points.sort_by(|a, b| a.minority_coverage.partial_cmp(&b.minority_coverage).unwrap_or(std::cmp::Ordering::Equal));
-    let top_points: Vec<String> = sorted_points
-        .iter()
-        .take(2)
-        .map(|p| {
-            let short_name = shorten_frame_name(&p.frame_name);
-            format!("{} ({:.0}%)", short_name, p.minority_coverage * 100.0)
-        })
-        .collect();
-    let points_display = top_points.join(", ");
+    sorted_points.sort_by(|a, b| {
+        a.minority_coverage
+            .partial_cmp(&b.minority_coverage)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let points_display = if let Some(reason) = rank.issue_reason.clone() {
+        reason
+    } else {
+        let top_points: Vec<String> = sorted_points
+            .iter()
+            .take(2)
+            .map(|p| {
+                let short_name = shorten_frame_name(&p.frame_name);
+                format!("{} ({:.0}%)", short_name, p.minority_coverage * 100.0)
+            })
+            .collect();
+        top_points.join(", ")
+    };
     let points_display_title = points_display.clone();
+    let score_display = rank
+        .issue_reason
+        .as_ref()
+        .map(|_| "采集异常".to_string())
+        .unwrap_or_else(|| score.to_string());
 
     view! {
         <tr class="rank-row">
@@ -216,7 +229,7 @@ fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
             </td>
             <td>{rank.node_ip.clone().unwrap_or_else(|| "-".to_string())}</td>
             <td>
-                <span class=format!("anomaly-score {}", score_class)>{score}</span>
+                <span class=format!("anomaly-score {}", score_class)>{score_display}</span>
             </td>
             <td>{divergence_count}</td>
             <td class="divergence-info" title=points_display_title>
@@ -247,10 +260,7 @@ pub fn RankAnalysisSummary() -> impl IntoView {
     #[cfg(feature = "ssr")]
     let _ = set_refresh_trigger;
 
-    let cached_resource = Resource::new(
-        move || refresh_trigger.get(),
-        |_| get_problematic_ranks(),
-    );
+    let cached_resource = Resource::new(move || refresh_trigger.get(), |_| get_problematic_ranks());
 
     view! {
         <Suspense fallback=|| ()>
@@ -261,7 +271,12 @@ pub fn RankAnalysisSummary() -> impl IntoView {
                             let count = analysis.problematic_ranks.len();
                             let total = analysis.total_ranks;
                             let top_rank = analysis.problematic_ranks.first()
-                                .map(|r| format!("Rank {} (分数: {})", r.rank_id, r.anomaly_score))
+                                .map(|r| {
+                                    r.issue_reason
+                                        .as_ref()
+                                        .map(|reason| format!("Rank {} ({})", r.rank_id, reason))
+                                        .unwrap_or_else(|| format!("Rank {} (分数: {})", r.rank_id, r.anomaly_score))
+                                })
                                 .unwrap_or_default();
 
                             Some(view! {

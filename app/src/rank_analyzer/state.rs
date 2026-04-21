@@ -1,8 +1,8 @@
 //! Rank 分析结果全局状态管理
 
-use std::sync::{Arc, RwLock};
-use once_cell::sync::Lazy;
 use super::types::RankAnalysisResult;
+use once_cell::sync::Lazy;
+use std::sync::{Arc, RwLock};
 
 /// 全局分析结果缓存
 static RANK_ANALYSIS_STATE: Lazy<Arc<RwLock<Option<RankAnalysisResult>>>> =

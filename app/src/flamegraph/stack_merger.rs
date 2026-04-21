@@ -170,10 +170,7 @@ impl StackTrie {
                 continue;
             }
             let id = self.interner.intern(frame);
-            node = node
-                .children
-                .entry(id)
-                .or_insert_with(TrieNode::new);
+            node = node.children.entry(id).or_insert_with(TrieNode::new);
             node.add_rank(rank);
         }
         node.is_end_of_stack = true;
@@ -459,7 +456,11 @@ mod tests {
         let results = trie.traverse_with_all_stack(&trie.root, Vec::new());
 
         // Should have 3 distinct paths
-        assert_eq!(results.len(), 3, "Parallel merge should produce 3 distinct paths");
+        assert_eq!(
+            results.len(),
+            3,
+            "Parallel merge should produce 3 distinct paths"
+        );
     }
 
     #[test]
@@ -482,7 +483,8 @@ mod tests {
             (3, "main;func2;func4".to_string()),
         ];
         let trie_parallel = parallel_merge_stacks(stacks_parallel, Some(2));
-        let results_parallel = trie_parallel.traverse_with_all_stack(&trie_parallel.root, Vec::new());
+        let results_parallel =
+            trie_parallel.traverse_with_all_stack(&trie_parallel.root, Vec::new());
 
         // Both should produce the same number of paths
         assert_eq!(
@@ -531,7 +533,11 @@ mod tests {
         trie.insert_batch_parallel(stacks, 2);
 
         let results = trie.traverse_with_all_stack(&trie.root, Vec::new());
-        assert_eq!(results.len(), 3, "insert_batch_parallel should produce 3 distinct paths");
+        assert_eq!(
+            results.len(),
+            3,
+            "insert_batch_parallel should produce 3 distinct paths"
+        );
     }
 }
 
@@ -552,4 +558,3 @@ mod tests {
 // }
 
 ////////////////////////////////////////////////////////////////////////////////
-

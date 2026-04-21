@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, Path},
+    extract::{Path, Query},
     http::StatusCode,
     response::Json,
     routing::get,
@@ -67,7 +67,7 @@ impl MockServerState {
         let generator = FlameGraphDataGenerator::new(config.max_stack_depth, 5);
         let total_ranks = config.ports.len() as u32 * config.ranks_per_port;
         let flamegraph_data = generator.generate_flamegraph_data(total_ranks);
-        
+
         Self {
             generator,
             flamegraph_data,
@@ -89,35 +89,37 @@ impl MockFlameGraphServer {
     }
 
     /// 启动所有端口的Mock服务器
-    pub async fn start_all(&self) -> Result<Vec<tokio::task::JoinHandle<()>>, Box<dyn std::error::Error>> {
+    pub async fn start_all(
+        &self,
+    ) -> Result<Vec<tokio::task::JoinHandle<()>>, Box<dyn std::error::Error>> {
         let mut handles = Vec::new();
-        
+
         for (port_idx, &port) in self.config.ports.iter().enumerate() {
             let state = Arc::clone(&self.state);
             let config = self.config.clone();
-            
+
             let handle = tokio::spawn(async move {
                 if let Err(e) = Self::start_single_server(port, port_idx, state, config).await {
                     eprintln!("Mock server on port {} failed: {}", port, e);
                 }
             });
-            
+
             handles.push(handle);
         }
-        
+
         // 等待所有服务器启动
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         println!("Mock servers started on ports: {:?}", self.config.ports);
-        
+
         Ok(handles)
     }
 
     /// 启动单个端口的服务器
     async fn start_single_server(
-        port: u16, 
-        port_idx: usize, 
+        port: u16,
+        port_idx: usize,
         state: Arc<RwLock<MockServerState>>,
-        config: MockServerConfig
+        config: MockServerConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let app = Router::new()
             .route("/callstack/{rank}", get(get_single_callstack))
@@ -128,7 +130,7 @@ impl MockFlameGraphServer {
 
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        
+
         println!("Mock server listening on port {}", port);
         axum::serve(listener, app).await?;
         Ok(())
@@ -190,10 +192,10 @@ fn generate_stack_for_rank(rank: u32, target_bytes: usize) -> String {
 async fn get_single_callstack(
     Path(rank): Path<u32>,
     axum::extract::State((state, port_idx, config)): axum::extract::State<(
-        Arc<RwLock<MockServerState>>, 
-        usize, 
-        MockServerConfig
-    )>
+        Arc<RwLock<MockServerState>>,
+        usize,
+        MockServerConfig,
+    )>,
 ) -> Result<Json<FlameGraphResponse>, StatusCode> {
     // 模拟延迟
     // if config.response_delay_ms > 0 {
@@ -240,10 +242,10 @@ async fn get_single_callstack(
 async fn get_batch_callstack(
     Query(params): Query<CallstackQuery>,
     axum::extract::State((state, port_idx, config)): axum::extract::State<(
-        Arc<RwLock<MockServerState>>, 
-        usize, 
-        MockServerConfig
-    )>
+        Arc<RwLock<MockServerState>>,
+        usize,
+        MockServerConfig,
+    )>,
 ) -> Result<Json<Vec<FlameGraphResponse>>, StatusCode> {
     // 模拟延迟
     // if config.response_delay_ms > 0 {
@@ -258,13 +260,13 @@ async fn get_batch_callstack(
     let state_guard = state.read().await;
     let batch_size = params.batch_size.unwrap_or(100);
     let start_rank = params.rank.unwrap_or(0);
-    
+
     let base_rank = port_idx as u32 * config.ranks_per_port;
     let mut responses = Vec::new();
-    
+
     for i in 0..batch_size {
         let actual_rank = base_rank + start_rank + i;
-        
+
         if let Some(stack) = state_guard.flamegraph_data.get(&actual_rank) {
             responses.push(FlameGraphResponse {
                 rank: actual_rank,
@@ -276,7 +278,7 @@ async fn get_batch_callstack(
             });
         }
     }
-    
+
     Ok(Json(responses))
 }
 
@@ -293,10 +295,8 @@ pub struct MockServerManager {
 
 impl MockServerManager {
     pub fn new(configs: Vec<MockServerConfig>) -> Self {
-        let servers = configs.into_iter()
-            .map(MockFlameGraphServer::new)
-            .collect();
-        
+        let servers = configs.into_iter().map(MockFlameGraphServer::new).collect();
+
         Self {
             servers,
             handles: Vec::new(),
@@ -390,7 +390,7 @@ mod tests {
         assert!(response.status().is_success());
         let flame_responses: Vec<FlameGraphResponse> = response.json().await.unwrap();
         assert_eq!(flame_responses.len(), 10);
-        
+
         for (i, resp) in flame_responses.iter().enumerate() {
             assert_eq!(resp.rank, i as u32);
             assert!(!resp.stack.is_empty());

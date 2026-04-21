@@ -210,7 +210,7 @@ fn AllStacksTab() -> impl IntoView {
                 >
                     {move || if combined_loading.get() { "合并生成中..." } else { "生成全局合并火焰图" }}
                 </button>
-                
+
                 <Show when=move || combined_svg.get().is_some()>
                     <button
                         class="collect-btn collect-btn-combined"

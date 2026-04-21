@@ -195,7 +195,8 @@ pub async fn get_all_nodes_callstack_info() -> Result<Vec<(String, u8, u16)>, Se
 #[server(GetNodeFlamegraph)]
 pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
     use crate::flamegraph::{
-        build_callstack_urls, collect_and_generate_flamegraph, get_config_path, load_collector_config,
+        build_callstack_urls, collect_and_generate_flamegraph, get_config_path,
+        load_collector_config,
     };
 
     let config = load_collector_config(&get_config_path())
@@ -255,15 +256,15 @@ pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
                 if all_urls.is_empty() {
                     return Err(ServerFnError::new("No nodes found"));
                 }
-                let svg = collect_and_generate_flamegraph(
-                    "all_nodes",
-                    all_urls,
-                    Some(config.batch_size),
-                )
-                .await
-                .map_err(|e| {
-                    ServerFnError::new(format!("Failed to generate combined flamegraph: {}", e))
-                })?;
+                let svg =
+                    collect_and_generate_flamegraph("all_nodes", all_urls, Some(config.batch_size))
+                        .await
+                        .map_err(|e| {
+                            ServerFnError::new(format!(
+                                "Failed to generate combined flamegraph: {}",
+                                e
+                            ))
+                        })?;
                 return Ok(svg);
             } else {
                 return Err(ServerFnError::new(format!("无法连接训练集群: {}", e)));
@@ -406,12 +407,12 @@ pub async fn get_hang_status() -> Result<crate::hang_types::HangStatusSnapshot, 
     #[cfg(feature = "ssr")]
     {
         use crate::hang_detector::state::get_hang_state;
-        
+
         let state = get_hang_state();
-        let state = state.read().map_err(|e| {
-            ServerFnError::new(format!("获取 HANG 状态失败: {}", e))
-        })?;
-        
+        let state = state
+            .read()
+            .map_err(|e| ServerFnError::new(format!("获取 HANG 状态失败: {}", e)))?;
+
         Ok(state.snapshot())
     }
     #[cfg(not(feature = "ssr"))]
@@ -443,9 +444,7 @@ pub async fn analyze_problematic_ranks(
     #[cfg(feature = "ssr")]
     {
         use crate::hang_detector::runner::run_rank_analysis_with_trigger;
-        use crate::rank_analyzer::{
-            set_last_analysis, AnalysisTrigger, RankAnalysisConfig,
-        };
+        use crate::rank_analyzer::{set_last_analysis, AnalysisTrigger, RankAnalysisConfig};
 
         let config = RankAnalysisConfig::from_env();
         let result = run_rank_analysis_with_trigger(&config, AnalysisTrigger::Manual)

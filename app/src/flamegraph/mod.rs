@@ -7,10 +7,10 @@ use flamegraph_generator::generate_flamegraph_svg;
 #[allow(unused_imports)]
 use process_data::process_callstacks;
 pub use process_data::process_callstacks_batch;
-use stack_collector::fetch_urls_batched;
 #[allow(deprecated)]
 #[allow(unused_imports)]
 use stack_collector::fetch_and_save_urls;
+use stack_collector::fetch_urls_batched;
 #[allow(unused_imports)]
 use stack_merger::merge_stacks;
 use stack_merger::StackTrie;
@@ -63,16 +63,19 @@ pub fn load_collector_config(
     Ok(config)
 }
 
+/// Build callstack URL for a single rank, port = base_port + local_rank.
+pub fn build_callstack_url(ip: &str, local_rank: u8, base_port: u16) -> String {
+    format!(
+        "http://{}:{}/apis/pythonext/callstack",
+        ip,
+        base_port + local_rank as u16
+    )
+}
+
 /// Build callstack URLs for a node: one URL per rank, port = base_port + local_rank.
 pub fn build_callstack_urls(ip: &str, rank_count: u8, base_port: u16) -> Vec<String> {
     (0..rank_count)
-        .map(|i| {
-            format!(
-                "http://{}:{}/apis/pythonext/callstack",
-                ip,
-                base_port + i as u16
-            )
-        })
+        .map(|local_rank| build_callstack_url(ip, local_rank, base_port))
         .collect()
 }
 
@@ -249,6 +252,12 @@ mod tests {
             urls[3],
             "http://192.168.1.100:9936/apis/pythonext/callstack"
         );
+    }
+
+    #[test]
+    fn test_build_callstack_url() {
+        let url = build_callstack_url("10.0.0.1", 7, 8000);
+        assert_eq!(url, "http://10.0.0.1:8007/apis/pythonext/callstack");
     }
 
     #[test]

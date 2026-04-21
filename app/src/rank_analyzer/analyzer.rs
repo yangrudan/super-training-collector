@@ -7,9 +7,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use roaring::RoaringBitmap;
 
-use crate::flamegraph::stack_merger::{StackTrie, TrieNode};
 use super::config::RankAnalysisConfig;
 use super::types::{AnalysisTrigger, DivergencePoint, ProblematicRank, RankAnalysisResult};
+use crate::flamegraph::stack_merger::{StackTrie, TrieNode};
 
 /// 分析 StackTrie 中的分叉点，识别问题 rank
 ///
@@ -56,6 +56,7 @@ pub fn analyze_trie(
         .map(|(rank_id, (score, points))| ProblematicRank {
             rank_id,
             node_ip: None, // 由调用方填充
+            issue_reason: None,
             anomaly_score: score,
             divergence_points: points,
         })
@@ -169,10 +170,10 @@ mod tests {
     fn test_single_outlier() {
         // 3 个 rank 走正常路径，1 个 rank 分叉
         let stacks = vec![
-            "main;train;nccl_allreduce;wait",  // rank 0
-            "main;train;nccl_allreduce;wait",  // rank 1
-            "main;train;nccl_allreduce;wait",  // rank 2
-            "main;train;compute;stuck_func",   // rank 3 - 异常
+            "main;train;nccl_allreduce;wait", // rank 0
+            "main;train;nccl_allreduce;wait", // rank 1
+            "main;train;nccl_allreduce;wait", // rank 2
+            "main;train;compute;stuck_func",  // rank 3 - 异常
         ];
         let trie = merge_stacks(stacks);
         let result = analyze_trie(&trie, &default_config(), AnalysisTrigger::HangDetected);
@@ -189,7 +190,10 @@ mod tests {
 
         // rank 0-2 不应该在问题列表中
         for rank_id in 0..3 {
-            let normal = result.problematic_ranks.iter().find(|r| r.rank_id == rank_id);
+            let normal = result
+                .problematic_ranks
+                .iter()
+                .find(|r| r.rank_id == rank_id);
             assert!(
                 normal.is_none(),
                 "Rank {} should not be problematic",
@@ -202,32 +206,23 @@ mod tests {
     fn test_multiple_outliers() {
         // 8 个 rank，2 个异常
         let stacks = vec![
-            "main;train;nccl_allreduce;wait",  // rank 0
-            "main;train;nccl_allreduce;wait",  // rank 1
-            "main;train;nccl_allreduce;wait",  // rank 2
-            "main;train;nccl_allreduce;wait",  // rank 3
-            "main;train;nccl_allreduce;wait",  // rank 4
-            "main;train;nccl_allreduce;wait",  // rank 5
-            "main;train;compute;error_a",      // rank 6 - 异常
-            "main;train;compute;error_b",      // rank 7 - 异常
+            "main;train;nccl_allreduce;wait", // rank 0
+            "main;train;nccl_allreduce;wait", // rank 1
+            "main;train;nccl_allreduce;wait", // rank 2
+            "main;train;nccl_allreduce;wait", // rank 3
+            "main;train;nccl_allreduce;wait", // rank 4
+            "main;train;nccl_allreduce;wait", // rank 5
+            "main;train;compute;error_a",     // rank 6 - 异常
+            "main;train;compute;error_b",     // rank 7 - 异常
         ];
         let trie = merge_stacks(stacks);
         let result = analyze_trie(&trie, &default_config(), AnalysisTrigger::HangDetected);
 
         // rank 6 和 7 应该被检测到
-        let problematic_ids: Vec<u32> = result
-            .problematic_ranks
-            .iter()
-            .map(|r| r.rank_id)
-            .collect();
-        assert!(
-            problematic_ids.contains(&6),
-            "Rank 6 should be problematic"
-        );
-        assert!(
-            problematic_ids.contains(&7),
-            "Rank 7 should be problematic"
-        );
+        let problematic_ids: Vec<u32> =
+            result.problematic_ranks.iter().map(|r| r.rank_id).collect();
+        assert!(problematic_ids.contains(&6), "Rank 6 should be problematic");
+        assert!(problematic_ids.contains(&7), "Rank 7 should be problematic");
     }
 
     #[test]
@@ -262,16 +257,16 @@ mod tests {
     fn test_divergence_point_info() {
         // 验证分叉点信息的正确性
         let stacks = vec![
-            "main;train;nccl_allreduce",  // rank 0
-            "main;train;nccl_allreduce",  // rank 1
-            "main;train;nccl_allreduce",  // rank 2
-            "main;train;nccl_allreduce",  // rank 3
-            "main;train;nccl_allreduce",  // rank 4
-            "main;train;nccl_allreduce",  // rank 5
-            "main;train;nccl_allreduce",  // rank 6
-            "main;train;nccl_allreduce",  // rank 7
-            "main;train;nccl_allreduce",  // rank 8
-            "main;train;compute_stuck",   // rank 9 - 异常 (1/10 = 10% < 30%)
+            "main;train;nccl_allreduce", // rank 0
+            "main;train;nccl_allreduce", // rank 1
+            "main;train;nccl_allreduce", // rank 2
+            "main;train;nccl_allreduce", // rank 3
+            "main;train;nccl_allreduce", // rank 4
+            "main;train;nccl_allreduce", // rank 5
+            "main;train;nccl_allreduce", // rank 6
+            "main;train;nccl_allreduce", // rank 7
+            "main;train;nccl_allreduce", // rank 8
+            "main;train;compute_stuck",  // rank 9 - 异常 (1/10 = 10% < 30%)
         ];
         let trie = merge_stacks(stacks);
         let result = analyze_trie(&trie, &default_config(), AnalysisTrigger::Manual);
@@ -292,9 +287,16 @@ mod tests {
     fn test_custom_threshold() {
         // 10 个 rank，2 个走不同路径 (20%)
         let stacks = vec![
-            "main;path_a", "main;path_a", "main;path_a", "main;path_a",
-            "main;path_a", "main;path_a", "main;path_a", "main;path_a",
-            "main;path_b", "main;path_b",
+            "main;path_a",
+            "main;path_a",
+            "main;path_a",
+            "main;path_a",
+            "main;path_a",
+            "main;path_a",
+            "main;path_a",
+            "main;path_a",
+            "main;path_b",
+            "main;path_b",
         ];
         let trie = merge_stacks(stacks);
 
@@ -325,16 +327,16 @@ mod tests {
     fn test_results_sorted_by_score() {
         // 构造多层分叉，使某些 rank 有更高的 anomaly_score
         let stacks = vec![
-            "main;train;nccl;wait",      // rank 0
-            "main;train;nccl;wait",      // rank 1
-            "main;train;nccl;wait",      // rank 2
-            "main;train;nccl;wait",      // rank 3
-            "main;train;nccl;wait",      // rank 4
-            "main;train;nccl;wait",      // rank 5
-            "main;train;nccl;wait",      // rank 6
-            "main;train;nccl;wait",      // rank 7
-            "main;train;nccl;wait",      // rank 8
-            "main;train;compute;error",  // rank 9 - 异常
+            "main;train;nccl;wait",     // rank 0
+            "main;train;nccl;wait",     // rank 1
+            "main;train;nccl;wait",     // rank 2
+            "main;train;nccl;wait",     // rank 3
+            "main;train;nccl;wait",     // rank 4
+            "main;train;nccl;wait",     // rank 5
+            "main;train;nccl;wait",     // rank 6
+            "main;train;nccl;wait",     // rank 7
+            "main;train;nccl;wait",     // rank 8
+            "main;train;compute;error", // rank 9 - 异常
         ];
         let trie = merge_stacks(stacks);
         let result = analyze_trie(&trie, &default_config(), AnalysisTrigger::Manual);
@@ -365,6 +367,9 @@ mod tests {
         let result = analyze_trie(&trie, &default_config(), AnalysisTrigger::HangDetected);
 
         let rank4 = result.problematic_ranks.iter().find(|r| r.rank_id == 4);
-        assert!(rank4.is_some(), "Rank 4 should be detected from parallel trie");
+        assert!(
+            rank4.is_some(),
+            "Rank 4 should be detected from parallel trie"
+        );
     }
 }
