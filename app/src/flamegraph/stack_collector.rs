@@ -57,7 +57,7 @@ where
 
         // Each worker owns its own client — avoids pool-mutex contention across workers.
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(5))
             .pool_max_idle_per_host(10)
             .build()?;
         let failed_urls = failed_urls.clone();

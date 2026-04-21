@@ -73,6 +73,8 @@ pub struct HangDetectorState {
     pub last_update: u64,
     /// 当前 HANG 是否已记录日志（防止重复记录）
     pub hang_logged: bool,
+    /// 当前 HANG 是否已发送钉钉通知（防止重复通知）
+    pub hang_notified: bool,
 }
 
 impl Default for HangDetectorState {
@@ -85,6 +87,7 @@ impl Default for HangDetectorState {
             details: HangDetails::default(),
             last_update: 0,
             hang_logged: false,
+            hang_notified: false,
         }
     }
 }
@@ -115,6 +118,21 @@ impl HangDetectorState {
     /// 检查是否需要记录日志（HANG 且未记录过）
     pub fn should_log(&self) -> bool {
         self.status == HangStatus::Hang && !self.hang_logged
+    }
+
+    /// 标记当前 HANG 已发送钉钉通知
+    pub fn mark_notified(&mut self) {
+        self.hang_notified = true;
+    }
+
+    /// 重置通知标记（当状态从 HANG 变为非 HANG 时调用）
+    pub fn reset_notified(&mut self) {
+        self.hang_notified = false;
+    }
+
+    /// 检查是否需要发送通知（HANG 且未通知过）
+    pub fn should_notify(&self) -> bool {
+        self.status == HangStatus::Hang && !self.hang_notified
     }
     
     /// 更新时间戳

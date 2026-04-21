@@ -11,6 +11,8 @@ pub mod scheduler;
 pub mod runner;
 #[cfg(feature = "ssr")]
 pub mod logger;
+#[cfg(feature = "ssr")]
+pub mod notifier;
 
 pub use config::HangConfig;
 pub use state::{HangStatus, HangDetectorState, HangStatusSnapshot};
@@ -19,3 +21,5 @@ pub use detector::HangDetector;
 pub use runner::start_hang_detector_scheduler;
 #[cfg(feature = "ssr")]
 pub use logger::HangLogger;
+#[cfg(feature = "ssr")]
+pub use notifier::send_hang_alert;

@@ -261,6 +261,13 @@ super-trainning-collector/
 }
 ```
 
+### 测试连通性
+
+```python
+# 换上真实的 MASTER_ADDR
+python3 -c "import urllib.request; print(urllib.request.urlopen('http://ji-aitrain-155227064063522496-master-0.ji-aitrain-155227064063522496:9933/apis/nodes').read().decode())" | grep -o '"host"' | wc -l
+```
+
 ---
 
 ## 数据模型

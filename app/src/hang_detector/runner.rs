@@ -5,6 +5,7 @@
 use super::config::HangConfig;
 use super::detector::HangDetector;
 use super::logger::HangLogger;
+use super::notifier::send_hang_alert;
 use super::state::HangStatus;
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{build_callstack_urls, load_collector_config};
@@ -117,12 +118,32 @@ pub async fn start_hang_detector_scheduler() {
                         Err(e) => {
                             tracing::warn!("Failed to run rank analysis: {}", e);
                         }
+                // 发送钉钉告警（每次 HANG 事件只通知一次）
+                {
+                    use super::state::get_hang_state;
+                    let should_notify = {
+                        let state = get_hang_state();
+                        let state = state.read().unwrap();
+                        state.should_notify()
+                    };
+                    if should_notify {
+                        tracing::warn!("Sending DingTalk HANG alert");
+                        send_hang_alert().await;
+                        let state = get_hang_state();
+                        let mut state = state.write().unwrap();
+                        state.mark_notified();
                     }
                 }
             }
             _ => {
-                // 状态恢复正常，重置日志标记
+                // 状态恢复正常，重置日志和通知标记
                 logger.reset_on_recovery();
+                {
+                    use super::state::get_hang_state;
+                    let state = get_hang_state();
+                    let mut state = state.write().unwrap();
+                    state.reset_notified();
+                }
             }
         }
     }
