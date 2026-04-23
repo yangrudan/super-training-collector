@@ -49,7 +49,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/super-trainning-collector.css"/>
-        <Title text="南湖调度系统"/>
+        <Title text="超级训练收集器"/>
 
         // Mock 模式警告横幅
         <Suspense fallback=|| ()>

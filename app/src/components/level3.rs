@@ -99,7 +99,7 @@ fn NodeOverview(node: NodeMetrics) -> impl IntoView {
                         <CopyButton value=node.node_ip.clone() label="复制IP" />
                     </h1>
                     <p class="page-description compact">
-                        "主机 " {node.hostname.clone()} " · 机柜 " {node.rack_id.clone()}
+                        "主机 " {node.hostname.clone()}
                     </p>
                 </div>
                 <div class="node-meta">

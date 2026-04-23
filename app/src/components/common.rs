@@ -11,10 +11,10 @@ pub fn AppChrome(children: Children) -> impl IntoView {
         <div class="app-shell">
             <aside class="left-area">
                 <div class="left-area-brand">
-                    <div class="brand-mark">"NH"</div>
+                    <div class="brand-mark">"STC"</div>
                     <div class="brand-copy">
-                        <span class="brand-title">"南湖调度系统"</span>
-                        <span class="brand-subtitle">"Nanhu Scheduling System"</span>
+                        <span class="brand-title">"超级训练收集器"</span>
+                        <span class="brand-subtitle">"Super Training Collector"</span>
                     </div>
                 </div>
 
@@ -58,7 +58,7 @@ pub fn AppChrome(children: Children) -> impl IntoView {
 
                 <main class="app-content">
                     <div class="page-watermark" aria-hidden="true">
-                        "Nanhu Scheduling System"
+                        "Super Training Collector"
                     </div>
                     <div class="page-frame">{children()}</div>
                 </main>
@@ -90,6 +90,7 @@ pub fn CopyButton(
     let button_label = label.unwrap_or_else(|| "复制".to_string());
 
     let on_copy = move |ev: leptos::ev::MouseEvent| {
+        ev.prevent_default();
         ev.stop_propagation();
 
         if copy_to_clipboard(&copy_value.get_value()) {
@@ -299,28 +300,40 @@ fn segment_percent(value: u16, total: u16) -> u16 {
 
 #[cfg(feature = "hydrate")]
 fn copy_to_clipboard(value: &str) -> bool {
-    use wasm_bindgen::{JsCast, JsValue};
+    use wasm_bindgen::JsValue;
 
-    let Some(window) = web_sys::window() else {
-        return false;
-    };
+    let copy_fn = js_sys::Function::new_with_args(
+        "text",
+        r#"
+        const fallback = () => {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.top = '-9999px';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(textarea);
+            return ok;
+        };
 
-    let Ok(navigator) = js_sys::Reflect::get(&window, &JsValue::from_str("navigator")) else {
-        return false;
-    };
-    let Ok(clipboard) = js_sys::Reflect::get(&navigator, &JsValue::from_str("clipboard")) else {
-        return false;
-    };
-    let Ok(write_text) = js_sys::Reflect::get(&clipboard, &JsValue::from_str("writeText")) else {
-        return false;
-    };
-    let Ok(write_text) = write_text.dyn_into::<js_sys::Function>() else {
-        return false;
-    };
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).catch(() => fallback());
+            return true;
+        }
 
-    write_text
-        .call1(&clipboard, &JsValue::from_str(value))
-        .is_ok()
+        return fallback();
+        "#,
+    );
+
+    copy_fn
+        .call1(&JsValue::NULL, &JsValue::from_str(value))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 #[cfg(not(feature = "hydrate"))]

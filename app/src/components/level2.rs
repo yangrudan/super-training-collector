@@ -169,7 +169,6 @@ fn NodesTableTab() -> impl IntoView {
                                                     <th>"状态"</th>
                                                     <th>"节点 IP"</th>
                                                     <th>"主机名"</th>
-                                                    <th>"机柜"</th>
                                                     <th>"慢占比"</th>
                                                     <th>"P50 (ms)"</th>
                                                     <th>"P99 (ms)"</th>
@@ -341,7 +340,6 @@ fn NodeRow(node: NodeMetrics) -> impl IntoView {
                 <CopyButton value=node.node_ip.clone() label="复制IP" />
             </td>
             <td>{node.hostname.clone()}</td>
-            <td class="mono-cell">{node.rack_id.clone()}</td>
             <td>
                 <HeatCell value=node.slow_ratio show_value=true />
             </td>
