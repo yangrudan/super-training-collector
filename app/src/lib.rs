@@ -21,7 +21,7 @@ pub mod models;
 pub mod bench_utils;
 
 use api::get_mock_mode_status;
-use components::{Level1View, Level2View, Level3View, MockModeBanner};
+use components::{AppChrome, Level1View, Level2View, Level3View, MockModeBanner};
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -49,7 +49,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/super-trainning-collector.css"/>
-        <Title text="训练任务监控面板"/>
+        <Title text="南湖调度系统"/>
 
         // Mock 模式警告横幅
         <Suspense fallback=|| ()>
@@ -64,13 +64,13 @@ pub fn App() -> impl IntoView {
         </Suspense>
 
         <Router>
-            <main class="app-container">
-                <Routes fallback=|| "页面未找到".into_view()>
+            <AppChrome>
+                <Routes fallback=|| view! { <div class="panel-surface empty-state">"页面未找到"</div> }.into_view()>
                     <Route path=StaticSegment("") view=Level1View/>
                     <Route path=StaticSegment("nodes") view=Level2View/>
                     <Route path=(StaticSegment("nodes"), ParamSegment("ip")) view=Level3View/>
                 </Routes>
-            </main>
+            </AppChrome>
         </Router>
     }
 }

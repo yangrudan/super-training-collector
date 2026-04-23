@@ -27,39 +27,53 @@ pub fn StackAnalysisPanel(#[prop(into)] node_ip: String) -> impl IntoView {
     let download_node_ip = StoredValue::new(node_ip.clone());
 
     view! {
-        <section class="stack-analysis">
-            <div class="stack-header">
-                <h2>"堆栈分析"</h2>
+        <section class="panel-surface stack-analysis">
+            <div class="panel-header-line">
+                <div>
+                    <div class="section-label">"日志诊断"</div>
+                    <h2 class="section-title">"堆栈分析"</h2>
+                </div>
                 <div class="stack-actions">
                     <Show when=move || flamegraph_svg.get().is_some()>
                         <button
-                            class="collect-btn"
+                            class="collect-btn subtle"
                             on:click=move |_| {
-                                if let Some(_svg_content) = flamegraph_svg.get() {
+                                if let Some(svg_content) = flamegraph_svg.get() {
                                     #[cfg(feature = "hydrate")]
                                     {
                                         use wasm_bindgen::JsCast;
-                                        let _filename = format!("flamegraph_{}_{}.svg", download_node_ip.get_value(), {
+
+                                        let filename = format!("flamegraph_{}_{}.svg", download_node_ip.get_value(), {
                                             use js_sys::Date;
                                             let date = Date::new_0();
-                                            let year = date.get_full_year();
-                                            let month = date.get_month() + 1; // 0-indexed
-                                            let day = date.get_date();
-                                            let hours = date.get_hours();
-                                            let minutes = date.get_minutes();
-                                            let seconds = date.get_seconds();
-                                            format!("{:04}{:02}{:02}{:02}{:02}{:02}", year, month, day, hours, minutes, seconds)
+                                            format!(
+                                                "{:04}{:02}{:02}{:02}{:02}{:02}",
+                                                date.get_full_year(),
+                                                date.get_month() + 1,
+                                                date.get_date(),
+                                                date.get_hours(),
+                                                date.get_minutes(),
+                                                date.get_seconds()
+                                            )
                                         });
                                         let document = web_sys::window().unwrap().document().unwrap();
+                                        let mut blob_options = web_sys::BlobPropertyBag::new();
+                                        blob_options.set_type("image/svg+xml");
                                         let blob = web_sys::Blob::new_with_str_sequence_and_options(
-                                            &js_sys::Array::of1(&_svg_content.into()),
-                                            web_sys::BlobPropertyBag::new().type_("image/svg+xml"),
-                                        ).unwrap();
-                                        let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+                                            &js_sys::Array::of1(&svg_content.into()),
+                                            &blob_options,
+                                        )
+                                            .unwrap();
+                                        let url =
+                                            web_sys::Url::create_object_url_with_blob(&blob).unwrap();
 
-                                        let a = document.create_element("a").unwrap().dyn_into::<web_sys::HtmlAnchorElement>().unwrap();
+                                        let a = document
+                                            .create_element("a")
+                                            .unwrap()
+                                            .dyn_into::<web_sys::HtmlAnchorElement>()
+                                            .unwrap();
                                         a.set_href(&url);
-                                        a.set_download(&_filename);
+                                        a.set_download(&filename);
                                         a.click();
 
                                         web_sys::Url::revoke_object_url(&url).unwrap();
@@ -68,7 +82,6 @@ pub fn StackAnalysisPanel(#[prop(into)] node_ip: String) -> impl IntoView {
                             }
                             title="下载火焰图 SVG"
                         >
-                            <span class="download-icon">"📥"</span>
                             "下载 SVG"
                         </button>
                     </Show>
@@ -81,6 +94,10 @@ pub fn StackAnalysisPanel(#[prop(into)] node_ip: String) -> impl IntoView {
                     </button>
                 </div>
             </div>
+
+            <p class="section-note">
+                "使用等宽日志式火焰图定位慢 Rank 的根因，重点观察 NCCL 等待、I/O 堵塞等热点函数。"
+            </p>
 
             <Show when=move || loading.get()>
                 <Loading />
@@ -103,8 +120,8 @@ pub fn StackAnalysisPanel(#[prop(into)] node_ip: String) -> impl IntoView {
 
             <Show when=move || !loading.get() && flamegraph_svg.get().is_none() && error_msg.get().is_none()>
                 <div class="stack-placeholder">
-                    <p>"点击「采集堆栈」采集各 Rank 调用栈并生成火焰图"</p>
-                    <p class="hint">"可帮助定位慢 Rank 的根因，如 NCCL 等待、IO 阻塞等"</p>
+                    <p>"点击“采集堆栈”拉取该节点所有 Rank 的调用栈并生成火焰图。"</p>
+                    <p class="hint">"面板保留完整错误信息，避免关键异常栈被直接截断。"</p>
                 </div>
             </Show>
         </section>

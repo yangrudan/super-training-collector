@@ -7,30 +7,52 @@ use leptos_router::hooks::use_navigate;
 /// Level 2: 节点聚合视图 (带 Tab)
 #[component]
 pub fn Level2View() -> impl IntoView {
-    let active_tab = RwSignal::new(0u8); // 0 = 节点列表, 1 = 全部堆栈
+    let active_tab = RwSignal::new(0u8);
 
     view! {
-        <div class="level2-view">
+        <div class="nodes-page">
             <Breadcrumb items=vec![
                 ("首页".to_string(), "/".to_string()),
-                ("节点列表".to_string(), "/nodes".to_string()),
+                ("节点控制台".to_string(), "/nodes".to_string()),
             ] />
 
-            <h1 class="page-title">"节点状态监控"</h1>
+            <section class="page-hero panel-surface compact">
+                <div class="page-hero-copy">
+                    <div class="page-eyebrow">"节点巡检"</div>
+                    <h1 class="page-title">"节点状态监控"</h1>
+                    <p class="page-description">
+                        "按节点聚合展示训练状态、性能热点和堆栈诊断入口，适合快速筛选异常机器。"
+                    </p>
+                </div>
+            </section>
 
-            // Tab 导航
             <div class="tab-bar">
                 <button
-                    class=move || if active_tab.get() == 0 { "tab-btn tab-btn-active" } else { "tab-btn" }
+                    class=move || {
+                        if active_tab.get() == 0 {
+                            "tab-btn tab-btn-active"
+                        } else {
+                            "tab-btn"
+                        }
+                    }
                     on:click=move |_| active_tab.set(0)
-                >"节点列表"</button>
+                >
+                    "节点列表"
+                </button>
                 <button
-                    class=move || if active_tab.get() == 1 { "tab-btn tab-btn-active" } else { "tab-btn" }
+                    class=move || {
+                        if active_tab.get() == 1 {
+                            "tab-btn tab-btn-active"
+                        } else {
+                            "tab-btn"
+                        }
+                    }
                     on:click=move |_| active_tab.set(1)
-                >"全部 Rank 堆栈"</button>
+                >
+                    "全部 Rank 堆栈"
+                </button>
             </div>
 
-            // Tab 内容
             <Show when=move || active_tab.get() == 0>
                 <NodesTableTab />
             </Show>
@@ -66,11 +88,10 @@ fn NodesTableTab() -> impl IntoView {
     });
 
     view! {
-        <div>
-            // 筛选栏
-            <div class="filter-bar">
+        <div class="panel-stack">
+            <div class="filter-bar panel-surface">
                 <div class="filter-group">
-                    <label>"状态筛选:"</label>
+                    <label>"状态"</label>
                     <select
                         on:change=move |ev| {
                             let value = event_target_value(&ev);
@@ -84,13 +105,13 @@ fn NodesTableTab() -> impl IntoView {
                     >
                         <option value="all">"全部"</option>
                         <option value="healthy">"正常"</option>
-                        <option value="warning">"警告"</option>
-                        <option value="critical">"故障"</option>
+                        <option value="warning">"挂起"</option>
+                        <option value="critical">"异常"</option>
                     </select>
                 </div>
 
                 <div class="filter-group">
-                    <label>"排序方式:"</label>
+                    <label>"排序指标"</label>
                     <select
                         on:change=move |ev| {
                             let value = event_target_value(&ev);
@@ -110,7 +131,7 @@ fn NodesTableTab() -> impl IntoView {
                 </div>
 
                 <div class="filter-group">
-                    <label>"排序方向:"</label>
+                    <label>"排序方向"</label>
                     <select
                         on:change=move |ev| {
                             let value = event_target_value(&ev);
@@ -127,41 +148,50 @@ fn NodesTableTab() -> impl IntoView {
                 </div>
             </div>
 
-            // 节点表格
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || {
                     nodes_resource.get().map(|result| {
                         match result {
                             Ok(response) => view! {
-                                <div class="nodes-table-container">
-                                    <table class="nodes-table">
-                                        <thead>
-                                            <tr>
-                                                <th>"状态"</th>
-                                                <th>"节点 IP"</th>
-                                                <th>"主机名"</th>
-                                                <th>"慢占比"</th>
-                                                <th>"P50 (ms)"</th>
-                                                <th>"P99 (ms)"</th>
-                                                <th>"GPU 利用率"</th>
-                                                <th>"NCCL 延迟"</th>
-                                                <th>"Rank 状态"</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {response.nodes.into_iter().map(|node| {
-                                                view! { <NodeRow node=node /> }
-                                            }).collect_view()}
-                                        </tbody>
-                                    </table>
-                                    <div class="table-footer">
-                                        "共 " {response.total} " 个节点"
+                                <section class="table-shell panel-surface">
+                                    <div class="panel-header-line">
+                                        <div>
+                                            <div class="section-label">"节点列表"</div>
+                                            <h2 class="section-title">"节点状态与热点指标"</h2>
+                                        </div>
+                                        <div class="panel-stat">"共 " {response.total} " 个节点"</div>
                                     </div>
-                                </div>
-                            }.into_any(),
+
+                                    <div class="table-scroll">
+                                        <table class="nodes-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>"状态"</th>
+                                                    <th>"节点 IP"</th>
+                                                    <th>"主机名"</th>
+                                                    <th>"机柜"</th>
+                                                    <th>"慢占比"</th>
+                                                    <th>"P50 (ms)"</th>
+                                                    <th>"P99 (ms)"</th>
+                                                    <th>"GPU 利用率"</th>
+                                                    <th>"NCCL 延迟"</th>
+                                                    <th>"Rank 状态"</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {response.nodes.into_iter().map(|node| {
+                                                    view! { <NodeRow node=node /> }
+                                                }).collect_view()}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </section>
+                            }
+                                .into_any(),
                             Err(e) => view! {
                                 <ErrorDisplay message=e.to_string() on_retry=retry_callback />
-                            }.into_any(),
+                            }
+                                .into_any(),
                         }
                     })
                 }}
@@ -171,10 +201,8 @@ fn NodesTableTab() -> impl IntoView {
 }
 
 /// Tab 2: 全部节点 Rank 堆栈
-/// IP 来自训练数据，端口由 config/collector.json 的 callstack_base_port 起始递增
 #[component]
 fn AllStacksTab() -> impl IntoView {
-    // 全局合并火焰图状态
     let (combined_loading, set_combined_loading) = signal(false);
     let combined_svg: RwSignal<Option<String>> = RwSignal::new(None);
     let combined_error: RwSignal<Option<String>> = RwSignal::new(None);
@@ -193,60 +221,85 @@ fn AllStacksTab() -> impl IntoView {
     };
 
     view! {
-        <div class="all-stacks-tab">
-            <div class="all-stacks-toolbar">
-                <button
-                    class="collect-btn collect-btn-combined"
-                    on:click=on_generate_combined
-                    disabled=move || combined_loading.get()
-                >
-                    {move || if combined_loading.get() { "合并生成中..." } else { "生成全局合并火焰图" }}
-                </button>
-                
-                <Show when=move || combined_svg.get().is_some()>
+        <section class="panel-surface all-stacks-tab">
+            <div class="panel-header-line">
+                <div>
+                    <div class="section-label">"堆栈诊断"</div>
+                    <h2 class="section-title">"全局合并火焰图"</h2>
+                </div>
+                <div class="all-stacks-toolbar">
                     <button
                         class="collect-btn collect-btn-combined"
-                        on:click=move |_| {
-                            if let Some(_svg_content) = combined_svg.get() {
-                                #[cfg(feature = "hydrate")]
-                                {
-                                    use wasm_bindgen::JsCast;
-                                    let _filename = format!("flamegraph_all_nodes_{}.svg", {
-                                        use js_sys::Date;
-                                        let date = Date::new_0();
-                                        let year = date.get_full_year();
-                                        let month = date.get_month() + 1; // 0-indexed
-                                        let day = date.get_date();
-                                        let hours = date.get_hours();
-                                        let minutes = date.get_minutes();
-                                        let seconds = date.get_seconds();
-                                        format!("{:04}{:02}{:02}{:02}{:02}{:02}", year, month, day, hours, minutes, seconds)
-                                    });
-                                    let document = web_sys::window().unwrap().document().unwrap();
-                                    let blob = web_sys::Blob::new_with_str_sequence_and_options(
-                                        &js_sys::Array::of1(&_svg_content.into()),
-                                        web_sys::BlobPropertyBag::new().type_("image/svg+xml"),
-                                    ).unwrap();
-                                    let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+                        on:click=on_generate_combined
+                        disabled=move || combined_loading.get()
+                    >
+                        {move || {
+                            if combined_loading.get() {
+                                "生成中..."
+                            } else {
+                                "生成全局合并火焰图"
+                            }
+                        }}
+                    </button>
 
-                                    let a = document.create_element("a").unwrap().dyn_into::<web_sys::HtmlAnchorElement>().unwrap();
-                                    a.set_href(&url);
-                                    a.set_download(&_filename);
-                                    a.click();
+                    <Show when=move || combined_svg.get().is_some()>
+                        <button
+                            class="collect-btn subtle"
+                            on:click=move |_| {
+                                if let Some(svg_content) = combined_svg.get() {
+                                    #[cfg(feature = "hydrate")]
+                                    {
+                                        use wasm_bindgen::JsCast;
 
-                                    web_sys::Url::revoke_object_url(&url).unwrap();
+                                        let filename = format!("flamegraph_all_nodes_{}.svg", {
+                                            use js_sys::Date;
+                                            let date = Date::new_0();
+                                            format!(
+                                                "{:04}{:02}{:02}{:02}{:02}{:02}",
+                                                date.get_full_year(),
+                                                date.get_month() + 1,
+                                                date.get_date(),
+                                                date.get_hours(),
+                                                date.get_minutes(),
+                                                date.get_seconds()
+                                            )
+                                        });
+                                        let document = web_sys::window().unwrap().document().unwrap();
+                                        let mut blob_options = web_sys::BlobPropertyBag::new();
+                                        blob_options.set_type("image/svg+xml");
+                                        let blob = web_sys::Blob::new_with_str_sequence_and_options(
+                                            &js_sys::Array::of1(&svg_content.into()),
+                                            &blob_options,
+                                        )
+                                            .unwrap();
+                                        let url =
+                                            web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+
+                                        let a = document
+                                            .create_element("a")
+                                            .unwrap()
+                                            .dyn_into::<web_sys::HtmlAnchorElement>()
+                                            .unwrap();
+                                        a.set_href(&url);
+                                        a.set_download(&filename);
+                                        a.click();
+
+                                        web_sys::Url::revoke_object_url(&url).unwrap();
+                                    }
                                 }
                             }
-                        }
-                        title="下载全局合并火焰图 SVG"
-                    >
-                        <span class="download-icon">"📥"</span>
-                        "下载 SVG"
-                    </button>
-                </Show>
+                            title="下载全局合并火焰图 SVG"
+                        >
+                            "下载 SVG"
+                        </button>
+                    </Show>
+                </div>
             </div>
 
-            // 全局合并火焰图展示区
+            <p class="section-note">
+                "使用统一的火焰图视图汇总全部节点全部 Rank 的调用栈，便于识别集群级瓶颈。"
+            </p>
+
             <Show when=move || combined_loading.get()>
                 <Loading />
             </Show>
@@ -264,7 +317,7 @@ fn AllStacksTab() -> impl IntoView {
                     />
                 </div>
             </Show>
-        </div>
+        </section>
     }
 }
 
@@ -275,7 +328,6 @@ fn NodeRow(node: NodeMetrics) -> impl IntoView {
     let ip = node.node_ip.clone();
 
     let on_click = move |_| {
-        let ip = ip.clone();
         navigate(&format!("/nodes/{}", ip), Default::default());
     };
 
@@ -284,8 +336,12 @@ fn NodeRow(node: NodeMetrics) -> impl IntoView {
             <td>
                 <StatusBadge status=node.status />
             </td>
-            <td class="node-ip">{node.node_ip.clone()}</td>
+            <td class="node-ip-cell">
+                <span class="mono-cell">{node.node_ip.clone()}</span>
+                <CopyButton value=node.node_ip.clone() label="复制IP" />
+            </td>
             <td>{node.hostname.clone()}</td>
+            <td class="mono-cell">{node.rack_id.clone()}</td>
             <td>
                 <HeatCell value=node.slow_ratio show_value=true />
             </td>
@@ -326,6 +382,6 @@ fn gpu_util_class(util: f32) -> &'static str {
     } else if util < 80.0 {
         "value-warning"
     } else {
-        ""
+        "value-healthy"
     }
 }
