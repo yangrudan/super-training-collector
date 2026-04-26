@@ -78,6 +78,76 @@
 
 ---
 
+## 2.5 uprobe vs eBPF —— 不是二选一
+
+> 这一节单独写出来防止理解偏差。**uprobe 不是 eBPF 的替代品，它是 eBPF 的一种挂载点（attach type）。**
+
+### 概念关系
+
+```
+            ┌──────────── eBPF（框架/运行时）────────────┐
+            │                                              │
+            │   程序类型(挂在哪)        Map / 通信            │
+            │   ─────────────          ──────────             │
+            │   • kprobe / kretprobe   • hash map           │
+            │   • uprobe / uretprobe   • array map          │
+            │   • tracepoint           • ringbuf            │
+            │   • perf_event           • perf event array   │
+            │   • XDP / TC / LSM ...   • stack trace map    │
+            └──────────────────────────────────────────────┘
+
+uprobe   ⊂   eBPF 的 attach type
+```
+
+### 两条候选路线
+
+| 路线 | 实现 | 何时合适 |
+|---|---|---|
+| **A. 纯 uprobe（不走 eBPF）** | `perf_event_open` + uprobe，事件直接送回用户态处理 | 只 hook 极少数低频函数，且不需要内核侧信号；适合一次性诊断脚本 |
+| **B. eBPF 框架 + uprobe / kprobe / tracepoint（本计划采用）** | aya 加载，多种 attach 类型混合，内核态 map 聚合 | 高频点 + 跨进程聚合 + 需要内核侧根因（futex / 网络 / 调度） |
+
+**为什么本项目必须选 B**：
+
+1. **`cuLaunchKernel` 调用频率极高**（每秒上万次） —— 纯 uprobe 全量回用户态会直接 OOM；eBPF map 在内核态做"超阈值才上报"才扛得住
+2. **HANG 根因常在内核侧** —— 卡在 `futex_wait` / TCP 重传 / D state，纯 uprobe 看不到内核栈
+3. **跨 rank/进程聚合** —— eBPF map 天然跨进程共享，纯 uprobe 要自己在用户态合并
+
+### Attach 点矩阵（贯穿 Phase 1–4）
+
+下表是本计划要挂的所有探针。**uprobe 抓用户态库 API，kprobe / tracepoint 抓内核侧根因**，两类同时用，都是 eBPF 程序。
+
+| 检测目标 | Attach Type | 具体挂载点 | 用途 / 输出表 | 所属 Phase |
+|---|---|---|---|---|
+| 线程长等待（HANG 主信号） | **uprobe** | `libpthread.so:pthread_cond_wait` entry/return | 等待时长 + 用户栈 → `stuck_threads` | P1 |
+| futex 等待（覆盖未走 pthread 的等待） | **kprobe** / tracepoint | `syscalls:sys_enter_futex` / `sys_exit_futex` | 同上，作为兜底 | P1 |
+| Python 栈快照（HANG 现场可读性） | **uprobe** | `libpython3.X.so:_PyEval_EvalFrameDefault` *(可选，路 B)* | Python 调用链 | P2 路 B |
+| Python 栈（推荐路径） | **HTTP 回调** | 不挂 eBPF，调 probing `python.backtrace` | 同上 | P2 路 A |
+| Kernel launch CPU 侧耗时 | **uprobe** | `libcudart.so:cudaLaunchKernel` entry/return | `cuda_api_calls(api='cudaLaunchKernel')` | P3 |
+| GPU 等待（CPU 侧 stall） | **uprobe** | `libcuda.so:cuStreamSynchronize` entry/return | `cuda_api_calls(api='cuStreamSynchronize')` | P3 |
+| Event 等待 | **uprobe** | `libcuda.so:cuEventSynchronize` | 同上 | P3 |
+| H2D / D2H 传输 | **uprobe** | `libcudart.so:cudaMemcpyAsync` | `cuda_api_calls(api='cudaMemcpyAsync')` | P3 |
+| 集合通信入队耗时 | **uprobe** | `libnccl.so:ncclAllReduce` / `ncclBroadcast` ... | `nccl_ops(op, comm_id, count, dtype, duration_ns)` | P3 |
+| 点对点通信 | **uprobe** | `libnccl.so:ncclSend` / `ncclRecv` | 同上 | P3 |
+| 网络抖动 | **tracepoint** | `tcp:tcp_retransmit_skb` | `tcp_retrans(ts, saddr, daddr)` | P4 |
+| CPU 抢占 / 多租户干扰 | **tracepoint** | `sched:sched_switch` (filter: prev_state=R) | `sched_contention(pid, cpu, runtime_ns)` | P4 |
+| 主机内存压力 | **tracepoint** | `exceptions:page_fault_user` + `kmem:mm_compaction_*` | `mem_pressure` | P4 |
+| Checkpoint IO 长尾 | **tracepoint** | `block:block_rq_issue` / `block_rq_complete` | `block_io(dev, bytes, latency_ms)` | P4 |
+| On-CPU 火焰图（按需） | **perf_event** | 99 Hz 采样 | 火焰图原始数据 | P4 (可选) |
+
+**几个工程决策**：
+
+- **uprobe 入口要 + 返回 entry/uretprobe 配对**，才能算 duration；只挂入口的话只能算频率
+- **uprobe attach 用 glob 模式**（aya 支持 `Uprobe::attach(target="libnccl.so", symbol="ncclAllReduce")`），不要写死绝对路径——容器镜像、conda 环境路径都不一样
+- **tracepoint 优先于 kprobe**：tracepoint 是稳定 ABI，kprobe 跨内核版本可能改函数名；只有 tracepoint 不存在时才退回 kprobe
+- **高频 uprobe 必须有"全局开关 + 阈值过滤"**：`cuLaunchKernel` / `cudaMemcpyAsync` 默认只记录 duration > 1ms 的事件，避免事件爆炸（在 eBPF 程序里就做过滤，到不了用户态）
+- **栈深统一限制 32 帧**：`bpf_get_stack` 默认上限就是 32，再深也意义不大
+
+### 一句话总结
+
+> 选的不是 uprobe 还是 eBPF，而是**用 eBPF 框架 + uprobe (用户态库 API) + kprobe/tracepoint (内核侧根因)** 的组合。aya 一个程序里同时挂这几类。
+
+---
+
 ## 3. 分阶段实施
 
 ### Phase 0 — 环境与可行性验证（先行）
@@ -97,16 +167,19 @@ todos:
 
 目标：交付一个能直接替代 Jaccard 的 HANG 检测器。
 
-**eBPF 程序**（在 stc-probe 内）:
+**eBPF 程序**（在 stc-probe 内，挂载点见 §2.5 矩阵）:
 ```
-uprobe @ libpthread.so:pthread_cond_wait entry → 记录 (tid, t_enter)
-uprobe @ libpthread.so:pthread_cond_wait return → 计算 wait_ms
-  if wait_ms > THRESHOLD (默认 30s):
-    bpf_get_stack() 抓 user stack
-    push to ringbuf
+uprobe  @ libpthread.so:pthread_cond_wait entry  → map.insert(tid, t_enter)
+uretprobe @ libpthread.so:pthread_cond_wait      → wait_ms = now - t_enter
+                                                   if wait_ms > THRESHOLD (默认 30s):
+                                                     bpf_get_stack(BPF_F_USER_STACK)
+                                                     ringbuf.push(event)
+
+tracepoint @ syscalls:sys_enter_futex            → map.insert(tid, t_enter)   // 兜底
+tracepoint @ syscalls:sys_exit_futex             → 同上算 wait_ms 并上报
 ```
 
-同时挂一份到 `futex` syscall（覆盖未走 pthread API 的等待场景）。
+两类挂载并存：uprobe 抓走 pthread API 的 case（绝大多数 PyTorch 场景），futex tracepoint 覆盖未走 pthread API 的原生等待。**入口和返回都要配对**，单挂入口算不出 duration。
 
 **用户态 stc-probe**:
 - 消费 ringbuf
