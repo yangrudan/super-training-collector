@@ -39,7 +39,7 @@ body {
 // 宣传展示信息
 .promo-section {
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
     gap: 24px;
     margin-bottom: 32px;
     padding: 28px;
@@ -70,7 +70,7 @@ body {
     border: 1px solid rgba(#38bdf8, 0.45);
     border-radius: 9999px;
     color: #7dd3fc;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
