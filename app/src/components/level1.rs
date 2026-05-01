@@ -27,6 +27,33 @@ pub fn Level1View() -> impl IntoView {
                 <HangIndicatorCompact />
             </div>
 
+            <section class="promo-section">
+                <div class="promo-content">
+                    <p class="promo-eyebrow">"Super Training Collector"</p>
+                    <h2>"面向千卡级分布式训练的可视化监控与诊断平台"</h2>
+                    <p class="promo-description">
+                        "通过全局态势、节点下钻、Rank 详情、Step 指标、HANG 检测和火焰图分析，帮助团队快速展示训练运行状态、定位性能瓶颈并支撑项目介绍与宣传。"
+                    </p>
+                </div>
+                <div class="promo-highlights">
+                    <div class="promo-card">
+                        <span class="promo-card-icon">"📊"</span>
+                        <strong>"全局态势"</strong>
+                        <span>"健康分布、关键 KPI 与训练进度一屏掌握"</span>
+                    </div>
+                    <div class="promo-card">
+                        <span class="promo-card-icon">"🔍"</span>
+                        <strong>"快速诊断"</strong>
+                        <span>"节点/Rank 级下钻，快速定位慢节点与异常进程"</span>
+                    </div>
+                    <div class="promo-card">
+                        <span class="promo-card-icon">"🔥"</span>
+                        <strong>"性能分析"</strong>
+                        <span>"调用栈采集与火焰图可视化辅助性能优化"</span>
+                    </div>
+                </div>
+            </section>
+
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || {
                     global_resource.get().map(|result| {

@@ -36,6 +36,83 @@ body {
     color: $color-text;
 }
 
+// 宣传展示信息
+.promo-section {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+    gap: 24px;
+    margin-bottom: 32px;
+    padding: 28px;
+    border: 1px solid rgba(#38bdf8, 0.35);
+    border-radius: 16px;
+    background:
+        radial-gradient(circle at top left, rgba(#38bdf8, 0.22), transparent 36%),
+        linear-gradient(135deg, rgba(#1e40af, 0.38), rgba($color-card, 0.94));
+    box-shadow: 0 18px 45px rgba(#020617, 0.28);
+}
+
+.promo-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 12px;
+
+    h2 {
+        font-size: 2rem;
+        line-height: 1.25;
+        color: #e0f2fe;
+    }
+}
+
+.promo-eyebrow {
+    width: fit-content;
+    padding: 4px 10px;
+    border: 1px solid rgba(#38bdf8, 0.45);
+    border-radius: 9999px;
+    color: #7dd3fc;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.promo-description {
+    max-width: 760px;
+    color: #cbd5e1;
+    font-size: 1rem;
+}
+
+.promo-highlights {
+    display: grid;
+    gap: 12px;
+}
+
+.promo-card {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    align-items: center;
+    padding: 14px;
+    border: 1px solid rgba($color-border, 0.82);
+    border-radius: 12px;
+    background: rgba(#0f172a, 0.56);
+
+    strong {
+        color: $color-text;
+    }
+
+    span:last-child {
+        grid-column: 2;
+        color: $color-text-muted;
+        font-size: 0.875rem;
+    }
+}
+
+.promo-card-icon {
+    grid-row: span 2;
+    font-size: 1.5rem;
+}
+
 // 状态徽章
 .badge {
     display: inline-block;
@@ -1184,5 +1261,16 @@ section {
     }
     50% {
         box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    }
+}
+
+@media (max-width: 900px) {
+    .promo-section {
+        grid-template-columns: 1fr;
+        padding: 22px;
+    }
+
+    .promo-content h2 {
+        font-size: 1.55rem;
     }
 }
