@@ -40,7 +40,7 @@ pub async fn fetch_job_info(
     }
 
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(5))
         .build()
     {
         Ok(c) => c,

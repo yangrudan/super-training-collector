@@ -109,7 +109,12 @@ pub async fn start_hang_detector_scheduler() {
                     };
                     if should_notify {
                         tracing::warn!("Sending DingTalk HANG alert");
-                        send_hang_alert().await;
+                        let details = {
+                            let state = get_hang_state();
+                            let state = state.read().unwrap();
+                            state.details.clone()
+                        };
+                        send_hang_alert(&details).await;
                         let state = get_hang_state();
                         let mut state = state.write().unwrap();
                         state.mark_notified();
