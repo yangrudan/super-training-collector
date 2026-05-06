@@ -41,6 +41,18 @@ pub struct CollectorConfig {
     /// Smaller values reduce peak memory usage but may increase processing time.
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
+    /// 训练平台 API 地址，用于 HANG 告警时查询任务/用户信息
+    #[serde(default)]
+    pub job_platform_api_url: String,
+    /// 训练平台 appKey，用于获取 accessToken
+    #[serde(default)]
+    pub job_platform_app_key: String,
+    /// 训练平台 appSecret，用于获取 accessToken
+    #[serde(default)]
+    pub job_platform_app_secret: String,
+    /// 训练平台 userId，用于查询任务详情
+    #[serde(default)]
+    pub job_platform_user_id: String,
 }
 
 fn default_step_query_port_offset() -> u16 {

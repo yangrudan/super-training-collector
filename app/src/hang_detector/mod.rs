@@ -13,6 +13,8 @@ pub mod runner;
 pub mod logger;
 #[cfg(feature = "ssr")]
 pub mod notifier;
+#[cfg(feature = "ssr")]
+pub mod job_info_client;
 
 pub use config::HangConfig;
 pub use state::{HangStatus, HangDetectorState, HangStatusSnapshot};
