@@ -47,7 +47,11 @@ fn process_frames_to_folded_stack(frames: Vec<Frame>) -> Option<String> {
     let mut local_stack: Vec<Frame> = frames;
     local_stack.reverse();
 
-    let folded = local_stack.iter().map(format_frame).collect::<Vec<_>>().join(";");
+    let folded = local_stack
+        .iter()
+        .map(format_frame)
+        .collect::<Vec<_>>()
+        .join(";");
     Some(folded)
 }
 
@@ -229,10 +233,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, 0);
         // Frames are reversed: helper comes before main
-        assert_eq!(
-            results[0].1,
-            "helper (utils.py:20);main (main.py:10)"
-        );
+        assert_eq!(results[0].1, "helper (utils.py:20);main (main.py:10)");
     }
 
     #[test]
@@ -263,10 +264,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, 5);
         // Frames are reversed
-        assert_eq!(
-            results[0].1,
-            "main (main.c:50);do_work (lib.c:100)"
-        );
+        assert_eq!(results[0].1, "main (main.c:50);do_work (lib.c:100)");
     }
 
     #[test]

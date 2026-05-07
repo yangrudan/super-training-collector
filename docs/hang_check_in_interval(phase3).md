@@ -109,3 +109,58 @@ app/src/hang_detector/
 
 - `HangIndicator` - 完整版 HANG 状态指示灯（显示图标、文字和详情）
 - `HangIndicatorCompact` - 简化版（只显示图标，用于标题栏）
+
+---
+
+## 问题 Rank 自动检测（StackTrie 分叉分析）
+
+当 HANG 检测确认后，或用户在 Dashboard 手动触发时，系统会自动分析所有 Rank 的堆栈，找出偏离多数执行路径的「问题 Rank」。
+
+### 算法原理
+
+利用已有的 **StackTrie** 数据结构（合并堆栈 + RoaringBitmap rank 归属），在每个分叉点（节点有多个 children）检查各分支的 rank 覆盖率：
+
+1. 采集所有节点全部 Rank 的堆栈，构建 StackTrie
+2. 从 root 遍历，在每个多 children 节点检查各分支覆盖率
+3. `覆盖率 = 该分支 rank 数 / 父节点 rank 数`
+4. 覆盖率 < 阈值（默认 30%）的分支中的 Rank 被标记为「少数派」
+5. 统计每个 Rank 出现在少数派分支的次数，作为 `anomaly_score`
+6. `anomaly_score > 0` 的 Rank 即为问题 Rank，分数越高异常越严重
+
+### 触发方式
+
+| 触发方式 | 说明 |
+|---------|------|
+| HANG 自动触发 | HANG 检测确认后，自动采集全局堆栈并分析 |
+| Dashboard 手动触发 | Level 2「问题 Rank 分析」Tab 中点击按钮 |
+
+### 配置
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `RANK_ANALYSIS_ENABLED` | `true` | 是否启用问题 Rank 分析 |
+| `RANK_ANALYSIS_MINORITY_THRESHOLD` | `0.3` | 少数派阈值 (0.05-0.5) |
+
+### API 端点
+
+- `AnalyzeProblematicRanks` - 手动触发实时分析（采集堆栈 + 构建 Trie + 分叉检测）
+- `GetProblematicRanks` - 获取最近一次分析结果（缓存）
+
+### 前端组件
+
+- `RankAnalysisPanel` - 完整分析面板（Level 2 Tab：按钮 + 结果表格 + 分叉详情）
+- `RankAnalysisSummary` - 紧凑摘要（Level 1 首页：有问题 Rank 时自动显示）
+
+### 模块结构
+
+```
+app/src/rank_analyzer/       # SSR-only 模块
+├── mod.rs                   # 模块导出
+├── config.rs                # 配置管理（环境变量）
+├── analyzer.rs              # 核心分叉检测算法
+├── types.rs                 # 类型重导出
+└── state.rs                 # 全局结果缓存
+
+app/src/rank_analysis_types.rs  # 共享类型（SSR + Client）
+app/src/components/rank_analysis.rs  # UI 组件
+```

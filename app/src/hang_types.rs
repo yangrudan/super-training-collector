@@ -1,5 +1,5 @@
 //! HANG 检测共享类型
-//! 
+//!
 //! 这些类型需要在 SSR 和客户端都能使用
 
 use serde::{Deserialize, Serialize};

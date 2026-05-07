@@ -26,6 +26,8 @@
 - **实时监控**：追踪 Step Time、GPU 利用率、NCCL 延迟等关键指标
 - **高效定位**：聚焦问题节点，快速定位千卡规模下的性能瓶颈
 - **火焰图分析**：支持调用栈采集与火焰图可视化
+- **HANG 检测**：通过堆栈相似度连续采样自动判断训练是否 HANG
+- **问题 Rank 分析**：基于 StackTrie 分叉检测算法，自动识别偏离多数执行路径的异常 Rank
 
 ---
 
@@ -144,6 +146,8 @@ chmod +x run_server.sh
 | `LEPTOS_SITE_ROOT` | `target/site`     | 静态资源目录（相对路径） |
 | `LEPTOS_SITE_ADDR` | `127.0.0.1:3000`  | 服务监听地址             |
 | `LEPTOS_ENV`       | `DEV`             | 运行环境 (`DEV`/`PROD`)  |
+| `RANK_ANALYSIS_ENABLED` | `true`       | 是否启用问题 Rank 分析   |
+| `RANK_ANALYSIS_MINORITY_THRESHOLD` | `0.3` | 少数派阈值 (0.05-0.5)，低于此覆盖率的分支视为异常 |
 
 ### 手动启动
 

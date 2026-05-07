@@ -16,3 +16,4 @@ tokio.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 log.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

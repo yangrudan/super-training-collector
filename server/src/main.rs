@@ -3,7 +3,6 @@ use axum::Router;
 use leptos::logging::log;
 use leptos::prelude::*;
 use leptos_axum::{generate_route_list, LeptosRoutes};
-// use simple_logger::SimpleLogger;
 
 #[tokio::main]
 async fn main() {
@@ -13,11 +12,14 @@ async fn main() {
         return;
     }
 
-    // 初始化日志，从 RUST_LOG 环境变量读取级别，默认为 Info
-    // SimpleLogger::new()
-    //     .env()
-    //     .init()
-    //     .unwrap();
+    // 初始化日志，从 RUST_LOG 环境变量读取级别，默认为 warn
+    // 例如：RUST_LOG=warn 或 RUST_LOG=super_trainning_collector=debug
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
 
     // 启动 HANG 检测调度器
     tokio::spawn(async { app::hang_detector::start_hang_detector_scheduler().await });
