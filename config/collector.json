@@ -1,1 +1,1 @@
-{"callstack_base_port": 9933, "step_query_port_offset": 1, "batch_size": 500}
+{"callstack_base_port": 9933, "step_query_port_offset": 1, "batch_size": 500, "job_platform_api_url": "http://10.15.19.135:8080", "job_platform_app_key": "8e4072416b0047daa791112481329daa", "job_platform_app_secret": "84fc31f18ce04c7c81d243953aebd110", "job_platform_user_id": "837017462787538944"}
