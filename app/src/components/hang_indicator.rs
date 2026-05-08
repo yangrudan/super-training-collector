@@ -47,8 +47,6 @@ pub fn HangIndicator() -> impl IntoView {
                                     HangStatus::Hang => ("🔴", "训练已 HANG", "hang-critical"),
                                     HangStatus::Normal => ("🟢", "运行正常", "hang-normal"),
                                     HangStatus::Disabled => ("⚪", "未启用", "hang-disabled"),
-                                    HangStatus::Error(_) => ("❌", "检测错误", "hang-error"),
-                                    _ => ("⚪", "未启用", "hang-disabled"),
                                 };
 
                                 let details_text = if !snapshot.details.hang_nodes.is_empty() {
@@ -124,8 +122,7 @@ pub fn HangIndicatorCompact() -> impl IntoView {
     let color_legend = "HANG 检测状态 (每10秒自动刷新):\n\
         🔴 红灯: 训练已 HANG（堆栈连续多次无变化）\n\
         🟢 绿灯: 运行正常\n\
-        ⚪ 白灯: 检测未启用\n\
-        ❌ 错误: 检测过程出错";
+        ⚪ 白灯: 检测未启用";
 
     view! {
         <Suspense fallback=move || view! { <span class="hang-dot" title="加载中...">"⏳"</span> }>
@@ -137,8 +134,6 @@ pub fn HangIndicatorCompact() -> impl IntoView {
                                 HangStatus::Hang => ("🔴", "训练已 HANG"),
                                 HangStatus::Normal => ("🟢", "运行正常"),
                                 HangStatus::Disabled => ("⚪", "检测未启用"),
-                                HangStatus::Error(_) => ("❌", "检测错误"),
-                                _ => ("⚪", "检测未启用"),
                             };
 
                             // 组合当前状态和颜色说明

@@ -219,14 +219,14 @@ mod tests {
     #[test]
     fn test_snapshot() {
         let mut state = HangDetectorState::new();
-        state.status = HangStatus::Warning;
+        state.status = HangStatus::Hang;
         state.selected_nodes = vec!["node1".to_string(), "node2".to_string()];
         state.sample_round = 2;
         state.touch();
 
         let snapshot = state.snapshot();
 
-        assert_eq!(snapshot.status, HangStatus::Warning);
+        assert_eq!(snapshot.status, HangStatus::Hang);
         assert!(snapshot.timestamp > 0);
     }
 }
