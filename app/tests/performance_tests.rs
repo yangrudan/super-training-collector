@@ -1,11 +1,11 @@
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::Instant;
 
 mod common;
 use common::mock_server::{MockFlameGraphServer, MockServerConfig};
 
 use app::bench_utils::FlameGraphDataGenerator;
-use app::flamegraph::stack_merger::{StackTrie, merge_stacks, parallel_merge_stacks};
+use app::flamegraph::stack_merger::{merge_stacks, parallel_merge_stacks, StackTrie};
 
 /// fixture 文件路径（相对于 crate 根目录，即 app/）
 const FIXTURE_PATH: &str = "tests/fixtures/flamegraph_stacks.txt";
@@ -43,16 +43,16 @@ mod performance_validation_tests {
         let start = Instant::now();
         let data = load_data(100);
         let generation_time = start.elapsed();
-        
+
         println!("Generated 100 flamegraphs in {:?}", generation_time);
         assert_eq!(data.len(), 100);
-        
+
         // 测试合并性能
         let stacks: Vec<&str> = data.values().map(|s| s.as_str()).collect();
         let start = Instant::now();
         let _trie = merge_stacks(stacks);
         let merge_time = start.elapsed();
-        
+
         println!("Merged 100 stacks in {:?}", merge_time);
         assert!(merge_time.as_millis() < 1000); // 应该在1秒内完成
     }
@@ -63,10 +63,10 @@ mod performance_validation_tests {
         let start = Instant::now();
         let data = load_data(1000);
         let generation_time = start.elapsed();
-        
+
         println!("Loaded 1000 flamegraphs in {:?}", generation_time);
         assert_eq!(data.len(), 1000);
-        
+
         // 测试增量合并性能
         let batches: Vec<Vec<(u32, String)>> = {
             let mut b: Vec<Vec<(u32, String)>> = Vec::new();
@@ -78,16 +78,20 @@ mod performance_validation_tests {
         };
         let start = Instant::now();
         let mut trie = StackTrie::with_total_ranks(1000);
-        
+
         for batch in batches {
-            let batch_data: Vec<(u32, &str)> = batch.iter()
+            let batch_data: Vec<(u32, &str)> = batch
+                .iter()
                 .map(|(rank, stack)| (*rank, stack.as_str()))
                 .collect();
             trie.insert_batch(batch_data);
         }
-        
+
         let incremental_merge_time = start.elapsed();
-        println!("Incrementally merged 1000 stacks in {:?}", incremental_merge_time);
+        println!(
+            "Incrementally merged 1000 stacks in {:?}",
+            incremental_merge_time
+        );
         assert!(incremental_merge_time.as_millis() < 5000); // 应该在5秒内完成
     }
 
@@ -100,51 +104,51 @@ mod performance_validation_tests {
         let start = Instant::now();
         let data = load_10k_data();
         let generation_time = start.elapsed();
-        
+
         println!("Loaded 10000 flamegraphs in {:?}", generation_time);
         assert_eq!(data.len(), 10000);
-        
+
         // 验证生成数据的合理性
-        let avg_stack_size: usize = data.values()
-            .map(|s| s.len())
-            .sum::<usize>() / data.len();
+        let avg_stack_size: usize = data.values().map(|s| s.len()).sum::<usize>() / data.len();
         println!("Average stack size: {} bytes", avg_stack_size);
         assert!(avg_stack_size > 0);
         assert!(avg_stack_size > 80000); // 每个堆栈应该大于 80KB
-        
+
         // 测试一次性合并 10000 个堆栈
         let stacks: Vec<&str> = data.values().map(|s| s.as_str()).collect();
         let start = Instant::now();
         let _trie_all = merge_stacks(stacks);
         let merge_time = start.elapsed();
-        
+
         println!("Merged 10000 stacks all-at-once in {:?}", merge_time);
         assert!(merge_time.as_secs() < 600);
-        
+
         // 测试增量合并 10000 个堆栈（复用已加载的 data，不重复 load）
         let items: Vec<(u32, String)> = load_10k_data().into_iter().collect();
-        let batches: Vec<Vec<(u32, String)>> = items.chunks(500)
-            .map(|c| c.to_vec())
-            .collect();
-        
+        let batches: Vec<Vec<(u32, String)>> = items.chunks(500).map(|c| c.to_vec()).collect();
+
         let start = Instant::now();
         let mut trie_incremental = StackTrie::with_total_ranks(10000);
-        
+
         for batch in batches {
-            let batch_data: Vec<(u32, &str)> = batch.iter()
+            let batch_data: Vec<(u32, &str)> = batch
+                .iter()
                 .map(|(rank, stack)| (*rank, stack.as_str()))
                 .collect();
             trie_incremental.insert_batch(batch_data);
         }
-        
+
         let incremental_merge_time = start.elapsed();
-        println!("!!! ===time=== Incrementally merged 10000 stacks in {:?}", incremental_merge_time);
-        
+        println!(
+            "!!! ===time=== Incrementally merged 10000 stacks in {:?}",
+            incremental_merge_time
+        );
+
         // 验证增量合并结果
         let results = trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
         println!("Incremental merge produced {} unique paths", results.len());
         assert!(results.len() > 0);
-        
+
         // 增量合并时间也应该在合理范围内
         assert!(incremental_merge_time.as_secs() < 600);
     }
@@ -155,66 +159,76 @@ mod performance_validation_tests {
     #[ignore]
     fn test_memory_efficiency_10k() {
         use memory_stats::memory_stats;
-        
+
         // 获取初始内存
         let start_memory = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
-        
+
         // 加载 10000 个 stack（fixture 或实时生成）
         let data = load_10k_data();
-        
+
         // 估算数据大小
-        let total_string_size: usize = data.values()
-            .map(|s| s.len())
-            .sum();
+        let total_string_size: usize = data.values().map(|s| s.len()).sum();
         let estimated_data_mb = total_string_size as f64 / 1024.0 / 1024.0;
-        
-        println!("Estimated data size for 10000 stacks: {:.2}MB", estimated_data_mb);
-        println!("Average stack: {:.1} bytes", total_string_size as f64 / data.len() as f64);
-        
+
+        println!(
+            "Estimated data size for 10000 stacks: {:.2}MB",
+            estimated_data_mb
+        );
+        println!(
+            "Average stack: {:.1} bytes",
+            total_string_size as f64 / data.len() as f64
+        );
+
         // 执行合并操作
         let stacks: Vec<&str> = data.values().map(|s| s.as_str()).collect();
         let trie = merge_stacks(stacks);
-        
+
         // 获取结束内存
         let end_memory = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
-        
+
         if let (Some(start), Some(end)) = (start_memory, end_memory) {
             let memory_used_mb = end - start;
             println!("Memory used for 10k merge: {:.2}MB", memory_used_mb);
 
             // 内存使用应该在合理范围内（比如不超过 40GB）
             assert!(memory_used_mb < 40960.0);
-            
+
             // 计算每个 stack 的平均内存消耗
             let mem_per_rank = memory_used_mb / data.len() as f64;
             println!("Memory per rank: {:.4}MB", mem_per_rank);
         }
         // 测试增量合并内存使用（复用 fixture 数据）
         let items: Vec<(u32, String)> = load_10k_data().into_iter().collect();
-        let batches: Vec<Vec<(u32, String)>> = items.chunks(500)
-            .map(|c| c.to_vec())
-            .collect();
-        
+        let batches: Vec<Vec<(u32, String)>> = items.chunks(500).map(|c| c.to_vec()).collect();
+
         let start_mem = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
         let mut trie_incremental = StackTrie::with_total_ranks(10000);
-        
+
         for batch in batches {
-            let batch_data: Vec<(u32, &str)> = batch.iter()
+            let batch_data: Vec<(u32, &str)> = batch
+                .iter()
                 .map(|(rank, stack)| (*rank, stack.as_str()))
                 .collect();
             trie_incremental.insert_batch(batch_data);
         }
         let end_mem = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
-        
+
         if let (Some(start), Some(end)) = (start_mem, end_mem) {
             let memory_used_mb = end - start;
-            println!("!!! ===Memory=== used for 10k incremental merge: {:.2}MB", memory_used_mb);
+            println!(
+                "!!! ===Memory=== used for 10k incremental merge: {:.2}MB",
+                memory_used_mb
+            );
             assert!(memory_used_mb < 40960.0);
             let mem_per_rank = memory_used_mb / data.len() as f64;
-            println!("!!! ===Memory=== per rank (incremental): {:.4}MB", mem_per_rank);
+            println!(
+                "!!! ===Memory=== per rank (incremental): {:.4}MB",
+                mem_per_rank
+            );
 
             // 验证增量合并结果
-            let results = trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
+            let results =
+                trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
             println!("Incremental merge produced {} unique paths", results.len());
             assert!(results.len() > 0);
         }
@@ -225,78 +239,110 @@ mod performance_validation_tests {
     #[ignore]
     fn test_parallel_merge_10k_performance() {
         use memory_stats::memory_stats;
-        
+
         let data = load_10k_data();
         let items: Vec<(u32, String)> = data.into_iter().collect();
-        
+
         // 测试串行 merge
         let start_mem_serial = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
         let start_serial = Instant::now();
-        
+
         let stacks_refs: Vec<&str> = items.iter().map(|(_, s)| s.as_str()).collect();
         let _trie_serial = merge_stacks(stacks_refs);
-        
+
         let serial_time = start_serial.elapsed();
         let end_mem_serial = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
-        
+
         if let (Some(start), Some(end)) = (start_mem_serial, end_mem_serial) {
-            println!("!!! ===Serial merge=== time: {:?}, memory: {:.2}MB", serial_time, end - start);
+            println!(
+                "!!! ===Serial merge=== time: {:?}, memory: {:.2}MB",
+                serial_time,
+                end - start
+            );
         }
-        
+
         // 测试并行 merge (4 线程)
         let start_mem_parallel = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
         let start_parallel = Instant::now();
-        
+
         let _trie_parallel_4 = parallel_merge_stacks(items.clone(), Some(4));
-        
+
         let parallel_4_time = start_parallel.elapsed();
         let end_mem_parallel = memory_stats().map(|s| s.physical_mem as f64 / 1024.0 / 1024.0);
-        
+
         if let (Some(start), Some(end)) = (start_mem_parallel, end_mem_parallel) {
-            println!("!!! ===Parallel merge (4 threads)=== time: {:?}, memory: {:.2}MB", parallel_4_time, end - start);
+            println!(
+                "!!! ===Parallel merge (4 threads)=== time: {:?}, memory: {:.2}MB",
+                parallel_4_time,
+                end - start
+            );
         }
-        
+
         // 测试并行 merge (8 线程)
         let start_parallel_8 = Instant::now();
         let _trie_parallel_8 = parallel_merge_stacks(items.clone(), Some(8));
         let parallel_8_time = start_parallel_8.elapsed();
-        println!("!!! ===Parallel merge (8 threads)=== time: {:?}", parallel_8_time);
-        
+        println!(
+            "!!! ===Parallel merge (8 threads)=== time: {:?}",
+            parallel_8_time
+        );
+
         // 测试并行 merge (auto 线程)
         let start_parallel_auto = Instant::now();
         let trie_parallel_auto = parallel_merge_stacks(items.clone(), None);
         let parallel_auto_time = start_parallel_auto.elapsed();
-        println!("!!! ===Parallel merge (auto threads)=== time: {:?}", parallel_auto_time);
-        
+        println!(
+            "!!! ===Parallel merge (auto threads)=== time: {:?}",
+            parallel_auto_time
+        );
+
         // 验证结果正确性
-        let results = trie_parallel_auto.traverse_with_all_stack(&trie_parallel_auto.root, Vec::new());
+        let results =
+            trie_parallel_auto.traverse_with_all_stack(&trie_parallel_auto.root, Vec::new());
         println!("Parallel merge produced {} unique paths", results.len());
         assert!(results.len() > 0);
-        
+
         // 打印对比结果
         println!("\n=== Performance Summary ===");
         println!("Serial:         {:?}", serial_time);
-        println!("Parallel (4):   {:?} ({:.2}x)", parallel_4_time, serial_time.as_secs_f64() / parallel_4_time.as_secs_f64());
-        println!("Parallel (8):   {:?} ({:.2}x)", parallel_8_time, serial_time.as_secs_f64() / parallel_8_time.as_secs_f64());
-        println!("Parallel (auto): {:?} ({:.2}x)", parallel_auto_time, serial_time.as_secs_f64() / parallel_auto_time.as_secs_f64());
+        println!(
+            "Parallel (4):   {:?} ({:.2}x)",
+            parallel_4_time,
+            serial_time.as_secs_f64() / parallel_4_time.as_secs_f64()
+        );
+        println!(
+            "Parallel (8):   {:?} ({:.2}x)",
+            parallel_8_time,
+            serial_time.as_secs_f64() / parallel_8_time.as_secs_f64()
+        );
+        println!(
+            "Parallel (auto): {:?} ({:.2}x)",
+            parallel_auto_time,
+            serial_time.as_secs_f64() / parallel_auto_time.as_secs_f64()
+        );
     }
 
     #[test]
     fn test_memory_usage_estimation() {
         use std::mem;
-        
+
         let data = load_data(1000);
-        
+
         // 估算内存使用
-        let total_string_size: usize = data.values()
-            .map(|s| s.len())
-            .sum();
-        
-        let estimated_memory_mb = (total_string_size + data.len() * mem::size_of::<u32>()) as f64 / 1024.0 / 1024.0;
-        
-        println!("Estimated memory usage for 1000 flamegraphs: {:.2}MB", estimated_memory_mb);
-        println!("Average stack size: {:.1} bytes", total_string_size as f64 / data.len() as f64);
-        
+        let total_string_size: usize = data.values().map(|s| s.len()).sum();
+
+        let estimated_memory_mb =
+            (total_string_size + data.len() * mem::size_of::<u32>()) as f64 / 1024.0 / 1024.0;
+
+        println!(
+            "Estimated memory usage for 1000 flamegraphs: {:.2}MB",
+            estimated_memory_mb
+        );
+        println!(
+            "Average stack size: {:.1} bytes",
+            total_string_size as f64 / data.len() as f64
+        );
+
         // 基本合理性检查
         assert!(estimated_memory_mb > 0.1); // 至少100KB
         assert!(estimated_memory_mb < 1000.0); // 不超过1000MB
@@ -304,7 +350,6 @@ mod performance_validation_tests {
 
     #[tokio::test]
     async fn test_mock_server_basic_functionality() {
-        
         let config = MockServerConfig {
             ports: vec![18933], // 使用测试端口
             ranks_per_port: 10,
@@ -331,34 +376,37 @@ mod performance_validation_tests {
         assert!(response.status().is_success());
         let health_text = response.text().await.unwrap();
         assert_eq!(health_text, "OK");
-        
+
         println!("Mock server health check passed");
     }
 
     #[test]
     fn test_trie_consistency() {
         let data = load_data(100);
-        
+
         // 比较一次性合并和增量合并的结果
         let stacks: Vec<&str> = data.values().map(|s| s.as_str()).collect();
         let trie_all_at_once = merge_stacks(stacks.clone());
-        
+
         let mut trie_incremental = StackTrie::with_total_ranks(100);
         let items: Vec<(u32, String)> = data.into_iter().collect();
         for chunk in items.chunks(20) {
-            let batch_data: Vec<(u32, &str)> = chunk.iter()
+            let batch_data: Vec<(u32, &str)> = chunk
+                .iter()
                 .map(|(rank, stack)| (*rank, stack.as_str()))
                 .collect();
             trie_incremental.insert_batch(batch_data);
         }
-        
+
         // 验证两种方法产生的结果数量相近（由于数据生成的随机性，可能不完全相同）
-        let results_all = trie_all_at_once.traverse_with_all_stack(&trie_all_at_once.root, Vec::new());
-        let results_incremental = trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
-        
+        let results_all =
+            trie_all_at_once.traverse_with_all_stack(&trie_all_at_once.root, Vec::new());
+        let results_incremental =
+            trie_incremental.traverse_with_all_stack(&trie_incremental.root, Vec::new());
+
         println!("All-at-once results: {}", results_all.len());
         println!("Incremental results: {}", results_incremental.len());
-        
+
         // 结果数量应该在合理范围内
         assert!(results_all.len() > 0);
         assert!(results_incremental.len() > 0);
@@ -393,50 +441,59 @@ mod performance_validation_tests {
         let urls: Vec<String> = (0..NUM_PORTS)
             .flat_map(|port_idx| {
                 let port = BASE_PORT + port_idx;
-                (0..RANKS_PER_PORT).map(move |rank| {
-                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
-                })
+                (0..RANKS_PER_PORT)
+                    .map(move |rank| format!("http://127.0.0.1:{}/callstack/{}", port, rank))
             })
             .collect();
 
         println!("Total URLs to fetch: {}", urls.len());
         assert_eq!(urls.len(), 100, "Should have 100 URLs");
 
-        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> =
+            Arc::new(Mutex::new(Vec::new()));
         let collected_data_clone = collected_data.clone();
 
         let start_time = std::time::Instant::now();
-        let result = fetch_urls_batched(
-            urls,
-            200,
-            4,
-            move |batch| {
-                let data = collected_data_clone.clone();
-                async move {
-                    let mut data_guard = data.lock().unwrap();
-                    data_guard.extend(batch);
-                    Ok(())
-                }
+        let result = fetch_urls_batched(urls, 200, 4, move |batch| {
+            let data = collected_data_clone.clone();
+            async move {
+                let mut data_guard = data.lock().unwrap();
+                data_guard.extend(batch);
+                Ok(())
             }
-        ).await;
+        })
+        .await;
         let elapsed = start_time.elapsed();
 
         assert!(result.is_ok(), "Should successfully fetch all URLs");
 
         let collected = collected_data.lock().unwrap();
-        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+        println!(
+            "Successfully fetched and processed {} items in {:?}",
+            collected.len(),
+            elapsed
+        );
 
         assert_eq!(collected.len(), 100, "Should have collected all 100 items");
 
-        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        println!(
+            "!!!! ===url=== Average time per request: {:?}",
+            elapsed / collected.len().try_into().unwrap()
+        );
         assert!(elapsed.as_secs() < 30, "Should complete within 30 seconds");
 
         let has_stacks = collected.iter().any(|(_, v)| {
             v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
         });
-        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+        assert!(
+            has_stacks,
+            "Should have complete FlameGraphResponse data (rank, stack, timestamp)"
+        );
 
-        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+        println!(
+            "Data sample (first item): {:?}",
+            collected.first().map(|(_, v)| v)
+        );
     }
 
     /// cargo test test_fetch_urls_batched_1k_performance --features "bench ssr" --lib -- --ignored --nocapture
@@ -468,50 +525,63 @@ mod performance_validation_tests {
         let urls: Vec<String> = (0..NUM_PORTS)
             .flat_map(|port_idx| {
                 let port = BASE_PORT + port_idx;
-                (0..RANKS_PER_PORT).map(move |rank| {
-                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
-                })
+                (0..RANKS_PER_PORT)
+                    .map(move |rank| format!("http://127.0.0.1:{}/callstack/{}", port, rank))
             })
             .collect();
 
         println!("Total URLs to fetch: {}", urls.len());
         assert_eq!(urls.len(), 1000, "Should have 1000 URLs");
 
-        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> =
+            Arc::new(Mutex::new(Vec::new()));
         let collected_data_clone = collected_data.clone();
 
         let start_time = std::time::Instant::now();
-        let result = fetch_urls_batched(
-            urls,
-            500,
-            4,
-            move |batch| {
-                let data = collected_data_clone.clone();
-                async move {
-                    let mut data_guard = data.lock().unwrap();
-                    data_guard.extend(batch);
-                    Ok(())
-                }
+        let result = fetch_urls_batched(urls, 500, 4, move |batch| {
+            let data = collected_data_clone.clone();
+            async move {
+                let mut data_guard = data.lock().unwrap();
+                data_guard.extend(batch);
+                Ok(())
             }
-        ).await;
+        })
+        .await;
         let elapsed = start_time.elapsed();
 
         assert!(result.is_ok(), "Should successfully fetch all URLs");
 
         let collected = collected_data.lock().unwrap();
-        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+        println!(
+            "Successfully fetched and processed {} items in {:?}",
+            collected.len(),
+            elapsed
+        );
 
-        assert_eq!(collected.len(), 1000, "Should have collected all 1000 items");
+        assert_eq!(
+            collected.len(),
+            1000,
+            "Should have collected all 1000 items"
+        );
 
-        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        println!(
+            "!!!! ===url=== Average time per request: {:?}",
+            elapsed / collected.len().try_into().unwrap()
+        );
         assert!(elapsed.as_secs() < 60, "Should complete within 60 seconds");
 
         let has_stacks = collected.iter().any(|(_, v)| {
             v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
         });
-        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+        assert!(
+            has_stacks,
+            "Should have complete FlameGraphResponse data (rank, stack, timestamp)"
+        );
 
-        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+        println!(
+            "Data sample (first item): {:?}",
+            collected.first().map(|(_, v)| v)
+        );
     }
 
     /// cargo test test_fetch_urls_batched_2k_performance --features "bench ssr" --lib -- --ignored --nocapture
@@ -543,50 +613,63 @@ mod performance_validation_tests {
         let urls: Vec<String> = (0..NUM_PORTS)
             .flat_map(|port_idx| {
                 let port = BASE_PORT + port_idx;
-                (0..RANKS_PER_PORT).map(move |rank| {
-                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
-                })
+                (0..RANKS_PER_PORT)
+                    .map(move |rank| format!("http://127.0.0.1:{}/callstack/{}", port, rank))
             })
             .collect();
 
         println!("Total URLs to fetch: {}", urls.len());
         assert_eq!(urls.len(), 2000, "Should have 2000 URLs");
 
-        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> =
+            Arc::new(Mutex::new(Vec::new()));
         let collected_data_clone = collected_data.clone();
 
         let start_time = std::time::Instant::now();
-        let result = fetch_urls_batched(
-            urls,
-            1000,
-            4,
-            move |batch| {
-                let data = collected_data_clone.clone();
-                async move {
-                    let mut data_guard = data.lock().unwrap();
-                    data_guard.extend(batch);
-                    Ok(())
-                }
+        let result = fetch_urls_batched(urls, 1000, 4, move |batch| {
+            let data = collected_data_clone.clone();
+            async move {
+                let mut data_guard = data.lock().unwrap();
+                data_guard.extend(batch);
+                Ok(())
             }
-        ).await;
+        })
+        .await;
         let elapsed = start_time.elapsed();
 
         assert!(result.is_ok(), "Should successfully fetch all URLs");
 
         let collected = collected_data.lock().unwrap();
-        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+        println!(
+            "Successfully fetched and processed {} items in {:?}",
+            collected.len(),
+            elapsed
+        );
 
-        assert_eq!(collected.len(), 2000, "Should have collected all 2000 items");
+        assert_eq!(
+            collected.len(),
+            2000,
+            "Should have collected all 2000 items"
+        );
 
-        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        println!(
+            "!!!! ===url=== Average time per request: {:?}",
+            elapsed / collected.len().try_into().unwrap()
+        );
         assert!(elapsed.as_secs() < 60, "Should complete within 60 seconds");
 
         let has_stacks = collected.iter().any(|(_, v)| {
             v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
         });
-        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+        assert!(
+            has_stacks,
+            "Should have complete FlameGraphResponse data (rank, stack, timestamp)"
+        );
 
-        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+        println!(
+            "Data sample (first item): {:?}",
+            collected.first().map(|(_, v)| v)
+        );
     }
 
     /// cargo test test_fetch_urls_batched_5k_performance --features "bench ssr" --lib -- --ignored --nocapture
@@ -618,50 +701,63 @@ mod performance_validation_tests {
         let urls: Vec<String> = (0..NUM_PORTS)
             .flat_map(|port_idx| {
                 let port = BASE_PORT + port_idx;
-                (0..RANKS_PER_PORT).map(move |rank| {
-                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
-                })
+                (0..RANKS_PER_PORT)
+                    .map(move |rank| format!("http://127.0.0.1:{}/callstack/{}", port, rank))
             })
             .collect();
 
         println!("Total URLs to fetch: {}", urls.len());
         assert_eq!(urls.len(), 5000, "Should have 5000 URLs");
 
-        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> =
+            Arc::new(Mutex::new(Vec::new()));
         let collected_data_clone = collected_data.clone();
 
         let start_time = std::time::Instant::now();
-        let result = fetch_urls_batched(
-            urls,
-            2000,
-            4,
-            move |batch| {
-                let data = collected_data_clone.clone();
-                async move {
-                    let mut data_guard = data.lock().unwrap();
-                    data_guard.extend(batch);
-                    Ok(())
-                }
+        let result = fetch_urls_batched(urls, 2000, 4, move |batch| {
+            let data = collected_data_clone.clone();
+            async move {
+                let mut data_guard = data.lock().unwrap();
+                data_guard.extend(batch);
+                Ok(())
             }
-        ).await;
+        })
+        .await;
         let elapsed = start_time.elapsed();
 
         assert!(result.is_ok(), "Should successfully fetch all URLs");
 
         let collected = collected_data.lock().unwrap();
-        println!("Successfully fetched and processed {} items in {:?}", collected.len(), elapsed);
+        println!(
+            "Successfully fetched and processed {} items in {:?}",
+            collected.len(),
+            elapsed
+        );
 
-        assert_eq!(collected.len(), 5000, "Should have collected all 5000 items");
+        assert_eq!(
+            collected.len(),
+            5000,
+            "Should have collected all 5000 items"
+        );
 
-        println!("!!!! ===url=== Average time per request: {:?}", elapsed / collected.len().try_into().unwrap());
+        println!(
+            "!!!! ===url=== Average time per request: {:?}",
+            elapsed / collected.len().try_into().unwrap()
+        );
         assert!(elapsed.as_secs() < 90, "Should complete within 90 seconds");
 
         let has_stacks = collected.iter().any(|(_, v)| {
             v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
         });
-        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+        assert!(
+            has_stacks,
+            "Should have complete FlameGraphResponse data (rank, stack, timestamp)"
+        );
 
-        println!("Data sample (first item): {:?}", collected.first().map(|(_, v)| v));
+        println!(
+            "Data sample (first item): {:?}",
+            collected.first().map(|(_, v)| v)
+        );
     }
 
     /// 耗时约 60s+（10k HTTP 请求），需要显式运行：
@@ -672,7 +768,7 @@ mod performance_validation_tests {
     async fn test_fetch_urls_batched_10k_performance() {
         use app::flamegraph::stack_collector::fetch_urls_batched;
         use std::sync::{Arc, Mutex};
-        
+
         // 启动 Mock 服务器：1250 个端口 × 每端口 8 个 rank = 10000 个 rank
         // 更真实地模拟大规模分布式训练中每个节点暴露少量 rank 的场景
         const BASE_PORT: u16 = 20000;
@@ -681,7 +777,7 @@ mod performance_validation_tests {
 
         let config = MockServerConfig {
             ports: (BASE_PORT..BASE_PORT + NUM_PORTS).collect(), // 10000 个端口
-            ranks_per_port: RANKS_PER_PORT, // 每个端口 1 个，共 10000 个
+            ranks_per_port: RANKS_PER_PORT,                      // 每个端口 1 个，共 10000 个
             max_stack_depth: 50,
             response_delay_ms: 0, // 5ms 延迟
             error_rate: 0.0,
@@ -693,45 +789,49 @@ mod performance_validation_tests {
 
         // 等待服务器启动
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-        
+
         // 构建 10000 个 URL（10000 端口 × 1 rank）
         let urls: Vec<String> = (0..NUM_PORTS)
             .flat_map(|port_idx| {
                 let port = BASE_PORT + port_idx;
-                (0..RANKS_PER_PORT).map(move |rank| {
-                    format!("http://127.0.0.1:{}/callstack/{}", port, rank)
-                })
+                (0..RANKS_PER_PORT)
+                    .map(move |rank| format!("http://127.0.0.1:{}/callstack/{}", port, rank))
             })
             .collect();
-        
+
         println!("Total URLs to fetch: {}", urls.len());
         assert_eq!(urls.len(), 10000, "Should have 10000 URLs");
 
-        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_data: Arc<Mutex<Vec<(usize, serde_json::Value)>>> =
+            Arc::new(Mutex::new(Vec::new()));
         let collected_data_clone = collected_data.clone();
 
         let overall_start = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
         println!("[overall] start timestamp: {} ms", overall_start);
 
         // 4 workers × 500 并发 = 2000 并发请求
-        let result = fetch_urls_batched(
-            urls,
-            500,
-            4,
-            move |batch| {
-                let data = collected_data_clone.clone();
-                async move {
-                    let mut guard = data.lock().unwrap();
-                    guard.extend(batch);
-                    Ok(())
-                }
+        let result = fetch_urls_batched(urls, 500, 4, move |batch| {
+            let data = collected_data_clone.clone();
+            async move {
+                let mut guard = data.lock().unwrap();
+                guard.extend(batch);
+                Ok(())
             }
-        ).await;
+        })
+        .await;
 
         let overall_end = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-        println!("[overall] end timestamp: {} ms  (total duration: {} ms)", overall_end, overall_end - overall_start);
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        println!(
+            "[overall] end timestamp: {} ms  (total duration: {} ms)",
+            overall_end,
+            overall_end - overall_start
+        );
 
         assert!(result.is_ok(), "Should successfully fetch all URLs");
 
@@ -739,7 +839,11 @@ mod performance_validation_tests {
         println!("Collected {} items", collected.len());
 
         // 验证数据完整性
-        assert_eq!(collected.len(), 10000, "Should have collected all 10000 items");
+        assert_eq!(
+            collected.len(),
+            10000,
+            "Should have collected all 10000 items"
+        );
 
         // 性能断言
         let total_ms = overall_end - overall_start;
@@ -749,9 +853,12 @@ mod performance_validation_tests {
         let has_stacks = collected.iter().any(|(_, v)| {
             v.get("stack").is_some() && v.get("rank").is_some() && v.get("timestamp").is_some()
         });
-        assert!(has_stacks, "Should have complete FlameGraphResponse data (rank, stack, timestamp)");
+        assert!(
+            has_stacks,
+            "Should have complete FlameGraphResponse data (rank, stack, timestamp)"
+        );
     }
-}  
+}
 
 #[cfg(test)]
 mod integration_tests {
@@ -780,10 +887,11 @@ mod integration_tests {
         let mut handles = Vec::new();
 
         for &port in &config.ports {
-            for batch in 0..5 { // 每个端口分5批，每批10个
+            for batch in 0..5 {
+                // 每个端口分5批，每批10个
                 let client = client.clone();
                 let start_rank = batch * 10;
-                
+
                 let handle = tokio::spawn(async move {
                     let url = format!(
                         "http://127.0.0.1:{}/callstack?rank={}&batch_size=10",
@@ -795,7 +903,7 @@ mod integration_tests {
                         Err(e) => Err(e),
                     }
                 });
-                
+
                 handles.push(handle);
             }
         }
@@ -826,10 +934,14 @@ mod integration_tests {
             let merge_time = start.elapsed();
 
             let results = merged_trie.traverse_with_all_stack(&merged_trie.root, Vec::new());
-            
-            println!("Merged {} stacks into {} unique paths in {:?}", 
-                     all_stacks.len(), results.len(), merge_time);
-            
+
+            println!(
+                "Merged {} stacks into {} unique paths in {:?}",
+                all_stacks.len(),
+                results.len(),
+                merge_time
+            );
+
             assert!(results.len() > 0);
             assert!(merge_time.as_millis() < 1000);
         }

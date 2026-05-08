@@ -1,5 +1,5 @@
 //! HANG 检测配置模块
-//! 
+//!
 //! 通过环境变量配置 HANG 检测的各项参数
 
 use std::env;
@@ -49,40 +49,40 @@ impl HangConfig {
     /// 从环境变量加载配置
     pub fn from_env() -> Self {
         let mut config = Self::default();
-        
+
         // HANG_CHECK_ENABLED: 是否启用
         if let Ok(val) = env::var("HANG_CHECK_ENABLED") {
             config.enabled = val.to_lowercase() == "true" || val == "1";
         }
-        
+
         // HANG_SAMPLE_INTERVAL: 采样间隔（秒）
         if let Ok(val) = env::var("HANG_SAMPLE_INTERVAL") {
             if let Ok(secs) = val.parse::<u64>() {
                 config.sample_interval_secs = secs.max(10); // 最小 10 秒
             }
         }
-        
+
         // HANG_SAMPLE_COUNT: 连续采样次数
         if let Ok(val) = env::var("HANG_SAMPLE_COUNT") {
             if let Ok(count) = val.parse::<usize>() {
                 config.sample_count = count.max(2).min(10); // 范围 [2, 10]
             }
         }
-        
+
         // HANG_NODE_COUNT: 采样节点数
         if let Ok(val) = env::var("HANG_NODE_COUNT") {
             if let Ok(count) = val.parse::<usize>() {
                 config.node_count = count.max(1).min(16); // 范围 [1, 16]
             }
         }
-        
+
         // HANG_JACCARD_THRESHOLD: Jaccard 阈值
         if let Ok(val) = env::var("HANG_JACCARD_THRESHOLD") {
             if let Ok(threshold) = val.parse::<f64>() {
                 config.jaccard_threshold = threshold.max(0.5).min(1.0); // 范围 [0.5, 1.0]
             }
         }
-        
+
         // HANG_BLOCKING_PATTERNS: 白名单模式（逗号分隔）
         if let Ok(val) = env::var("HANG_BLOCKING_PATTERNS") {
             if !val.is_empty() {
@@ -93,12 +93,12 @@ impl HangConfig {
                     .collect();
             }
         }
-        
+
         // HANG_LOG_ENABLED: 是否启用日志记录
         if let Ok(val) = env::var("HANG_LOG_ENABLED") {
             config.log_enabled = val.to_lowercase() == "true" || val == "1";
         }
-        
+
         // HANG_LOG_DIR: 日志保存目录
         // 优先级：OUTPUT_DIR/hang_logs > HANG_LOG_DIR > 默认 hang_logs
         if let Ok(output_dir) = env::var("OUTPUT_DIR") {
@@ -118,7 +118,7 @@ impl HangConfig {
 
         config
     }
-    
+
     /// 检查堆栈是否匹配已知的长阻塞模式
     pub fn is_known_blocking(&self, frames: &[String]) -> bool {
         frames.iter().any(|frame| {
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = HangConfig::default();
-        
+
         assert!(!config.enabled);
         assert_eq!(config.sample_interval_secs, 30);
         assert_eq!(config.sample_count, 3);
@@ -150,14 +150,14 @@ mod tests {
     #[test]
     fn test_is_known_blocking() {
         let config = HangConfig::default();
-        
+
         let frames_with_checkpoint = vec![
             "main".to_string(),
             "train_loop".to_string(),
-            "save_checkpoint".to_string(),  // 包含 "checkpoint"
+            "save_checkpoint".to_string(), // 包含 "checkpoint"
         ];
         assert!(config.is_known_blocking(&frames_with_checkpoint));
-        
+
         let normal_frames = vec![
             "main".to_string(),
             "forward".to_string(),
@@ -172,13 +172,13 @@ mod tests {
         env::set_var("HANG_CHECK_ENABLED", "true");
         env::set_var("HANG_SAMPLE_INTERVAL", "60");
         env::set_var("HANG_JACCARD_THRESHOLD", "0.98");
-        
+
         let config = HangConfig::from_env();
-        
+
         assert!(config.enabled);
         assert_eq!(config.sample_interval_secs, 60);
         assert_eq!(config.jaccard_threshold, 0.98);
-        
+
         // 清理环境变量
         env::remove_var("HANG_CHECK_ENABLED");
         env::remove_var("HANG_SAMPLE_INTERVAL");
@@ -188,25 +188,25 @@ mod tests {
     #[test]
     fn test_log_dir_priority() {
         use std::env;
-        
+
         // 清理所有相关环境变量
         env::remove_var("OUTPUT_DIR");
         env::remove_var("HANG_LOG_DIR");
-        
+
         // 测试默认值
         let config = HangConfig::from_env();
         assert_eq!(config.log_dir, "hang_logs");
-        
+
         // 测试 HANG_LOG_DIR
         env::set_var("HANG_LOG_DIR", "/custom/hang/path");
         let config = HangConfig::from_env();
         assert_eq!(config.log_dir, "/custom/hang/path");
-        
+
         // 测试 OUTPUT_DIR 优先级更高
         env::set_var("OUTPUT_DIR", "/output/base");
         let config = HangConfig::from_env();
         assert_eq!(config.log_dir, "/output/base/hang_logs");
-        
+
         // 清理环境变量
         env::remove_var("OUTPUT_DIR");
         env::remove_var("HANG_LOG_DIR");

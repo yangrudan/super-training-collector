@@ -1,18 +1,18 @@
 //! HANG 检测状态指示灯组件
-//! 
+//!
 //! 在 Dashboard 首页显示训练任务是否 HANG 的状态
 
-use leptos::prelude::*;
 use crate::hang_types::HangStatus;
+use leptos::prelude::*;
 
 /// HANG 状态指示灯组件
 #[component]
 pub fn HangIndicator() -> impl IntoView {
     use crate::api::get_hang_status;
-    
+
     // 定期刷新状态（每 10 秒）
     let (refresh_trigger, set_refresh_trigger) = signal(0u32);
-    
+
     // 客户端自动刷新
     #[cfg(not(feature = "ssr"))]
     {
@@ -24,16 +24,13 @@ pub fn HangIndicator() -> impl IntoView {
             }
         });
     }
-    
+
     // 避免 SSR 时的未使用警告
     #[cfg(feature = "ssr")]
     let _ = set_refresh_trigger;
-    
-    let hang_status = Resource::new(
-        move || refresh_trigger.get(),
-        |_| get_hang_status(),
-    );
-    
+
+    let hang_status = Resource::new(move || refresh_trigger.get(), |_| get_hang_status());
+
     view! {
         <div class="hang-indicator">
             <Suspense fallback=move || view! {
@@ -50,23 +47,21 @@ pub fn HangIndicator() -> impl IntoView {
                                     HangStatus::Hang => ("🔴", "训练已 HANG", "hang-critical"),
                                     HangStatus::Normal => ("🟢", "运行正常", "hang-normal"),
                                     HangStatus::Disabled => ("⚪", "未启用", "hang-disabled"),
-                                    HangStatus::Error(_) => ("❌", "检测错误", "hang-error"),
-                                    _ => ("⚪", "未启用", "hang-disabled"),
                                 };
-                                
+
                                 let details_text = if !snapshot.details.hang_nodes.is_empty() {
                                     format!("HANG 节点: {}", snapshot.details.hang_nodes.join(", "))
                                 } else if !snapshot.details.node_similarities.is_empty() {
-                                    let avg_sim: f64 = snapshot.details.node_similarities.values().sum::<f64>() 
+                                    let avg_sim: f64 = snapshot.details.node_similarities.values().sum::<f64>()
                                         / snapshot.details.node_similarities.len() as f64;
                                     format!("平均相似度: {:.1}%", avg_sim * 100.0)
                                 } else {
                                     String::new()
                                 };
-                                
+
                                 let details_clone = details_text.clone();
                                 let has_details = !details_text.is_empty();
-                                
+
                                 view! {
                                     <div class=format!("hang-status {}", class) title=details_clone>
                                         <span class="hang-icon">{icon}</span>
@@ -101,10 +96,10 @@ pub fn HangIndicator() -> impl IntoView {
 #[component]
 pub fn HangIndicatorCompact() -> impl IntoView {
     use crate::api::get_hang_status;
-    
+
     // 定期刷新状态（每 10 秒）
     let (refresh_trigger, set_refresh_trigger) = signal(0u32);
-    
+
     // 客户端自动刷新
     #[cfg(not(feature = "ssr"))]
     {
@@ -116,23 +111,19 @@ pub fn HangIndicatorCompact() -> impl IntoView {
             }
         });
     }
-    
+
     // 避免 SSR 时的未使用警告
     #[cfg(feature = "ssr")]
     let _ = set_refresh_trigger;
-    
-    let hang_status = Resource::new(
-        move || refresh_trigger.get(),
-        |_| get_hang_status(),
-    );
-    
+
+    let hang_status = Resource::new(move || refresh_trigger.get(), |_| get_hang_status());
+
     // 颜色说明
     let color_legend = "HANG 检测状态 (每10秒自动刷新):\n\
         🔴 红灯: 训练已 HANG（堆栈连续多次无变化）\n\
         🟢 绿灯: 运行正常\n\
-        ⚪ 白灯: 检测未启用\n\
-        ❌ 错误: 检测过程出错";
-    
+        ⚪ 白灯: 检测未启用";
+
     view! {
         <Suspense fallback=move || view! { <span class="hang-dot" title="加载中...">"⏳"</span> }>
             {move || {
@@ -143,13 +134,11 @@ pub fn HangIndicatorCompact() -> impl IntoView {
                                 HangStatus::Hang => ("🔴", "训练已 HANG"),
                                 HangStatus::Normal => ("🟢", "运行正常"),
                                 HangStatus::Disabled => ("⚪", "检测未启用"),
-                                HangStatus::Error(_) => ("❌", "检测错误"),
-                                _ => ("⚪", "检测未启用"),
                             };
-                            
+
                             // 组合当前状态和颜色说明
                             let tooltip = format!("当前: {}\n\n{}", status_text, color_legend);
-                            
+
                             view! { <span class="hang-dot" title=tooltip>{icon}</span> }.into_any()
                         }
                         Err(_) => {

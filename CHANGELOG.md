@@ -9,6 +9,12 @@
 - 添加版本管理系统
 - 添加 CHANGELOG.md 记录变更历史
 - 添加版本发布和部署脚本
+- **问题 Rank 自动检测**：基于 StackTrie 分叉检测算法，遍历合并堆栈的 Trie 分叉点，识别覆盖率低于阈值的少数派 Rank
+  - HANG 检测确认后自动触发分析
+  - Dashboard「问题 Rank 分析」Tab 支持手动触发
+  - API 端点 `AnalyzeProblematicRanks`（手动触发）和 `GetProblematicRanks`（缓存结果）
+  - 可配置少数派阈值（`RANK_ANALYSIS_MINORITY_THRESHOLD`，默认 30%）
+  - Level 1 首页自动展示分析摘要，Level 2 新增完整分析 Tab
 
 ## [0.1.0] - 2026-03-12
 

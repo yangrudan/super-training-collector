@@ -1087,3 +1087,229 @@ a {
         padding: 16px;
     }
 }
+
+// ===========================
+// 问题 Rank 分析组件样式
+// ===========================
+
+.rank-analysis-panel {
+    margin-top: 8px;
+}
+
+.rank-analysis-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.rank-analysis-btn {
+    background: linear-gradient(135deg, #f59e0b, #ef4444);
+}
+
+.rank-analysis-hint {
+    font-size: 0.8rem;
+    color: $color-text-muted;
+}
+
+.rank-analysis-error {
+    background: rgba($color-critical, 0.1);
+    border: 1px solid rgba($color-critical, 0.3);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 0.875rem;
+    color: $color-critical;
+}
+
+.rank-analysis-loading {
+    color: $color-text-muted;
+    font-size: 0.875rem;
+    padding: 20px;
+    text-align: center;
+}
+
+.rank-analysis-empty {
+    text-align: center;
+    padding: 48px 20px;
+    color: $color-text-muted;
+
+    .empty-icon {
+        font-size: 2.5rem;
+        display: block;
+        margin-bottom: 12px;
+    }
+
+    p {
+        margin-bottom: 8px;
+    }
+
+    .empty-hint {
+        font-size: 0.8rem;
+        opacity: 0.7;
+    }
+}
+
+.rank-analysis-result {
+    background: $color-card;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    overflow: hidden;
+
+    &.result-normal {
+        border-color: rgba($color-healthy, 0.3);
+    }
+
+    &.result-warning {
+        border-color: rgba($color-warning, 0.3);
+    }
+
+    &.result-critical {
+        border-color: rgba($color-critical, 0.3);
+    }
+}
+
+.result-summary {
+    padding: 16px 20px;
+    border-bottom: 1px solid $color-border;
+}
+
+.result-summary-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+
+    .result-icon {
+        font-size: 1.3rem;
+    }
+
+    .result-text {
+        font-size: 1rem;
+        font-weight: 600;
+    }
+}
+
+.result-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+
+    .meta-item {
+        font-size: 0.75rem;
+        color: $color-text-muted;
+    }
+}
+
+.rank-table-container {
+    overflow-x: auto;
+}
+
+.rank-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+
+    th {
+        background: rgba(0, 0, 0, 0.2);
+        padding: 10px 16px;
+        text-align: left;
+        font-weight: 600;
+        color: $color-text-muted;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    td {
+        padding: 10px 16px;
+        border-top: 1px solid rgba($color-border, 0.5);
+    }
+
+    .rank-row:hover {
+        background: rgba(255, 255, 255, 0.03);
+    }
+}
+
+.rank-id-badge {
+    font-weight: 600;
+    font-family: monospace;
+    font-size: 0.85rem;
+}
+
+.anomaly-score {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-weight: 600;
+    font-size: 0.8rem;
+
+    &.score-critical {
+        background: rgba($color-critical, 0.2);
+        color: $color-critical;
+    }
+
+    &.score-warning {
+        background: rgba($color-warning, 0.2);
+        color: $color-warning;
+    }
+
+    &.score-low {
+        background: rgba(#3b82f6, 0.2);
+        color: #3b82f6;
+    }
+}
+
+.divergence-info {
+    font-size: 0.8rem;
+    color: $color-text-muted;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+// Level1 紧凑摘要
+.rank-analysis-summary-section {
+    margin-bottom: 32px;
+}
+
+.rank-summary-card {
+    background: $color-card;
+    border: 1px solid rgba($color-warning, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.rank-summary-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+
+    .rank-summary-icon {
+        font-size: 1.2rem;
+    }
+
+    .rank-summary-text {
+        font-weight: 600;
+        font-size: 0.95rem;
+    }
+}
+
+.rank-summary-detail {
+    font-size: 0.8rem;
+    color: $color-text-muted;
+    margin-bottom: 10px;
+}
+
+.rank-summary-link {
+    display: inline-block;
+    font-size: 0.85rem;
+    color: #3b82f6;
+    text-decoration: none;
+
+    &:hover {
+        text-decoration: underline;
+    }
+}

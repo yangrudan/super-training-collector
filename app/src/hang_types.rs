@@ -1,5 +1,5 @@
 //! HANG 检测共享类型
-//! 
+//!
 //! 这些类型需要在 SSR 和客户端都能使用
 
 use serde::{Deserialize, Serialize};
@@ -8,16 +8,10 @@ use std::collections::HashMap;
 /// HANG 检测状态
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum HangStatus {
-    /// 正在收集样本，数据不足
-    Collecting,
     /// 正常运行
     Normal,
-    /// 可能 HANG（1-2次高相似度）
-    Warning,
     /// 确认 HANG（连续达到阈值）
     Hang,
-    /// 检测过程中出错
-    Error(String),
     /// 检测未启用
     #[default]
     Disabled,

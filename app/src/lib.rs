@@ -15,6 +15,9 @@ pub mod hang_detector;
 pub mod hang_types;
 pub mod mock;
 pub mod models;
+pub mod rank_analysis_types;
+#[cfg(feature = "ssr")]
+pub mod rank_analyzer;
 
 // 测试工具模块 - benches 需要通过 lib 访问
 #[cfg(any(test, feature = "bench"))]

@@ -1,4 +1,4 @@
-use rand::{thread_rng, Rng, seq::SliceRandom};
+use rand::{seq::SliceRandom, thread_rng, Rng};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -74,7 +74,7 @@ impl FlameGraphDataGenerator {
             "mpi_comm_rank",
             "mpi_comm_size",
         ];
-        
+
         let suffixes = vec![
             "_kernel_launch",
             "_sync_operation",
@@ -103,7 +103,7 @@ impl FlameGraphDataGenerator {
         ];
 
         let mut names = Vec::new();
-        
+
         // 生成所有组合 - 产生大量长函数名
         for prefix in &prefixes {
             for suffix in &suffixes {
@@ -156,11 +156,11 @@ impl FlameGraphDataGenerator {
             rng.gen_range(lo..=self.max_depth)
         };
         let mut stack = Vec::with_capacity(depth);
-        
+
         // 添加共同的基础调用栈
         stack.push("main".to_string());
         stack.push("train_epoch_full".to_string());
-        
+
         // 根据 rank 选择不同的路径
         match rank % 4 {
             0 => {
@@ -184,7 +184,7 @@ impl FlameGraphDataGenerator {
         // 生成剩余的调用栈 - 使用更长的函数名
         while stack.len() < depth {
             let func = self.function_names.choose(rng).unwrap();
-            
+
             // 添加重复模拟递归/循环调用
             if rng.gen_bool(0.3) && stack.len() > 10 {
                 let idx = rng.gen_range(2..stack.len());
@@ -193,10 +193,12 @@ impl FlameGraphDataGenerator {
             } else {
                 stack.push(func.clone());
             }
-            
+
             // 深层调用更可能是 CUDA/NCCL 相关
             if stack.len() > 50 && rng.gen_bool(0.6) {
-                let cuda_funcs: Vec<_> = self.function_names.iter()
+                let cuda_funcs: Vec<_> = self
+                    .function_names
+                    .iter()
                     .filter(|f| f.contains("cuda") || f.contains("nccl") || f.contains("kernel"))
                     .collect();
                 if !cuda_funcs.is_empty() {
@@ -215,13 +217,14 @@ impl FlameGraphDataGenerator {
             result.push_str(frame);
         }
         result
-    } 
+    }
 
     /// 生成符合HTTP响应格式的火焰图数据
     pub fn generate_http_response_data(&self, rank_count: u32) -> Vec<String> {
         let flamegraph_data = self.generate_flamegraph_data(rank_count);
-        
-        flamegraph_data.iter()
+
+        flamegraph_data
+            .iter()
             .map(|(rank, stack)| {
                 // 模拟真实API响应格式
                 format!("rank_{}: {}", rank, stack)
@@ -262,25 +265,29 @@ impl FlameGraphDataGenerator {
     }
 
     /// 生成大规模测试数据集，用于压力测试
-    pub fn generate_large_dataset(&self, total_ranks: u32, batch_size: u32) -> Vec<Vec<(u32, String)>> {
+    pub fn generate_large_dataset(
+        &self,
+        total_ranks: u32,
+        batch_size: u32,
+    ) -> Vec<Vec<(u32, String)>> {
         let mut batches = Vec::new();
         let mut current_batch = Vec::new();
-        
+
         let flamegraph_data = self.generate_flamegraph_data(total_ranks);
-        
+
         for (rank, stack) in flamegraph_data {
             current_batch.push((rank, stack));
-            
+
             if current_batch.len() >= batch_size as usize {
                 batches.push(current_batch);
                 current_batch = Vec::new();
             }
         }
-        
+
         if !current_batch.is_empty() {
             batches.push(current_batch);
         }
-        
+
         batches
     }
 }
@@ -300,21 +307,24 @@ mod tests {
         FlameGraphDataGenerator::save_fixture_data(&data, path);
         println!("Saved {} base stacks to {}", data.len(), path);
         let total_size: usize = data.values().map(|s| s.len()).sum();
-        println!("Total fixture size: {:.2} MB", total_size as f64 / 1024.0 / 1024.0);
+        println!(
+            "Total fixture size: {:.2} MB",
+            total_size as f64 / 1024.0 / 1024.0
+        );
     }
 
     #[test]
     fn test_generate_flamegraph_data() {
         let generator = FlameGraphDataGenerator::new(30, 5);
         let data = generator.generate_flamegraph_data(100);
-        
+
         assert_eq!(data.len(), 100);
-        
+
         for (rank, stack) in data.iter() {
             assert!(*rank < 100);
             assert!(!stack.is_empty());
             assert!(stack.contains(";"));
-            
+
             let frames: Vec<&str> = stack.split(';').collect();
             assert!(frames.len() >= 15);
             assert!(frames.len() <= 30);
@@ -325,12 +335,12 @@ mod tests {
     fn test_generate_large_dataset() {
         let generator = FlameGraphDataGenerator::new(25, 3);
         let batches = generator.generate_large_dataset(1000, 100);
-        
+
         assert_eq!(batches.len(), 10);
-        
+
         let total_items: usize = batches.iter().map(|b| b.len()).sum();
         assert_eq!(total_items, 1000);
-        
+
         for batch in batches {
             assert!(batch.len() <= 100);
             assert!(!batch.is_empty());
@@ -341,7 +351,7 @@ mod tests {
     fn test_function_name_diversity() {
         let generator = FlameGraphDataGenerator::new(20, 3);
         let data = generator.generate_flamegraph_data(50);
-        
+
         // 检查生成的函数名有足够的多样性
         let mut all_functions = std::collections::HashSet::new();
         for stack in data.values() {
@@ -349,7 +359,7 @@ mod tests {
                 all_functions.insert(func);
             }
         }
-        
+
         // 应该有足够多的不同函数名
         assert!(all_functions.len() > 20);
     }

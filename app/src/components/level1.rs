@@ -1,6 +1,7 @@
 use crate::api::{get_global_metrics, get_global_step_metrics, get_step_show_enabled};
 use crate::components::common::*;
 use crate::components::hang_indicator::HangIndicatorCompact;
+use crate::components::rank_analysis::RankAnalysisSummary;
 use leptos::prelude::*;
 
 /// Level 1: 全局态势视图
@@ -197,6 +198,15 @@ pub fn Level1View() -> impl IntoView {
                                         step_enabled_resource=step_enabled_resource
                                         step_resource=step_resource
                                     />
+                                    // 问题 Rank 分析摘要（有结果时自动显示）
+                                    <RankAnalysisSummary />
+
+                                    // 快速导航
+                                    <section class="nav-section">
+                                        <a href="/nodes" class="nav-button">
+                                            "查看节点详情 →"
+                                        </a>
+                                    </section>
                                 </div>
                             }
                                 .into_any()
