@@ -1126,9 +1126,32 @@ a {
 
 .rank-analysis-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 16px;
     margin-bottom: 20px;
+}
+
+.rank-threshold-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid $color-border;
+    border-radius: 8px;
+    background: $color-card;
+}
+
+.rank-threshold-btn {
+    min-width: 32px;
+    padding: 6px 10px;
+}
+
+.rank-threshold-value {
+    min-width: 92px;
+    text-align: center;
+    font-weight: 600;
+    color: $color-text-muted;
 }
 
 .rank-analysis-btn {
@@ -1136,8 +1159,15 @@ a {
 }
 
 .rank-analysis-hint {
+    max-width: 320px;
     font-size: 0.8rem;
     color: $color-text-muted;
+}
+
+.rank-analysis-gated-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 .rank-analysis-error {

@@ -440,6 +440,7 @@ pub async fn get_hang_check_enabled() -> Result<bool, ServerFnError> {
 /// 手动触发问题 Rank 分析（实时采集堆栈 + 分析）
 #[server(AnalyzeProblematicRanks)]
 pub async fn analyze_problematic_ranks(
+    minority_threshold: Option<f64>,
 ) -> Result<crate::rank_analysis_types::RankAnalysisResult, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -468,7 +469,14 @@ pub async fn analyze_problematic_ranks(
             }
         }
 
-        let config = RankAnalysisConfig::from_env();
+        let mut config = RankAnalysisConfig::from_env();
+        if let Some(threshold) = minority_threshold {
+            if !threshold.is_finite() {
+                return Err(ServerFnError::new("阈值无效，请输入有效数值"));
+            }
+            config.minority_threshold = threshold.clamp(0.05, 0.5);
+        }
+
         let result = run_rank_analysis_with_trigger(&config, AnalysisTrigger::Manual)
             .await
             .map_err(|e| ServerFnError::new(format!("分析失败: {}", e)))?;

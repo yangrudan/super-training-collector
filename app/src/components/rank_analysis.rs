@@ -12,6 +12,7 @@ pub fn RankAnalysisPanel() -> impl IntoView {
     use crate::hang_types::HangStatus;
 
     let (is_analyzing, set_is_analyzing) = signal(false);
+    let analysis_threshold: RwSignal<f64> = RwSignal::new(0.30);
     let analysis_result: RwSignal<Option<RankAnalysisResult>> = RwSignal::new(None);
     let analysis_error: RwSignal<Option<String>> = RwSignal::new(None);
     let hang_status_resource = Resource::new(|| (), |_| get_hang_status());
@@ -30,10 +31,11 @@ pub fn RankAnalysisPanel() -> impl IntoView {
 
     // 手动触发分析
     let on_analyze = move |_| {
+        let threshold = analysis_threshold.get();
         set_is_analyzing.set(true);
         analysis_error.set(None);
         leptos::task::spawn_local(async move {
-            match analyze_problematic_ranks().await {
+            match analyze_problematic_ranks(Some(threshold)).await {
                 Ok(result) => {
                     analysis_result.set(Some(result));
                 }
@@ -55,6 +57,39 @@ pub fn RankAnalysisPanel() -> impl IntoView {
                         Ok(snapshot) if snapshot.status == HangStatus::Hang => view! {
                             <div class="rank-analysis-gated-content">
                                 <div class="rank-analysis-toolbar">
+                                    <div class="rank-threshold-control">
+                                        <button
+                                            class="collect-btn rank-threshold-btn"
+                                            on:click=move |_| {
+                                                analysis_threshold.update(|value| {
+                                                    *value = (*value - 0.05).clamp(0.05, 0.5);
+                                                });
+                                            }
+                                            disabled=move || {
+                                                is_analyzing.get() || analysis_threshold.get() <= 0.05
+                                            }
+                                            title="降低阈值，显示更多异常原因"
+                                        >
+                                            "−"
+                                        </button>
+                                        <span class="rank-threshold-value">
+                                            {move || format!("阈值: {:.0}%", analysis_threshold.get() * 100.0)}
+                                        </span>
+                                        <button
+                                            class="collect-btn rank-threshold-btn"
+                                            on:click=move |_| {
+                                                analysis_threshold.update(|value| {
+                                                    *value = (*value + 0.05).clamp(0.05, 0.5);
+                                                });
+                                            }
+                                            disabled=move || {
+                                                is_analyzing.get() || analysis_threshold.get() >= 0.5
+                                            }
+                                            title="提高阈值，只显示更明显的异常原因"
+                                        >
+                                            "+"
+                                        </button>
+                                    </div>
                                     <button
                                         class="collect-btn rank-analysis-btn"
                                         on:click=on_analyze
@@ -67,7 +102,7 @@ pub fn RankAnalysisPanel() -> impl IntoView {
                                         }}
                                     </button>
                                     <span class="rank-analysis-hint">
-                                        "已检测到 HANG，可分析分叉异常"
+                                        "阈值越低，显示越多；当前仅在 HANG 状态下可分析"
                                     </span>
                                 </div>
 
