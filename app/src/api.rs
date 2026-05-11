@@ -440,13 +440,43 @@ pub async fn get_hang_check_enabled() -> Result<bool, ServerFnError> {
 /// 手动触发问题 Rank 分析（实时采集堆栈 + 分析）
 #[server(AnalyzeProblematicRanks)]
 pub async fn analyze_problematic_ranks(
+    minority_threshold: Option<f64>,
 ) -> Result<crate::rank_analysis_types::RankAnalysisResult, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         use crate::hang_detector::runner::run_rank_analysis_with_trigger;
+        use crate::hang_detector::state::get_hang_state;
         use crate::rank_analyzer::{set_last_analysis, AnalysisTrigger, RankAnalysisConfig};
+        use crate::hang_types::HangStatus;
 
-        let config = RankAnalysisConfig::from_env();
+        let state = get_hang_state();
+        let snapshot = state
+            .read()
+            .map_err(|e| ServerFnError::new(format!("获取 HANG 状态失败: {}", e)))?
+            .snapshot();
+
+        match snapshot.status {
+            HangStatus::Hang => {}
+            HangStatus::Normal => {
+                return Err(ServerFnError::new(
+                    "当前未检测到 HANG，跳过问题 Rank 分析",
+                ));
+            }
+            HangStatus::Disabled => {
+                return Err(ServerFnError::new(
+                    "HANG 检测未启用，无法进行问题 Rank 分析",
+                ));
+            }
+        }
+
+        let mut config = RankAnalysisConfig::from_env();
+        if let Some(threshold) = minority_threshold {
+            if !threshold.is_finite() {
+                return Err(ServerFnError::new("阈值无效，请输入有效数值"));
+            }
+            config.minority_threshold = threshold.clamp(0.05, 0.5);
+        }
+
         let result = run_rank_analysis_with_trigger(&config, AnalysisTrigger::Manual)
             .await
             .map_err(|e| ServerFnError::new(format!("分析失败: {}", e)))?;

@@ -8,21 +8,34 @@ use leptos::prelude::*;
 /// 问题 Rank 分析面板（完整版，用于 Level2 Tab）
 #[component]
 pub fn RankAnalysisPanel() -> impl IntoView {
-    use crate::api::{analyze_problematic_ranks, get_problematic_ranks};
+    use crate::api::{analyze_problematic_ranks, get_hang_status, get_problematic_ranks};
+    use crate::hang_types::HangStatus;
 
     let (is_analyzing, set_is_analyzing) = signal(false);
+    let analysis_threshold: RwSignal<f64> = RwSignal::new(0.30);
     let analysis_result: RwSignal<Option<RankAnalysisResult>> = RwSignal::new(None);
     let analysis_error: RwSignal<Option<String>> = RwSignal::new(None);
-
-    // 页面加载时获取缓存的分析结果
-    let cached_resource = Resource::new(|| (), |_| get_problematic_ranks());
+    let hang_status_resource = Resource::new(|| (), |_| get_hang_status());
+    let cached_resource = Resource::new(
+        move || match hang_status_resource.get() {
+            Some(Ok(snapshot)) if snapshot.status == HangStatus::Hang => Some(()),
+            _ => None,
+        },
+        |key| async move {
+            match key {
+                Some(_) => get_problematic_ranks().await,
+                None => Ok(None),
+            }
+        },
+    );
 
     // 手动触发分析
     let on_analyze = move |_| {
+        let threshold = analysis_threshold.get();
         set_is_analyzing.set(true);
         analysis_error.set(None);
         leptos::task::spawn_local(async move {
-            match analyze_problematic_ranks().await {
+            match analyze_problematic_ranks(Some(threshold)).await {
                 Ok(result) => {
                     analysis_result.set(Some(result));
                 }
@@ -36,69 +49,138 @@ pub fn RankAnalysisPanel() -> impl IntoView {
 
     view! {
         <div class="rank-analysis-panel">
-            // 工具栏
-            <div class="rank-analysis-toolbar">
-                <button
-                    class="collect-btn rank-analysis-btn"
-                    on:click=on_analyze
-                    disabled=move || is_analyzing.get()
-                >
-                    {move || if is_analyzing.get() { "🔍 分析中..." } else { "🔍 分析问题 Rank" }}
-                </button>
-                <span class="rank-analysis-hint">
-                    "实时采集所有节点堆栈并检测分叉异常"
-                </span>
-            </div>
+            <Suspense fallback=move || view! {
+                <div class="rank-analysis-loading">"检查 HANG 状态中..."</div>
+            }>
+                {move || {
+                    hang_status_resource.get().map(|result| match result {
+                        Ok(snapshot) if snapshot.status == HangStatus::Hang => view! {
+                            <div class="rank-analysis-gated-content">
+                                <div class="rank-analysis-toolbar">
+                                    <div class="rank-threshold-control">
+                                        <button
+                                            class="collect-btn rank-threshold-btn"
+                                            on:click=move |_| {
+                                                analysis_threshold.update(|value| {
+                                                    *value = (*value - 0.05).clamp(0.05, 0.5);
+                                                });
+                                            }
+                                            disabled=move || {
+                                                is_analyzing.get() || analysis_threshold.get() <= 0.05
+                                            }
+                                            title="降低阈值，显示更多异常原因"
+                                        >
+                                            "−"
+                                        </button>
+                                        <span class="rank-threshold-value">
+                                            {move || format!("阈值: {:.0}%", analysis_threshold.get() * 100.0)}
+                                        </span>
+                                        <button
+                                            class="collect-btn rank-threshold-btn"
+                                            on:click=move |_| {
+                                                analysis_threshold.update(|value| {
+                                                    *value = (*value + 0.05).clamp(0.05, 0.5);
+                                                });
+                                            }
+                                            disabled=move || {
+                                                is_analyzing.get() || analysis_threshold.get() >= 0.5
+                                            }
+                                            title="提高阈值，只显示更明显的异常原因"
+                                        >
+                                            "+"
+                                        </button>
+                                    </div>
+                                    <button
+                                        class="collect-btn rank-analysis-btn"
+                                        on:click=on_analyze
+                                        disabled=move || is_analyzing.get()
+                                    >
+                                        {move || if is_analyzing.get() {
+                                            "🔍 分析中..."
+                                        } else {
+                                            "🔍 分析问题 Rank"
+                                        }}
+                                    </button>
+                                    <span class="rank-analysis-hint">
+                                        "阈值越低，显示越多；当前仅在 HANG 状态下可分析"
+                                    </span>
+                                </div>
 
-            // 错误提示
-            <Show when=move || analysis_error.get().is_some()>
-                <div class="rank-analysis-error">
-                    <span>"❌ "</span>
-                    {move || analysis_error.get().unwrap_or_default()}
-                </div>
-            </Show>
+                                <Show when=move || analysis_error.get().is_some()>
+                                    <div class="rank-analysis-error">
+                                        <span>"❌ "</span>
+                                        {move || analysis_error.get().unwrap_or_default()}
+                                    </div>
+                                </Show>
 
-            // 分析结果（优先显示手动触发的新结果，其次显示缓存结果）
-            {move || {
-                // 优先用最新手动触发的结果
-                if let Some(result) = analysis_result.get() {
-                    return Some(view! { <RankAnalysisResultView result=result /> }.into_any());
-                }
-                None
-            }}
+                                {move || {
+                                    if let Some(result) = analysis_result.get() {
+                                        return Some(
+                                            view! { <RankAnalysisResultView result=result /> }.into_any(),
+                                        );
+                                    }
+                                    None
+                                }}
 
-            // 缓存结果（仅在没有新结果时显示）
-            <Show when=move || analysis_result.get().is_none()>
-                <Suspense fallback=move || view! {
-                    <div class="rank-analysis-loading">"加载缓存结果..."</div>
-                }>
-                    {move || {
-                        cached_resource.get().map(|result| {
-                            match result {
-                                Ok(Some(cached)) => {
-                                    view! { <RankAnalysisResultView result=cached /> }.into_any()
-                                }
-                                Ok(None) => {
-                                    view! {
-                                        <div class="rank-analysis-empty">
-                                            <span class="empty-icon">"📊"</span>
-                                            <p>"暂无分析结果"</p>
-                                            <p class="empty-hint">"点击上方按钮手动触发分析，或等待 HANG 检测自动触发"</p>
-                                        </div>
-                                    }.into_any()
-                                }
-                                Err(_) => {
-                                    view! {
-                                        <div class="rank-analysis-empty">
-                                            <p>"无法获取缓存的分析结果"</p>
-                                        </div>
-                                    }.into_any()
-                                }
+                                <Show when=move || analysis_result.get().is_none()>
+                                    <Suspense fallback=move || view! {
+                                        <div class="rank-analysis-loading">"加载缓存结果..."</div>
+                                    }>
+                                        {move || {
+                                            cached_resource.get().map(|result| {
+                                                match result {
+                                                    Ok(Some(cached)) => {
+                                                        view! { <RankAnalysisResultView result=cached /> }.into_any()
+                                                    }
+                                                    Ok(None) => {
+                                                        view! {
+                                                            <div class="rank-analysis-empty">
+                                                                <span class="empty-icon">"📊"</span>
+                                                                <p>"暂无分析结果"</p>
+                                                                <p class="empty-hint">"点击上方按钮手动触发分析，或等待 HANG 检测自动触发"</p>
+                                                            </div>
+                                                        }.into_any()
+                                                    }
+                                                    Err(_) => {
+                                                        view! {
+                                                            <div class="rank-analysis-empty">
+                                                                <p>"无法获取缓存的分析结果"</p>
+                                                            </div>
+                                                        }.into_any()
+                                                    }
+                                                }
+                                            })
+                                        }}
+                                    </Suspense>
+                                </Show>
+                            </div>
+                        }
+                        .into_any(),
+                        Ok(snapshot) => {
+                            let hint = match snapshot.status {
+                                HangStatus::Normal => "当前未检测到 HANG，暂不执行问题 Rank 分析",
+                                HangStatus::Disabled => "HANG 检测未启用，暂不执行问题 Rank 分析",
+                                HangStatus::Hang => unreachable!(),
+                            };
+
+                            view! {
+                                <div class="rank-analysis-empty">
+                                    <span class="empty-icon">"🟢"</span>
+                                    <p>{hint}</p>
+                                    <p class="empty-hint">"问题 Rank 分析只在检测到 HANG 后开启"</p>
+                                </div>
                             }
-                        })
-                    }}
-                </Suspense>
-            </Show>
+                            .into_any()
+                        }
+                        Err(_) => view! {
+                            <div class="rank-analysis-empty">
+                                <p>"无法获取 HANG 状态"</p>
+                            </div>
+                        }
+                        .into_any(),
+                    })
+                }}
+            </Suspense>
         </div>
     }
 }

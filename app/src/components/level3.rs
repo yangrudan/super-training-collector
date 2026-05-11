@@ -18,7 +18,6 @@ pub fn Level3View() -> impl IntoView {
         |(ip, _)| get_node_ranks(ip),
     );
 
-    // Step 功能开关
     let step_enabled_resource = Resource::new(|| (), |_| get_step_show_enabled());
 
     let retry_callback = Callback::new(move |_| {
@@ -26,44 +25,58 @@ pub fn Level3View() -> impl IntoView {
     });
 
     view! {
-        <div class="level3-view">
+        <div class="node-detail-page">
             <Breadcrumb items=vec![
                 ("首页".to_string(), "/".to_string()),
-                ("节点列表".to_string(), "/nodes".to_string()),
+                ("节点控制台".to_string(), "/nodes".to_string()),
                 (ip(), format!("/nodes/{}", ip())),
             ] />
 
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || {
-                    let step_enabled = step_enabled_resource.get()
+                    let step_enabled = step_enabled_resource
+                        .get()
                         .and_then(|r| r.ok())
                         .unwrap_or(false);
 
                     ranks_resource.get().map(|result| {
                         match result {
                             Ok(response) => view! {
-                                <div class="level3-content">
-                                    // 节点概览
+                                <div class="page-grid">
                                     <NodeOverview node=response.node.clone() />
-
-                                    // 堆栈分析面板
                                     <StackAnalysisPanel node_ip=response.node.node_ip.clone() />
 
-                                    // Rank 列表
-                                    <section class="ranks-section">
-                                        <h2>"Rank 详情"</h2>
+                                    <section class="panel-surface ranks-section">
+                                        <div class="panel-header-line">
+                                            <div>
+                                                <div class="section-label">"Rank 详情"</div>
+                                                <h2 class="section-title">"节点内 Rank 运行状态"</h2>
+                                            </div>
+                                            <div class="panel-stat">
+                                                "共 " {response.ranks.len()} " 个 Rank"
+                                            </div>
+                                        </div>
+
                                         <div class="ranks-grid">
                                             {response.ranks.into_iter().map(|rank| {
                                                 let node_ip = response.node.node_ip.clone();
-                                                view! { <RankCardWithStep rank=rank node_ip=node_ip step_enabled=step_enabled /> }
+                                                view! {
+                                                    <RankCardWithStep
+                                                        rank=rank
+                                                        node_ip=node_ip
+                                                        step_enabled=step_enabled
+                                                    />
+                                                }
                                             }).collect_view()}
                                         </div>
                                     </section>
                                 </div>
-                            }.into_any(),
+                            }
+                                .into_any(),
                             Err(e) => view! {
                                 <ErrorDisplay message=e.to_string() on_retry=retry_callback />
-                            }.into_any(),
+                            }
+                                .into_any(),
                         }
                     })
                 }}
@@ -76,21 +89,27 @@ pub fn Level3View() -> impl IntoView {
 #[component]
 fn NodeOverview(node: NodeMetrics) -> impl IntoView {
     view! {
-        <section class="node-overview">
+        <section class="panel-surface node-overview">
             <div class="node-header">
-                <h1 class="node-title">
-                    <StatusBadge status=node.status />
-                    <span class="node-ip">{node.node_ip.clone()}</span>
-                    <span class="node-hostname">"("{node.hostname.clone()}")"</span>
-                </h1>
-                <span class="rack-label">"主机: " {node.hostname.clone()}</span>
+                <div>
+                    <div class="page-eyebrow">"节点概览"</div>
+                    <h1 class="page-title node-title">
+                        <StatusBadge status=node.status />
+                        <span class="mono-cell">{node.node_ip.clone()}</span>
+                        <CopyButton value=node.node_ip.clone() label="复制IP" />
+                    </h1>
+                    <p class="page-description compact">
+                        "主机 " {node.hostname.clone()}
+                    </p>
+                </div>
+                <div class="node-meta">
+                    <span class="meta-chip">"Rank " {node.rank_count}</span>
+                    <span class="meta-chip">"慢占比 " {format!("{:.0}%", node.slow_ratio * 100.0)}</span>
+                </div>
             </div>
 
             <div class="node-kpi-grid">
-                <KpiCard
-                    title="Rank 数量"
-                    value=format!("{}", node.rank_count)
-                />
+                <KpiCard title="Rank 数量" value=node.rank_count.to_string() />
                 <KpiCard
                     title="平均 Step Time"
                     value=format!("{:.1}", node.avg_step_time_ms)
@@ -118,66 +137,6 @@ fn NodeOverview(node: NodeMetrics) -> impl IntoView {
                 />
             </div>
         </section>
-    }
-}
-
-/// Rank 卡片组件
-#[component]
-fn RankCard(rank: RankMetrics) -> impl IntoView {
-    let status_class = rank.status.css_class();
-
-    view! {
-        <div class=format!("rank-card {}", status_class)>
-            <div class="rank-header">
-                <span class="rank-id">"Rank " {rank.rank_id}</span>
-                <span class="local-rank">"(GPU " {rank.local_rank} ")"</span>
-                <StatusBadge status=rank.status />
-            </div>
-
-            <div class="rank-metrics">
-                <div class="metric">
-                    <span class="metric-label">"Step Time"</span>
-                    <span class=step_time_class(rank.step_time_ms)>
-                        {format!("{:.1} ms", rank.step_time_ms)}
-                    </span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">"相对 P50"</span>
-                    <span class=ratio_class(rank.step_time_ratio)>
-                        {format!("{:.2}x", rank.step_time_ratio)}
-                    </span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">"GPU 利用率"</span>
-                    <span class=gpu_util_class(rank.gpu_utilization)>
-                        {format!("{:.1}%", rank.gpu_utilization)}
-                    </span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">"显存"</span>
-                    <span>
-                        {format!("{:.1}/{:.0} GB", rank.gpu_memory_used_gb, rank.gpu_memory_total_gb)}
-                    </span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">"NCCL 延迟"</span>
-                    <span class=nccl_class(rank.nccl_latency_ms)>
-                        {format!("{:.2} ms", rank.nccl_latency_ms)}
-                    </span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">"当前 Step"</span>
-                    <span>{rank.current_step}</span>
-                </div>
-            </div>
-
-            {rank.error_message.map(|msg| view! {
-                <div class="rank-error">
-                    <span class="error-icon">"⚠"</span>
-                    {msg}
-                </div>
-            })}
-        </div>
     }
 }
 
@@ -229,7 +188,6 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
     let local_rank = rank.local_rank;
     let ip_clone = node_ip.clone();
 
-    // Step 指标资源（条件加载）
     let step_resource = Resource::new(
         move || (step_enabled, ip_clone.clone(), local_rank, rank_id),
         move |(enabled, ip, lr, rid)| async move {
@@ -242,11 +200,19 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
     );
 
     view! {
-        <div class=format!("rank-card {}", status_class)>
+        <article class=format!("panel-surface rank-card {}", status_class)>
             <div class="rank-header">
-                <span class="rank-id">"Rank " {rank.rank_id}</span>
-                <span class="local-rank">"(GPU " {rank.local_rank} ")"</span>
-                <StatusBadge status=rank.status />
+                <div class="rank-heading">
+                    <div class="rank-title-row">
+                        <span class="rank-id">"Rank " {rank.rank_id}</span>
+                        <CopyButton value=rank.rank_id.to_string() label="复制ID" />
+                        <StatusBadge status=rank.status />
+                    </div>
+                    <div class="rank-subtitle">
+                        <span class="mono-cell">"GPU " {rank.local_rank}</span>
+                        <span class="mono-cell">{rank.node_ip.clone()}</span>
+                    </div>
+                </div>
             </div>
 
             <div class="rank-metrics">
@@ -270,9 +236,7 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
                 </div>
                 <div class="metric">
                     <span class="metric-label">"显存"</span>
-                    <span>
-                        {format!("{:.1}/{:.0} GB", rank.gpu_memory_used_gb, rank.gpu_memory_total_gb)}
-                    </span>
+                    <span>{format!("{:.1}/{:.0} GB", rank.gpu_memory_used_gb, rank.gpu_memory_total_gb)}</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">"NCCL 延迟"</span>
@@ -282,11 +246,10 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
                 </div>
                 <div class="metric">
                     <span class="metric-label">"当前 Step"</span>
-                    <span>{rank.current_step}</span>
+                    <span class="mono-cell">{rank.current_step}</span>
                 </div>
             </div>
 
-            // Step 详细信息（条件显示）
             <Suspense fallback=|| ()>
                 {move || {
                     step_resource.get().flatten().map(|step_metrics| {
@@ -296,7 +259,7 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
                                 <div class="step-detail-grid">
                                     <div class="step-detail">
                                         <span class="detail-label">"Step"</span>
-                                        <span class="detail-value">{step_metrics.current_step}</span>
+                                        <span class="detail-value mono-cell">{step_metrics.current_step}</span>
                                     </div>
                                     <div class="step-detail">
                                         <span class="detail-label">"Duration"</span>
@@ -323,10 +286,10 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
 
             {rank.error_message.map(|msg| view! {
                 <div class="rank-error">
-                    <span class="error-icon">"⚠"</span>
+                    <span class="error-icon">"!"</span>
                     {msg}
                 </div>
             })}
-        </div>
+        </article>
     }
 }

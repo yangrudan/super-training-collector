@@ -25,3 +25,6 @@ output/
 log.txt
 
 hang_logs/
+
+# JetBrains IDE
+.idea/
