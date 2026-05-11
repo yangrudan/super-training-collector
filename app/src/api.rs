@@ -444,7 +444,29 @@ pub async fn analyze_problematic_ranks(
     #[cfg(feature = "ssr")]
     {
         use crate::hang_detector::runner::run_rank_analysis_with_trigger;
+        use crate::hang_detector::state::get_hang_state;
         use crate::rank_analyzer::{set_last_analysis, AnalysisTrigger, RankAnalysisConfig};
+        use crate::hang_types::HangStatus;
+
+        let state = get_hang_state();
+        let snapshot = state
+            .read()
+            .map_err(|e| ServerFnError::new(format!("获取 HANG 状态失败: {}", e)))?
+            .snapshot();
+
+        match snapshot.status {
+            HangStatus::Hang => {}
+            HangStatus::Normal => {
+                return Err(ServerFnError::new(
+                    "当前未检测到 HANG，跳过问题 Rank 分析",
+                ));
+            }
+            HangStatus::Disabled => {
+                return Err(ServerFnError::new(
+                    "HANG 检测未启用，无法进行问题 Rank 分析",
+                ));
+            }
+        }
 
         let config = RankAnalysisConfig::from_env();
         let result = run_rank_analysis_with_trigger(&config, AnalysisTrigger::Manual)

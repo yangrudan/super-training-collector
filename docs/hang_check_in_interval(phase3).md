@@ -114,7 +114,7 @@ app/src/hang_detector/
 
 ## 问题 Rank 自动检测（StackTrie 分叉分析）
 
-当 HANG 检测确认后，或用户在 Dashboard 手动触发时，系统会自动分析所有 Rank 的堆栈，找出偏离多数执行路径的「问题 Rank」。
+当 HANG 检测确认后，系统会自动分析所有 Rank 的堆栈，找出偏离多数执行路径的「问题 Rank」。Dashboard 上的手动分析入口会先检查当前是否已经 HANG，未检测到 HANG 时不会继续分析。
 
 ### 算法原理
 
@@ -132,7 +132,7 @@ app/src/hang_detector/
 | 触发方式 | 说明 |
 |---------|------|
 | HANG 自动触发 | HANG 检测确认后，自动采集全局堆栈并分析 |
-| Dashboard 手动触发 | Level 2「问题 Rank 分析」Tab 中点击按钮 |
+| Dashboard 手动触发 | Level 2「问题 Rank 分析」Tab 中点击按钮；仅在当前状态为 HANG 时可执行 |
 
 ### 配置
 
@@ -143,7 +143,7 @@ app/src/hang_detector/
 
 ### API 端点
 
-- `AnalyzeProblematicRanks` - 手动触发实时分析（采集堆栈 + 构建 Trie + 分叉检测）
+- `AnalyzeProblematicRanks` - 手动触发实时分析（会先检查当前是否 HANG；未 HANG 时直接跳过）
 - `GetProblematicRanks` - 获取最近一次分析结果（缓存）
 
 ### 前端组件
