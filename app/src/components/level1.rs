@@ -273,13 +273,6 @@ fn StepMetricsSection(
                                                         .unwrap_or_else(|| "-".to_string())
                                                     unit="ms"
                                                 />
-                                                <KpiCard
-                                                    title="显存分配"
-                                                    value=step_metrics.latest_allocated_gb
-                                                        .map(|a| format!("{:.2}", a))
-                                                        .unwrap_or_else(|| "-".to_string())
-                                                    unit="GB"
-                                                />
                                             </div>
 
                                             {if !step_metrics.records.is_empty() {
@@ -296,8 +289,7 @@ fn StepMetricsSection(
                                                                 <thead>
                                                                     <tr>
                                                                         <th>"Step"</th>
-                                                                        <th>"Module"</th>
-                                                                        <th>"Stage"</th>
+                                                                        <th>"Duration (ms)"</th>
                                                                         <th>"Duration (ms)"</th>
                                                                         <th>"Allocated (GB)"</th>
                                                                     </tr>
@@ -307,16 +299,9 @@ fn StepMetricsSection(
                                                                         view! {
                                                                             <tr>
                                                                                 <td class="mono-cell">{record.step}</td>
-                                                                                <td>{record.module.clone().unwrap_or_else(|| "-".to_string())}</td>
-                                                                                <td>{record.stage.clone().unwrap_or_else(|| "-".to_string())}</td>
                                                                                 <td>
-                                                                                    {record.duration
-                                                                                        .map(|d| format!("{:.2}", d / 1000.0))
-                                                                                        .unwrap_or_else(|| "-".to_string())}
-                                                                                </td>
-                                                                                <td>
-                                                                                    {record.allocated
-                                                                                        .map(|a| format!("{:.2}", a as f64 / 1024.0 / 1024.0 / 1024.0))
+                                                                                    {record.duration_ms
+                                                                                        .map(|d| format!("{:.2}", d))
                                                                                         .unwrap_or_else(|| "-".to_string())}
                                                                                 </td>
                                                                             </tr>

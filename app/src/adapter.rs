@@ -483,7 +483,121 @@ pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetri
         .collect();
     nodes.sort_by(|a, b| a.node_ip.cmp(&b.node_ip));
 
+    // 将 HANG 检测结果叠加到健康状态上
+    apply_hang_state_to_metrics(&mut ranks, &mut nodes);
+
     Ok((ranks, nodes))
+}
+
+#[cfg(feature = "ssr")]
+/// 将 HANG 检测状态叠加到 rank 与节点的健康状态中
+///
+/// 当全局 HANG 状态为 `Hang` 时，依据问题 Rank 分析结果三级标记：
+/// 1. `issue_reason` 非空（采集失败/missing）→ `Critical`「根因 Rank」
+/// 2. `anomaly_score > 0` 但 `issue_reason` 为空（少数派堆栈）→ `Warning`「受影响 Rank」
+/// 3. 未在分析结果中但位于 hang_nodes → `Warning`「受影响 Rank」
+/// 若尚无分析结果，将所有 hang_nodes 上的 rank 标为 `Critical`。
+/// 随后重新计算节点级别的健康计数和整体状态。
+fn apply_hang_state_to_metrics(ranks: &mut Vec<RankMetrics>, nodes: &mut Vec<NodeMetrics>) {
+    use crate::hang_detector::state::get_hang_state;
+    use crate::hang_types::HangStatus;
+    use crate::rank_analyzer::get_last_analysis;
+    use std::collections::HashMap;
+    use std::collections::HashSet;
+
+    let (is_hang, hang_node_ips) = {
+        let state = get_hang_state();
+        let Ok(state) = state.read() else { return };
+        if state.status != HangStatus::Hang {
+            return;
+        }
+        let hang_nodes: HashSet<String> = state.details.hang_nodes.iter().cloned().collect();
+        (true, hang_nodes)
+    };
+
+    if !is_hang {
+        return;
+    }
+
+    // 从最近一次问题 Rank 分析中构建精确分类表：
+    //   rank_id → (is_root_cause, label)
+    // is_root_cause = true  表示采集失败/missing，标为 Critical
+    // is_root_cause = false 表示少数派堆栈（anomaly_score > 0），标为 Warning
+    let analysis_map: HashMap<u32, bool> = get_last_analysis()
+        .map(|a| {
+            a.problematic_ranks
+                .iter()
+                .map(|r| {
+                    let is_root_cause = r.issue_reason.is_some();
+                    (r.rank_id, is_root_cause)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let has_analysis = !analysis_map.is_empty();
+
+    for rank in ranks.iter_mut() {
+        let on_hang_node = hang_node_ips.contains(&rank.node_ip);
+
+        if has_analysis {
+            match analysis_map.get(&rank.rank_id) {
+                Some(true) => {
+                    // 采集失败 / missing → 真正根因
+                    rank.status = HealthStatus::Critical;
+                    rank.error_message = Some("训练 HANG：根因 Rank".to_string());
+                }
+                Some(false) => {
+                    // 少数派堆栈 → 受影响，不是根因
+                    rank.status = HealthStatus::Warning;
+                    rank.error_message = Some("训练 HANG：受影响 Rank".to_string());
+                }
+                None if on_hang_node => {
+                    // 未被分析识别，但位于采样的 hang 节点
+                    rank.status = HealthStatus::Warning;
+                    rank.error_message = Some("训练 HANG：受影响 Rank".to_string());
+                }
+                None => {}
+            }
+        } else if on_hang_node {
+            // 尚无精确分析结果：将 hang_nodes 上的 rank 全部标为 Critical
+            rank.status = HealthStatus::Critical;
+            rank.error_message = Some("训练 HANG：疑似根因节点".to_string());
+        }
+    }
+
+    // 重新计算节点级别的健康计数与整体状态
+    for node in nodes.iter_mut() {
+        let node_ranks: Vec<&RankMetrics> = ranks
+            .iter()
+            .filter(|r| r.node_ip == node.node_ip)
+            .collect();
+
+        if node_ranks.is_empty() {
+            continue;
+        }
+
+        node.healthy_count = node_ranks
+            .iter()
+            .filter(|r| r.status == HealthStatus::Healthy)
+            .count() as u8;
+        node.warning_count = node_ranks
+            .iter()
+            .filter(|r| r.status == HealthStatus::Warning)
+            .count() as u8;
+        node.critical_count = node_ranks
+            .iter()
+            .filter(|r| r.status == HealthStatus::Critical)
+            .count() as u8;
+
+        node.status = if node.critical_count > 0 {
+            HealthStatus::Critical
+        } else if node.warning_count > node.rank_count / 2 {
+            HealthStatus::Warning
+        } else {
+            HealthStatus::Healthy
+        };
+    }
 }
 
 #[cfg(feature = "ssr")]
@@ -684,13 +798,7 @@ pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, BoxError> {
     let latest_duration_ms = response
         .records
         .first()
-        .and_then(|r| r.duration)
-        .map(|d| d / 1000.0); // 微秒转毫秒
-    let latest_allocated_gb = response
-        .records
-        .first()
-        .and_then(|r| r.allocated)
-        .map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
+        .and_then(|r| r.duration_ms);
 
     // debug!(
     //     "[Global Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",
@@ -700,7 +808,7 @@ pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, BoxError> {
     Ok(GlobalStepMetrics {
         current_step,
         latest_duration_ms,
-        latest_allocated_gb,
+        latest_allocated_gb: None,
         records: response.records,
     })
 }
@@ -736,13 +844,7 @@ pub async fn get_rank_step_metrics(
     let latest_duration_ms = response
         .records
         .first()
-        .and_then(|r| r.duration)
-        .map(|d| d / 1000.0);
-    let latest_allocated_gb = response
-        .records
-        .first()
-        .and_then(|r| r.allocated)
-        .map(|a| a as f64 / 1024.0 / 1024.0 / 1024.0);
+        .and_then(|r| r.duration_ms);
 
     // debug!(
     //     "[Rank Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",
@@ -754,7 +856,7 @@ pub async fn get_rank_step_metrics(
         node_ip: ip.to_string(),
         current_step,
         latest_duration_ms,
-        latest_allocated_gb,
+        latest_allocated_gb: None,
         records: response.records,
     })
 }

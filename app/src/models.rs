@@ -360,7 +360,7 @@ impl StepQueryRequest {
             timestamp,
             payload: StepQueryPayload {
                 expr: format!(
-                    "SELECT step, module, stage, duration, allocated FROM python.torch_trace WHERE step >= 0 ORDER BY step DESC LIMIT {}",
+                    "SELECT timestamp, step, duration_ms FROM python.step_duration ORDER BY step DESC LIMIT {}",
                     limit
                 ),
                 opts: StepQueryOpts { limit },
@@ -373,10 +373,8 @@ impl StepQueryRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StepRecord {
     pub step: u64,
-    pub module: Option<String>,
-    pub stage: Option<String>,
-    pub duration: Option<f64>,  // 耗时（微秒或毫秒，取决于API）
-    pub allocated: Option<u64>, // 显存分配（字节）
+    pub timestamp: Option<u64>, // 时间戳（微秒）
+    pub duration_ms: Option<f64>, // 耗时（毫秒）
 }
 
 // ============ DataFrame 原始响应格式 ============
@@ -426,10 +424,8 @@ impl StepQueryRawResponse {
 
         // 找到各列的索引
         let step_idx = df.names.iter().position(|n| n == "step");
-        let module_idx = df.names.iter().position(|n| n == "module");
-        let stage_idx = df.names.iter().position(|n| n == "stage");
-        let duration_idx = df.names.iter().position(|n| n == "duration");
-        let allocated_idx = df.names.iter().position(|n| n == "allocated");
+        let timestamp_idx = df.names.iter().position(|n| n == "timestamp");
+        let duration_ms_idx = df.names.iter().position(|n| n == "duration_ms");
 
         // 获取行数
         let row_count = df
@@ -455,23 +451,15 @@ impl StepQueryRawResponse {
                 })
                 .unwrap_or(0);
 
-            let module = module_idx.and_then(|idx| {
-                if let Some(DataFrameCol::SeqText { SeqText }) = df.cols.get(idx) {
-                    SeqText.get(i).cloned()
+            let timestamp = timestamp_idx.and_then(|idx| {
+                if let Some(DataFrameCol::SeqI64 { SeqI64 }) = df.cols.get(idx) {
+                    SeqI64.get(i).map(|v| *v as u64)
                 } else {
                     None
                 }
             });
 
-            let stage = stage_idx.and_then(|idx| {
-                if let Some(DataFrameCol::SeqText { SeqText }) = df.cols.get(idx) {
-                    SeqText.get(i).cloned()
-                } else {
-                    None
-                }
-            });
-
-            let duration = duration_idx.and_then(|idx| {
+            let duration_ms = duration_ms_idx.and_then(|idx| {
                 if let Some(DataFrameCol::SeqF64 { SeqF64 }) = df.cols.get(idx) {
                     SeqF64.get(i).copied()
                 } else {
@@ -479,20 +467,10 @@ impl StepQueryRawResponse {
                 }
             });
 
-            let allocated = allocated_idx.and_then(|idx| {
-                if let Some(DataFrameCol::SeqF64 { SeqF64 }) = df.cols.get(idx) {
-                    SeqF64.get(i).map(|v| *v as u64)
-                } else {
-                    None
-                }
-            });
-
             records.push(StepRecord {
                 step,
-                module,
-                stage,
-                duration,
-                allocated,
+                timestamp,
+                duration_ms,
             });
         }
 
@@ -692,13 +670,11 @@ mod tests {
                 "timestamp":1773635071837842,
                 "payload":{
                     "DataFrame":{
-                        "names":["step","module","stage","duration","allocated"],
+                        "names":["timestamp","step","duration_ms"],
                         "cols":[
+                            {"SeqI64":[1778572826238367,1778572826239970]},
                             {"SeqI64":[1099716,1099715]},
-                            {"SeqText":["None","None"]},
-                            {"SeqText":["pre forward","post forward"]},
-                            {"SeqF64":[0.0,0.00046796798706054686]},
-                            {"SeqF64":[21.3271,21.1111]}
+                            {"SeqF64":[1.623,1.602]}
                         ],
                         "size":2
                     }
@@ -711,5 +687,7 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].step, 1099716);
         assert_eq!(records[1].step, 1099715);
+        assert!(records[0].duration_ms.is_some());
+        assert!(records[0].timestamp.is_some());
     }
 }

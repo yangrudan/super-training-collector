@@ -296,14 +296,6 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
                                                 .unwrap_or_else(|| "-".to_string())}
                                         </span>
                                     </div>
-                                    <div class="step-detail">
-                                        <span class="detail-label">"Allocated"</span>
-                                        <span class="detail-value">
-                                            {step_metrics.latest_allocated_gb
-                                                .map(|a| format!("{:.2} GB", a))
-                                                .unwrap_or_else(|| "-".to_string())}
-                                        </span>
-                                    </div>
                                 </div>
                             </div>
                         }
