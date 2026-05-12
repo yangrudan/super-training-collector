@@ -2,6 +2,24 @@ use crate::models::HealthStatus;
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
 
+/// 格式化 f64，NaN 时显示 "N/A"
+pub fn fmt_f64(val: f64, precision: usize) -> String {
+    if val.is_nan() || val.is_infinite() {
+        "N/A".to_string()
+    } else {
+        format!("{:.prec$}", val, prec = precision)
+    }
+}
+
+/// 格式化 f32，NaN 时显示 "N/A"
+pub fn fmt_f32(val: f32, precision: usize) -> String {
+    if val.is_nan() || val.is_infinite() {
+        "N/A".to_string()
+    } else {
+        format!("{:.prec$}", val, prec = precision)
+    }
+}
+
 #[component]
 pub fn AppChrome(children: Children) -> impl IntoView {
     let location = use_location();

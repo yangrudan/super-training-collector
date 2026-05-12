@@ -324,16 +324,16 @@ pub fn convert_node_info_to_rank_metrics(node_info: NodeInfo) -> RankMetrics {
         status: convert_status(status),
         last_heartbeat: node_info.timestamp.unwrap_or(0) / 1_000_000, // 微秒转秒
 
-        // 使用默认值的性能指标（后续集成真实API时替换）
-        step_time_ms: 100.0,        // 默认步时间
-        step_time_ratio: 1.0,       // 默认比率
-        gpu_utilization: 90.0,      // 默认GPU利用率
-        gpu_memory_used_gb: 16.0,   // 默认显存占用
-        gpu_memory_total_gb: 32.0,  // 默认显存总量
-        nccl_latency_ms: 5.0,       // 默认NCCL延迟
-        nccl_bandwidth_gbps: 100.0, // 默认NCCL带宽
-        current_step: 0,            // 默认训练步数
-        error_message: None,        // 默认无错误
+        // 真实 API 暂未提供的性能指标，用 NaN 占位，前端显示为 "N/A"
+        step_time_ms: f64::NAN,
+        step_time_ratio: f64::NAN,
+        gpu_utilization: f32::NAN,
+        gpu_memory_used_gb: f32::NAN,
+        gpu_memory_total_gb: f32::NAN,
+        nccl_latency_ms: f64::NAN,
+        nccl_bandwidth_gbps: f32::NAN,
+        current_step: 0,
+        error_message: None,
     }
 }
 
@@ -371,17 +371,52 @@ pub fn aggregate_ranks_to_node_metrics(
         .count() as u8;
 
     let slow_ratio = warning_count as f32 / rank_count as f32;
-    let avg_step_time_ms = ranks.iter().map(|r| r.step_time_ms).sum::<f64>() / rank_count as f64;
 
-    let mut step_times: Vec<f64> = ranks.iter().map(|r| r.step_time_ms).collect();
+    let valid_step_times: Vec<f64> = ranks
+        .iter()
+        .map(|r| r.step_time_ms)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let avg_step_time_ms = if !valid_step_times.is_empty() {
+        valid_step_times.iter().sum::<f64>() / valid_step_times.len() as f64
+    } else {
+        f64::NAN
+    };
+
+    let mut step_times = valid_step_times;
     step_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let p50_step_time_ms = step_times[step_times.len() / 2];
-    let p99_step_time_ms = step_times[(step_times.len() * 99 / 100).min(step_times.len() - 1)];
+    let p50_step_time_ms = if !step_times.is_empty() {
+        step_times[step_times.len() / 2]
+    } else {
+        f64::NAN
+    };
+    let p99_step_time_ms = if !step_times.is_empty() {
+        step_times[(step_times.len() * 99 / 100).min(step_times.len() - 1)]
+    } else {
+        f64::NAN
+    };
 
-    let avg_gpu_utilization =
-        ranks.iter().map(|r| r.gpu_utilization).sum::<f32>() / rank_count as f32;
-    let avg_nccl_latency_ms =
-        ranks.iter().map(|r| r.nccl_latency_ms).sum::<f64>() / rank_count as f64;
+    let valid_gpu: Vec<f32> = ranks
+        .iter()
+        .map(|r| r.gpu_utilization)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let avg_gpu_utilization = if !valid_gpu.is_empty() {
+        valid_gpu.iter().sum::<f32>() / valid_gpu.len() as f32
+    } else {
+        f32::NAN
+    };
+
+    let valid_nccl: Vec<f64> = ranks
+        .iter()
+        .map(|r| r.nccl_latency_ms)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let avg_nccl_latency_ms = if !valid_nccl.is_empty() {
+        valid_nccl.iter().sum::<f64>() / valid_nccl.len() as f64
+    } else {
+        f64::NAN
+    };
 
     let status = if critical_count > 0 {
         HealthStatus::Critical
@@ -486,25 +521,34 @@ pub fn generate_global_metrics_from_real_data(
         .filter(|r| r.status == HealthStatus::Critical)
         .count() as u16;
 
-    let mut all_step_times: Vec<f64> = ranks.iter().map(|r| r.step_time_ms).collect();
+    let mut all_step_times: Vec<f64> = ranks
+        .iter()
+        .map(|r| r.step_time_ms)
+        .filter(|v| !v.is_nan())
+        .collect();
     all_step_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     let global_p50_step_time_ms = if !all_step_times.is_empty() {
         all_step_times[all_step_times.len() / 2]
     } else {
-        100.0
+        f64::NAN
     };
 
     let global_p99_step_time_ms = if !all_step_times.is_empty() {
         all_step_times[(all_step_times.len() * 99 / 100).min(all_step_times.len() - 1)]
     } else {
-        120.0
+        f64::NAN
     };
 
-    let global_avg_gpu_utilization = if total_ranks > 0 {
-        ranks.iter().map(|r| r.gpu_utilization).sum::<f32>() / total_ranks as f32
+    let valid_gpu_utils: Vec<f32> = ranks
+        .iter()
+        .map(|r| r.gpu_utilization)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let global_avg_gpu_utilization = if !valid_gpu_utils.is_empty() {
+        valid_gpu_utils.iter().sum::<f32>() / valid_gpu_utils.len() as f32
     } else {
-        0.0
+        f32::NAN
     };
 
     let slow_node_count = nodes.iter().filter(|n| n.slow_ratio > 0.1).count();
@@ -515,8 +559,8 @@ pub fn generate_global_metrics_from_real_data(
     };
 
     let current_step = ranks.iter().map(|r| r.current_step).max().unwrap_or(0);
-    let steps_per_second = 10.0; // 默认值
-    let estimated_remaining_hours = Some(1.5); // 默认值
+    let steps_per_second = f64::NAN; // 真实 API 暂未提供
+    let estimated_remaining_hours = None; // 真实 API 暂未提供
 
     let last_update = SystemTime::now()
         .duration_since(UNIX_EPOCH)

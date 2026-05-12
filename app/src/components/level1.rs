@@ -3,7 +3,6 @@ use crate::components::common::*;
 use crate::components::hang_indicator::HangIndicatorCompact;
 use crate::components::rank_analysis::RankAnalysisSummary;
 use leptos::prelude::*;
-
 /// Level 1: 全局态势视图
 #[component]
 pub fn Level1View() -> impl IntoView {
@@ -64,12 +63,12 @@ pub fn Level1View() -> impl IntoView {
                                         />
                                         <KpiCard
                                             title="全局 P99 Step"
-                                            value=format!("{:.1}", metrics.global_p99_step_time_ms)
+                                            value=fmt_f64(metrics.global_p99_step_time_ms, 1)
                                             unit="ms"
                                         />
                                         <KpiCard
                                             title="平均 GPU 利用率"
-                                            value=format!("{:.1}", metrics.global_avg_gpu_utilization)
+                                            value=fmt_f32(metrics.global_avg_gpu_utilization, 1)
                                             unit="%"
                                         />
                                     </section>
@@ -81,7 +80,12 @@ pub fn Level1View() -> impl IntoView {
                                                 <h2 class="section-title">"节点与 Rank 状态分布"</h2>
                                             </div>
                                             <div class="panel-stat">
-                                                "慢节点占比 " {format!("{:.0}%", metrics.slow_node_ratio * 100.0)}
+                                                "慢节点占比 "
+                                                {if metrics.slow_node_ratio.is_nan() {
+                                                    "N/A".to_string()
+                                                } else {
+                                                    format!("{:.0}%", metrics.slow_node_ratio * 100.0)
+                                                }}
                                             </div>
                                         </div>
 
@@ -111,22 +115,22 @@ pub fn Level1View() -> impl IntoView {
                                         <div class="kpi-grid">
                                             <KpiCard
                                                 title="P50 Step Time"
-                                                value=format!("{:.1}", metrics.global_p50_step_time_ms)
+                                                value=fmt_f64(metrics.global_p50_step_time_ms, 1)
                                                 unit="ms"
                                             />
                                             <KpiCard
                                                 title="P99 Step Time"
-                                                value=format!("{:.1}", metrics.global_p99_step_time_ms)
+                                                value=fmt_f64(metrics.global_p99_step_time_ms, 1)
                                                 unit="ms"
                                             />
                                             <KpiCard
                                                 title="平均 GPU 利用率"
-                                                value=format!("{:.1}", metrics.global_avg_gpu_utilization)
+                                                value=fmt_f32(metrics.global_avg_gpu_utilization, 1)
                                                 unit="%"
                                             />
                                             <KpiCard
                                                 title="慢节点占比"
-                                                value=format!("{:.0}", metrics.slow_node_ratio * 100.0)
+                                                value=fmt_f32(metrics.slow_node_ratio * 100.0, 0)
                                                 unit="%"
                                             />
                                         </div>
@@ -181,7 +185,7 @@ pub fn Level1View() -> impl IntoView {
                                             </Suspense>
                                             <KpiCard
                                                 title="训练速度"
-                                                value=format!("{:.2}", metrics.steps_per_second)
+                                                value=fmt_f64(metrics.steps_per_second, 2)
                                                 unit="steps/s"
                                             />
                                             <KpiCard

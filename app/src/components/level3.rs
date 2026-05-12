@@ -4,7 +4,6 @@ use crate::components::stack_view::StackAnalysisPanel;
 use crate::models::*;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-
 /// Level 3: Rank 详情视图
 #[component]
 pub fn Level3View() -> impl IntoView {
@@ -104,7 +103,13 @@ fn NodeOverview(node: NodeMetrics) -> impl IntoView {
                 </div>
                 <div class="node-meta">
                     <span class="meta-chip">"Rank " {node.rank_count}</span>
-                    <span class="meta-chip">"慢占比 " {format!("{:.0}%", node.slow_ratio * 100.0)}</span>
+                    <span class="meta-chip">"慢占比 "
+                        {if node.slow_ratio.is_nan() {
+                            "N/A".to_string()
+                        } else {
+                            format!("{:.0}%", node.slow_ratio * 100.0)
+                        }}
+                    </span>
                 </div>
             </div>
 
@@ -112,27 +117,27 @@ fn NodeOverview(node: NodeMetrics) -> impl IntoView {
                 <KpiCard title="Rank 数量" value=node.rank_count.to_string() />
                 <KpiCard
                     title="平均 Step Time"
-                    value=format!("{:.1}", node.avg_step_time_ms)
+                    value=fmt_f64(node.avg_step_time_ms, 1)
                     unit="ms"
                 />
                 <KpiCard
                     title="P99 Step Time"
-                    value=format!("{:.1}", node.p99_step_time_ms)
+                    value=fmt_f64(node.p99_step_time_ms, 1)
                     unit="ms"
                 />
                 <KpiCard
                     title="平均 GPU 利用率"
-                    value=format!("{:.1}", node.avg_gpu_utilization)
+                    value=fmt_f32(node.avg_gpu_utilization, 1)
                     unit="%"
                 />
                 <KpiCard
                     title="慢 Rank 占比"
-                    value=format!("{:.0}", node.slow_ratio * 100.0)
+                    value=fmt_f32(node.slow_ratio * 100.0, 0)
                     unit="%"
                 />
                 <KpiCard
                     title="平均 NCCL 延迟"
-                    value=format!("{:.2}", node.avg_nccl_latency_ms)
+                    value=fmt_f64(node.avg_nccl_latency_ms, 2)
                     unit="ms"
                 />
             </div>
@@ -141,7 +146,9 @@ fn NodeOverview(node: NodeMetrics) -> impl IntoView {
 }
 
 fn step_time_class(ms: f64) -> &'static str {
-    if ms > 300.0 {
+    if ms.is_nan() {
+        ""
+    } else if ms > 300.0 {
         "value-critical"
     } else if ms > 150.0 {
         "value-warning"
@@ -151,7 +158,9 @@ fn step_time_class(ms: f64) -> &'static str {
 }
 
 fn ratio_class(ratio: f64) -> &'static str {
-    if ratio > 3.0 {
+    if ratio.is_nan() {
+        ""
+    } else if ratio > 3.0 {
         "value-critical"
     } else if ratio > 1.5 {
         "value-warning"
@@ -161,7 +170,9 @@ fn ratio_class(ratio: f64) -> &'static str {
 }
 
 fn gpu_util_class(util: f32) -> &'static str {
-    if util < 50.0 {
+    if util.is_nan() {
+        ""
+    } else if util < 50.0 {
         "value-critical"
     } else if util < 80.0 {
         "value-warning"
@@ -171,7 +182,9 @@ fn gpu_util_class(util: f32) -> &'static str {
 }
 
 fn nccl_class(ms: f64) -> &'static str {
-    if ms > 10.0 {
+    if ms.is_nan() {
+        ""
+    } else if ms > 10.0 {
         "value-critical"
     } else if ms > 5.0 {
         "value-warning"
@@ -219,29 +232,43 @@ fn RankCardWithStep(rank: RankMetrics, node_ip: String, step_enabled: bool) -> i
                 <div class="metric">
                     <span class="metric-label">"Step Time"</span>
                     <span class=step_time_class(rank.step_time_ms)>
-                        {format!("{:.1} ms", rank.step_time_ms)}
+                        {format!("{} ms", fmt_f64(rank.step_time_ms, 1))}
                     </span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">"相对 P50"</span>
                     <span class=ratio_class(rank.step_time_ratio)>
-                        {format!("{:.2}x", rank.step_time_ratio)}
+                        {if rank.step_time_ratio.is_nan() {
+                            "N/A".to_string()
+                        } else {
+                            format!("{:.2}x", rank.step_time_ratio)
+                        }}
                     </span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">"GPU 利用率"</span>
                     <span class=gpu_util_class(rank.gpu_utilization)>
-                        {format!("{:.1}%", rank.gpu_utilization)}
+                        {if rank.gpu_utilization.is_nan() {
+                            "N/A".to_string()
+                        } else {
+                            format!("{:.1}%", rank.gpu_utilization)
+                        }}
                     </span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">"显存"</span>
-                    <span>{format!("{:.1}/{:.0} GB", rank.gpu_memory_used_gb, rank.gpu_memory_total_gb)}</span>
+                    <span>{
+                        if rank.gpu_memory_used_gb.is_nan() || rank.gpu_memory_total_gb.is_nan() {
+                            "N/A".to_string()
+                        } else {
+                            format!("{:.1}/{:.0} GB", rank.gpu_memory_used_gb, rank.gpu_memory_total_gb)
+                        }
+                    }</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">"NCCL 延迟"</span>
                     <span class=nccl_class(rank.nccl_latency_ms)>
-                        {format!("{:.2} ms", rank.nccl_latency_ms)}
+                        {format!("{} ms", fmt_f64(rank.nccl_latency_ms, 2))}
                     </span>
                 </div>
                 <div class="metric">

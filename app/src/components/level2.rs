@@ -4,7 +4,6 @@ use crate::components::rank_analysis::RankAnalysisPanel;
 use crate::models::*;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-
 /// Level 2: 节点聚合视图 (带 Tab)
 #[component]
 pub fn Level2View() -> impl IntoView {
@@ -351,14 +350,22 @@ fn NodeRow(node: NodeMetrics) -> impl IntoView {
             <td>
                 <HeatCell value=node.slow_ratio show_value=true />
             </td>
-            <td>{format!("{:.1}", node.p50_step_time_ms)}</td>
+            <td>{fmt_f64(node.p50_step_time_ms, 1)}</td>
             <td class=step_time_class(node.p99_step_time_ms)>
-                {format!("{:.1}", node.p99_step_time_ms)}
+                {fmt_f64(node.p99_step_time_ms, 1)}
             </td>
             <td class=gpu_util_class(node.avg_gpu_utilization)>
-                {format!("{:.1}%", node.avg_gpu_utilization)}
+                {if node.avg_gpu_utilization.is_nan() {
+                    "N/A".to_string()
+                } else {
+                    format!("{:.1}%", node.avg_gpu_utilization)
+                }}
             </td>
-            <td>{format!("{:.2} ms", node.avg_nccl_latency_ms)}</td>
+            <td>{if node.avg_nccl_latency_ms.is_nan() {
+                "N/A ms".to_string()
+            } else {
+                format!("{:.2} ms", node.avg_nccl_latency_ms)
+            }}</td>
             <td>
                 <span class="rank-status">
                     <span class="healthy">{node.healthy_count}</span>
@@ -373,7 +380,9 @@ fn NodeRow(node: NodeMetrics) -> impl IntoView {
 }
 
 fn step_time_class(ms: f64) -> &'static str {
-    if ms > 300.0 {
+    if ms.is_nan() {
+        ""
+    } else if ms > 300.0 {
         "value-critical"
     } else if ms > 150.0 {
         "value-warning"
@@ -383,7 +392,9 @@ fn step_time_class(ms: f64) -> &'static str {
 }
 
 fn gpu_util_class(util: f32) -> &'static str {
-    if util < 50.0 {
+    if util.is_nan() {
+        ""
+    } else if util < 50.0 {
         "value-critical"
     } else if util < 80.0 {
         "value-warning"
