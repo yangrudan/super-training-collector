@@ -1,5 +1,27 @@
 use serde::{Deserialize, Serialize};
 
+/// Serde modules for serializing NaN floats as JSON null and back.
+/// This is needed because serde_json serialises f64::NAN as `null`
+/// but cannot deserialise `null` back to f64 without an explicit helper.
+pub mod nan_f64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
+        if v.is_nan() { s.serialize_none() } else { s.serialize_f64(*v) }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+        Ok(Option::<f64>::deserialize(d)?.unwrap_or(f64::NAN))
+    }
+}
+pub mod nan_f32 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &f32, s: S) -> Result<S::Ok, S::Error> {
+        if v.is_nan() { s.serialize_none() } else { s.serialize_f32(*v) }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
+        Ok(Option::<f32>::deserialize(d)?.unwrap_or(f32::NAN))
+    }
+}
+
 /// 健康状态枚举
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
@@ -36,14 +58,21 @@ pub struct RankMetrics {
     pub hostname: String, // 主机名 (来自 NodeInfo.host)
 
     // 核心指标
+    #[serde(with = "nan_f64")]
     pub step_time_ms: f64,        // 当前 step 耗时 (毫秒)
+    #[serde(with = "nan_f64")]
     pub step_time_ratio: f64,     // 相对全局 P50 的倍数
+    #[serde(with = "nan_f32")]
     pub gpu_utilization: f32,     // GPU 利用率 (0-100%)
+    #[serde(with = "nan_f32")]
     pub gpu_memory_used_gb: f32,  // GPU 显存占用 (GB)
+    #[serde(with = "nan_f32")]
     pub gpu_memory_total_gb: f32, // GPU 显存总量 (GB)
 
     // 通信指标
+    #[serde(with = "nan_f64")]
     pub nccl_latency_ms: f64,     // NCCL 通信延迟 (毫秒)
+    #[serde(with = "nan_f32")]
     pub nccl_bandwidth_gbps: f32, // NCCL 带宽 (Gbps)
 
     // 状态
@@ -67,11 +96,17 @@ pub struct NodeMetrics {
     pub critical_count: u8, // 故障 rank 数量
 
     // 性能聚合
+    #[serde(with = "nan_f32")]
     pub slow_ratio: f32,          // 慢 rank 占比 (0.0-1.0)
+    #[serde(with = "nan_f64")]
     pub avg_step_time_ms: f64,    // 平均 step 耗时
+    #[serde(with = "nan_f64")]
     pub p50_step_time_ms: f64,    // P50 step 耗时
+    #[serde(with = "nan_f64")]
     pub p99_step_time_ms: f64,    // P99 step 耗时
+    #[serde(with = "nan_f32")]
     pub avg_gpu_utilization: f32, // 平均 GPU 利用率
+    #[serde(with = "nan_f64")]
     pub avg_nccl_latency_ms: f64, // 平均 NCCL 延迟
 
     // 状态
@@ -94,13 +129,18 @@ pub struct GlobalMetrics {
     pub critical_ranks: u16,
 
     // 全局性能指标
+    #[serde(with = "nan_f64")]
     pub global_p50_step_time_ms: f64,
+    #[serde(with = "nan_f64")]
     pub global_p99_step_time_ms: f64,
+    #[serde(with = "nan_f32")]
     pub global_avg_gpu_utilization: f32,
+    #[serde(with = "nan_f32")]
     pub slow_node_ratio: f32, // 慢节点占比
 
     // 训练进度
     pub current_step: u64,
+    #[serde(with = "nan_f64")]
     pub steps_per_second: f64,
     pub estimated_remaining_hours: Option<f64>,
 
