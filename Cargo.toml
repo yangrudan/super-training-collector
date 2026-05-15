@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["app", "frontend", "server"]
+members = ["app", "frontend", "server", "ecs-server"]
 
 [workspace.package]
 version = "0.1.2"

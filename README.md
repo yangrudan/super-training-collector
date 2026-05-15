@@ -12,6 +12,7 @@
 - [环境要求](#环境要求)
 - [快速开始](#快速开始)
 - [部署指南](#部署指南)
+- [ECS 汇聚服务器](#ecs-汇聚服务器)
 - [项目结构](#项目结构)
 - [配置说明](#配置说明)
 - [数据模型](#数据模型)
@@ -28,6 +29,7 @@
 - **火焰图分析**：支持调用栈采集与火焰图可视化
 - **HANG 检测**：通过堆栈相似度连续采样自动判断训练是否 HANG
 - **问题 Rank 分析**：基于 StackTrie 分叉检测算法，自动识别偏离多数执行路径的异常 Rank
+- **多集群汇聚**：支持多台 Collector 向统一 ECS 汇聚服务器推送数据，集中可视化
 
 ---
 
@@ -148,6 +150,11 @@ chmod +x run_server.sh
 | `LEPTOS_ENV`       | `DEV`             | 运行环境 (`DEV`/`PROD`)  |
 | `RANK_ANALYSIS_ENABLED` | `true`       | 是否启用问题 Rank 分析   |
 | `RANK_ANALYSIS_MINORITY_THRESHOLD` | `0.3` | 少数派阈值 (0.05-0.5)，低于此覆盖率的分支视为异常 |
+| `PUSH_TARGET_URL`  | _(空，禁用)_      | ECS 推送端点，设置后启用推送（例：`http://ecs-host:4000/push`） |
+| `PUSH_INTERVAL_SECS` | `30`           | 推送间隔（秒），最小 10  |
+| `PUSH_COLLECTOR_ID` | _(空)_          | 本 Collector 在 ECS 中的唯一标识 |
+| `PUSH_COLLECTOR_ADDR` | _(空)_        | ECS 反向代理火焰图时访问本机的地址（如 `http://10.0.0.1:3000`） |
+| `JOB_ID`           | _(空)_            | 训练任务 ID，推送至 ECS 后当 HANG 时自动查询任务详情 |
 
 ### 手动启动
 
@@ -192,6 +199,94 @@ sudo systemctl restart super-training-collector
 
 ---
 
+## ECS 汇聚服务器
+
+`ecs-server/` 是独立的汇聚展示程序，用于接收多台 Collector 推送的数据并集中可视化。
+
+### 架构
+
+```
+Collector A (3000) ─┐
+Collector B (3000) ──► ECS Server (4000) ──► Web 仪表盘
+Collector C (3000) ─┘
+```
+
+每台 Collector 每隔 `PUSH_INTERVAL_SECS` 秒通过 HTTP POST 将指标数据推送到 ECS，ECS 保留每台 Collector 的最新快照并在 Web UI 分别展示。
+
+### 快速启动 ECS 服务器
+
+```bash
+cd ecs-server
+cargo build --release
+ECS_ADDR=0.0.0.0:4000 ./target/release/ecs-server
+```
+
+访问 `http://<ecs-host>:4000` 查看所有 Collector 的汇总仪表盘。
+
+### 配置 Collector 推送
+
+在每台 Collector 上设置以下环境变量（或写入 `config/collector.json`）：
+
+```bash
+export PUSH_TARGET_URL="http://<ecs-host>:4000/push"
+export PUSH_INTERVAL_SECS=30
+export PUSH_COLLECTOR_ID="cluster-A"           # 唯一标识，供 UI 显示
+export PUSH_COLLECTOR_ADDR="http://<本机IP>:3000"  # ECS 反向代理火焰图时访问本机
+```
+
+| 字段 | config/collector.json 键 | 对应环境变量 | 说明 |
+| ---- | ------------------------ | ------------ | ---- |
+| 推送目标 | `push_target_url` | `PUSH_TARGET_URL` | ECS `/push` 端点，空则禁用 |
+| 推送间隔 | `push_interval_secs` | `PUSH_INTERVAL_SECS` | 秒，最小 10 |
+| Collector ID | `push_collector_id` | `PUSH_COLLECTOR_ID` | 空时 ECS 用源 IP 作为 ID |
+| Collector 地址 | `push_collector_addr` | `PUSH_COLLECTOR_ADDR` | 空时 ECS 推算为 `http://<源IP>:3000` |
+| 训练任务 ID | _(无)_ | `JOB_ID` | HANG 时 ECS 用此 ID 查询任务信息 |
+
+### ECS 服务器 API
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| `POST` | `/push` | 接收 Collector 推送数据（JSON Body + 请求头）|
+| `GET` | `/api/collectors` | 返回所有 Collector 摘要列表 |
+| `GET` | `/api/collector/:id` | 返回单个 Collector 详情 |
+| `GET` | `/api/collector/:id/flamegraph/all` | 代理拉取全量火焰图 SVG |
+| `GET` | `/api/collector/:id/flamegraph/:node_ip` | 代理拉取指定节点火焰图 SVG |
+| `GET` | `/` | Web 仪表盘首页（所有 Collector 卡片）|
+| `GET` | `/collector/:id` | 单个 Collector 详情页 |
+
+### ECS 服务器环境变量
+
+| 变量名 | 默认值 | 说明 |
+| ------ | ------ | ---- |
+| `ECS_ADDR` | `0.0.0.0:4000` | 服务监听地址 |
+| `RUST_LOG` | `info` | 日志级别 |
+| `JOB_PLATFORM_API_URL` | _(空)_ | 训练平台 API 地址，配置后 HANG 时自动查询任务信息 |
+| `JOB_PLATFORM_APP_KEY` | _(空)_ | 训练平台 appKey |
+| `JOB_PLATFORM_APP_SECRET` | _(空)_ | 训练平台 appSecret |
+| `JOB_PLATFORM_USER_ID` | _(空)_ | 训练平台 userId |
+
+### 推送 Payload 格式
+
+```json
+{
+  "timestamp": 1715000000,
+  "global": { "total_nodes": 8, "healthy_nodes": 8, "avg_step_time_ms": 1200, ... },
+  "nodes": [ { "ip": "10.0.0.1", "status": "Healthy", ... }, ... ],
+  "hang": { "is_hanging": false, "hang_duration_secs": 0, ... }
+}
+```
+
+请求头：
+
+| 请求头 | 说明 |
+| ------ | ---- |
+| `X-Collector-ID` | Collector 标识，优先于源 IP |
+| `X-Collector-Addr` | Collector REST 地址，用于火焰图代理 |
+
+---
+
+
+
 ## 项目结构
 
 ```
@@ -213,13 +308,23 @@ super-trainning-collector/
 │       ├── adapter.rs      # 数据适配器
 │       ├── api.rs          # API 接口
 │       ├── models.rs       # 数据模型
+│       ├── push_scheduler.rs  # 推送调度器（向 ECS 推送数据）
 │       └── mock.rs         # Mock 数据
 ├── frontend/               # 前端 WASM 入口
 │   └── src/
 │       └── lib.rs
-├── server/                 # 后端服务
+├── server/                 # 后端服务（Collector 监控面板）
 │   └── src/
 │       └── main.rs
+├── ecs-server/             # ECS 汇聚服务器（多 Collector 汇总展示）
+│   ├── Cargo.toml
+│   ├── src/
+│   │   ├── main.rs         # Axum 路由与启动
+│   │   ├── state.rs        # 共享状态（DashMap）
+│   │   └── handlers.rs     # HTTP 处理器
+│   └── templates/
+│       ├── dashboard.html  # 汇总仪表盘页面
+│       └── collector.html  # 单 Collector 详情页面
 ├── config/                 # 配置文件
 │   └── collector.json
 ├── style/                  # 样式文件
@@ -229,7 +334,7 @@ super-trainning-collector/
 ├── end2end/                # E2E 测试
 │   ├── tests/
 │   └── playwright.config.ts
-├── run_server.sh           # 启动脚本
+├── run_server.sh           # Collector 启动脚本
 └── update_collector.sh     # 更新脚本
 ```
 
@@ -253,13 +358,33 @@ super-trainning-collector/
 
 ### 应用配置
 
-`config/collector.json`：
+`config/collector.json` 完整字段：
 
 ```json
 {
-  "callstack_base_port": 9933
+  "callstack_base_port": 9933,
+  "step_query_port_offset": 1,
+  "batch_size": 500,
+  "job_platform_api_url": "",
+  "job_platform_app_key": "",
+  "job_platform_app_secret": "",
+  "job_platform_user_id": "",
+  "push_target_url": "",
+  "push_interval_secs": 30,
+  "push_collector_id": "",
+  "push_collector_addr": ""
 }
 ```
+
+| 字段 | 默认值 | 说明 |
+| ---- | ------ | ---- |
+| `callstack_base_port` | — | Python 侧调用栈 API 基础端口（rank0 = base, rank1 = base+1 …）|
+| `step_query_port_offset` | `1` | Step 查询端口偏移（相对 base port）|
+| `batch_size` | `500` | 批量拉取调用栈的并发数 |
+| `push_target_url` | `""` | ECS 推送端点（空表示禁用）|
+| `push_interval_secs` | `30` | 推送间隔（秒）|
+| `push_collector_id` | `""` | 本 Collector 标识（空时 ECS 用源 IP）|
+| `push_collector_addr` | `""` | 本 Collector 的 REST 访问地址（供 ECS 火焰图代理使用）|
 
 ### 测试连通性
 

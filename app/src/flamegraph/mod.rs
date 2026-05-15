@@ -41,18 +41,23 @@ pub struct CollectorConfig {
     /// Smaller values reduce peak memory usage but may increase processing time.
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
-    /// 训练平台 API 地址，用于 HANG 告警时查询任务/用户信息
+    /// 数据推送目标 URL（HTTP POST JSON），空字符串表示禁用推送
     #[serde(default)]
-    pub job_platform_api_url: String,
-    /// 训练平台 appKey，用于获取 accessToken
+    pub push_target_url: String,
+    /// 数据推送间隔（秒），默认 30 秒
+    #[serde(default = "default_push_interval_secs")]
+    pub push_interval_secs: u64,
+    /// 本 Collector 在 ECS 中的唯一标识（如 "cluster-A"），空时由 ECS 用源 IP 识别
     #[serde(default)]
-    pub job_platform_app_key: String,
-    /// 训练平台 appSecret，用于获取 accessToken
+    pub push_collector_id: String,
+    /// ECS 反向代理火焰图时访问本 Collector 的地址（如 "http://10.0.0.1:3000"）
+    /// 空时 ECS 自动用源 IP + 3000 端口推算
     #[serde(default)]
-    pub job_platform_app_secret: String,
-    /// 训练平台 userId，用于查询任务详情
-    #[serde(default)]
-    pub job_platform_user_id: String,
+    pub push_collector_addr: String,
+}
+
+fn default_push_interval_secs() -> u64 {
+    30
 }
 
 fn default_step_query_port_offset() -> u16 {

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Collector 详情 · ECS 监控</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f172a; --surface: #1e293b; --surface2: #263248;
+      --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
+      --green: #22c55e; --yellow: #eab308; --red: #ef4444; --blue: #3b82f6;
+      --radius: 10px;
+    }
+    body { background: var(--bg); color: var(--text); font-family: "Segoe UI", system-ui, sans-serif; min-height: 100vh; }
+    header { display: flex; align-items: center; gap: 16px; padding: 14px 24px;
+      border-bottom: 1px solid var(--border); background: var(--surface); }
+    .back-btn { background: transparent; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
+    .back-btn:hover { border-color: var(--blue); color: var(--text); }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    .header-meta { font-size: 0.8rem; color: var(--muted); margin-left: auto; }
+    main { padding: 24px; display: flex; flex-direction: column; gap: 24px; }
+    section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+    section h2 { font-size: 0.9rem; font-weight: 600; color: var(--muted); text-transform: uppercase;
+      letter-spacing: .05em; margin-bottom: 16px; }
+    /* Metrics grid */
+    .metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .metric-card { background: var(--surface2); border-radius: 8px; padding: 14px; text-align: center; }
+    .metric-val { font-size: 1.6rem; font-weight: 700; }
+    .metric-label { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+    .green { color: var(--green); } .yellow { color: var(--yellow); } .red { color: var(--red); } .blue { color: var(--blue); }
+    /* HANG */
+    .hang-info { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .hang-status { font-size: 1.1rem; font-weight: 700; }
+    .hang-detail { font-size: 0.85rem; color: var(--muted); }
+    /* Nodes table */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+      color: var(--muted); font-weight: 600; cursor: pointer; white-space: nowrap; }
+    th:hover { color: var(--text); }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot-green { background: var(--green); } .dot-yellow { background: var(--yellow); } .dot-red { background: var(--red); }
+    /* Flamegraph */
+    .flamegraph-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .btn { border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { border-color: var(--blue); }
+    select { background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 7px 10px; font-size: 0.85rem; }
+    #fg-container { margin-top: 16px; }
+    #fg-container iframe { width: 100%; height: 600px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+    .spinner { color: var(--muted); font-size: 0.9rem; padding: 16px 0; }
+    /* refresh */
+    #refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 0.8rem; margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="back-btn" href="/">← 返回总览</a>
+    <h1 id="header-title">加载中...</h1>
+    <span class="header-meta" id="header-meta"></span>
+    <button id="refresh-btn" onclick="load()">🔄 刷新</button>
+  </header>
+  <main>
+    <!-- 全局指标 -->
+    <section>
+      <h2>全局指标</h2>
+      <div class="metrics-grid" id="global-metrics"></div>
+    </section>
+
+    <!-- HANG 状态 -->
+    <section>
+      <h2>HANG 检测状态</h2>
+      <div id="hang-section" class="hang-info">加载中...</div>
+    </section>
+
+    <!-- 节点列表 -->
+    <section>
+      <h2>节点列表</h2>
+      <div class="table-wrap">
+        <table id="nodes-table">
+          <thead>
+            <tr>
+              <th onclick="sortTable('node_ip')">IP</th>
+              <th onclick="sortTable('hostname')">主机名</th>
+              <th onclick="sortTable('rank_count')">Rank 数</th>
+              <th onclick="sortTable('status')">状态</th>
+              <th onclick="sortTable('avg_gpu_utilization')">GPU 利用率</th>
+              <th onclick="sortTable('p99_step_time_ms')">P99 步速(ms)</th>
+              <th onclick="sortTable('slow_ratio')">慢比例</th>
+            </tr>
+          </thead>
+          <tbody id="nodes-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 火焰图 -->
+    <section>
+      <h2>火焰图</h2>
+      <div class="flamegraph-controls">
+        <button class="btn btn-primary" onclick="showFlamegraph('all')">🔥 全集群火焰图</button>
+        <select id="node-select"><option value="">— 选择节点 —</option></select>
+        <button class="btn btn-secondary" onclick="showNodeFlamegraph()">🔥 节点火焰图</button>
+      </div>
+      <div id="fg-container"></div>
+    </section>
+  </main>
+
+  <script>
+    const id = decodeURIComponent(location.pathname.split('/collector/')[1] || '');
+    let nodes = [];
+    let sortKey = 'node_ip';
+    let sortAsc = true;
+
+    function ago(secs) {
+      if (secs < 5) return '刚刚';
+      if (secs < 60) return secs + ' 秒前';
+      return Math.floor(secs / 60) + ' 分钟前';
+    }
+
+    function fmt(v, unit = '', digits = 1) {
+      if (v == null || isNaN(v)) return 'N/A';
+      return Number(v).toFixed(digits) + unit;
+    }
+
+    function statusDot(status) {
+      const map = { Healthy: 'dot-green', Warning: 'dot-yellow', Critical: 'dot-red' };
+      const cls = map[status] || 'dot-yellow';
+      return `<span class="dot ${cls}"></span>${status || '-'}`;
+    }
+
+    function renderGlobal(g) {
+      if (!g) return;
+      const metrics = [
+        { val: g.total_nodes, label: '总节点', cls: '' },
+        { val: g.healthy_nodes, label: '健康节点', cls: 'green' },
+        { val: g.warning_nodes, label: '告警节点', cls: 'yellow' },
+        { val: g.critical_nodes, label: '故障节点', cls: 'red' },
+        { val: g.current_step, label: '当前 Step', cls: 'blue' },
+        { val: fmt(g.global_avg_gpu_utilization, '%'), label: 'GPU 利用率', cls: 'blue' },
+        { val: fmt(g.global_p99_step_time_ms, 'ms', 0), label: 'P99 步速', cls: '' },
+        { val: g.total_ranks, label: '总 Rank 数', cls: '' },
+      ];
+      document.getElementById('global-metrics').innerHTML = metrics.map(m =>
+        `<div class="metric-card">
+           <div class="metric-val ${m.cls}">${m.val ?? '-'}</div>
+           <div class="metric-label">${m.label}</div>
+         </div>`
+      ).join('');
+    }
+
+    function renderHang(hang) {
+      if (!hang) { document.getElementById('hang-section').textContent = '无数据'; return; }
+      const status = hang.status || 'Unknown';
+      const cls = status === 'Hang' ? 'red' : status === 'Normal' ? 'green' : 'yellow';
+      const label = { Disabled: '检测禁用', Normal: '正常', Hang: '⚠ 检测到 HANG', Unknown: '未知' }[status] || status;
+      let detail = '';
+      if (hang.details) {
+        const d = hang.details;
+        if (d.hang_nodes && d.hang_nodes.length > 0)
+          detail += `<span class="hang-detail">涉及节点: ${d.hang_nodes.join(', ')}</span>`;
+        if (d.duration_secs)
+          detail += `<span class="hang-detail">持续: ${d.duration_secs}s</span>`;
+      }
+      document.getElementById('hang-section').innerHTML =
+        `<span class="hang-status ${cls}">${label}</span>${detail}`;
+    }
+
+    function renderNodes(nodeList) {
+      nodes = nodeList || [];
+      populateNodeSelect();
+      redrawTable();
+    }
+
+    function populateNodeSelect() {
+      const sel = document.getElementById('node-select');
+      sel.innerHTML = '<option value="">— 选择节点 —</option>' +
+        nodes.map(n => `<option value="${n.node_ip}">${n.node_ip} (${n.hostname || ''})</option>`).join('');
+    }
+
+    function sortTable(key) {
+      if (sortKey === key) sortAsc = !sortAsc;
+      else { sortKey = key; sortAsc = true; }
+      redrawTable();
+    }
+
+    function redrawTable() {
+      const sorted = [...nodes].sort((a, b) => {
+        const av = a[sortKey], bv = b[sortKey];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv));
+        return sortAsc ? cmp : -cmp;
+      });
+      document.getElementById('nodes-body').innerHTML = sorted.map(n => `
+        <tr>
+          <td>${n.node_ip}</td>
+          <td>${n.hostname || '-'}</td>
+          <td>${n.rank_count}</td>
+          <td>${statusDot(n.status)}</td>
+          <td>${fmt(n.avg_gpu_utilization, '%')}</td>
+          <td>${fmt(n.p99_step_time_ms, '', 0)}</td>
+          <td>${fmt(n.slow_ratio * 100, '%')}</td>
+        </tr>`).join('');
+    }
+
+    function showFlamegraph(target) {
+      const container = document.getElementById('fg-container');
+      container.innerHTML = '<div class="spinner">⏳ 正在生成火焰图，请稍候（可能需要数十秒）...</div>';
+      const url = `/api/collector/${encodeURIComponent(id)}/flamegraph/${target}`;
+      container.innerHTML = `<iframe src="${url}" title="火焰图"></iframe>`;
+    }
+
+    function showNodeFlamegraph() {
+      const ip = document.getElementById('node-select').value;
+      if (!ip) { alert('请先选择节点'); return; }
+      showFlamegraph(ip);
+    }
+
+    async function load() {
+      try {
+        const resp = await fetch(`/api/collector/${encodeURIComponent(id)}`);
+        if (!resp.ok) { document.getElementById('header-title').textContent = '未找到 Collector: ' + id; return; }
+        const data = await resp.json();
+        document.getElementById('header-title').textContent = `集群：${data.id}`;
+        document.getElementById('header-meta').textContent =
+          `来源 ${data.source_ip}  ·  最后推送 ${ago(data.last_seen_ago_secs)}`;
+        const p = data.payload || {};
+        renderGlobal(p.global);
+        renderHang(p.hang);
+        renderNodes(p.nodes);
+      } catch (e) {
+        document.getElementById('header-title').textContent = '加载失败: ' + e.message;
+      }
+    }
+
+    load();
+    setInterval(load, 30000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+[package]
+name = "ecs-server"
+version = "0.1.0"
+edition = "2021"
+description = "ECS 训练集群监控聚合服务 — 接收多个 SuperTrainingCollector 推送并提供 Web UI"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 反向代理火焰图请求时使用
+reqwest = { version = "0.11", features = ["json", "stream"] }
+# 无锁并发 HashMap，按 collector_id 存储最新快照
+dashmap = "6"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }

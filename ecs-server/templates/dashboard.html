@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ECS 训练集群监控中心</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f172a; --surface: #1e293b; --surface2: #263248;
+      --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
+      --green: #22c55e; --yellow: #eab308; --red: #ef4444; --blue: #3b82f6;
+      --radius: 10px;
+    }
+    body { background: var(--bg); color: var(--text); font-family: "Segoe UI", system-ui, sans-serif; min-height: 100vh; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px;
+      border-bottom: 1px solid var(--border); background: var(--surface); }
+    header h1 { font-size: 1.25rem; font-weight: 700; color: var(--blue); }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    #refresh-btn { background: var(--blue); color: #fff; border: none; border-radius: 6px;
+      padding: 6px 14px; cursor: pointer; font-size: 0.85rem; }
+    #refresh-btn:hover { opacity: 0.85; }
+    #status-bar { font-size: 0.8rem; color: var(--muted); }
+    main { padding: 24px; }
+    #empty-state { text-align: center; color: var(--muted); padding: 80px 0; font-size: 1rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 20px; text-decoration: none; color: inherit; display: block; transition: border-color 0.15s, transform 0.15s; }
+    .card:hover { border-color: var(--blue); transform: translateY(-2px); }
+    .card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+    .card-id { font-size: 1rem; font-weight: 700; word-break: break-all; }
+    .card-ip { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+    .badge { display: inline-block; border-radius: 20px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; }
+    .badge-normal { background: rgba(34,197,94,.15); color: var(--green); }
+    .badge-warning { background: rgba(234,179,8,.15); color: var(--yellow); }
+    .badge-critical { background: rgba(239,68,68,.15); color: var(--red); }
+    .badge-unknown { background: rgba(148,163,184,.1); color: var(--muted); }
+    .badge-hang { background: rgba(239,68,68,.2); color: var(--red); }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+    .stat { background: var(--surface2); border-radius: 6px; padding: 8px 10px; text-align: center; }
+    .stat-val { font-size: 1.3rem; font-weight: 700; }
+    .stat-label { font-size: 0.65rem; color: var(--muted); margin-top: 2px; }
+    .stat-val.green { color: var(--green); }
+    .stat-val.yellow { color: var(--yellow); }
+    .stat-val.red { color: var(--red); }
+    .card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px;
+      font-size: 0.75rem; color: var(--muted); }
+    .hang-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚡ ECS 训练集群监控中心</h1>
+    <div class="header-right">
+      <span id="status-bar">加载中...</span>
+      <button id="refresh-btn" onclick="load()">🔄 刷新</button>
+    </div>
+  </header>
+  <main>
+    <div id="empty-state" style="display:none">暂无 Collector 连接，等待数据推送...</div>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <script>
+    function ago(secs) {
+      if (secs < 5) return '刚刚';
+      if (secs < 60) return secs + ' 秒前';
+      if (secs < 3600) return Math.floor(secs / 60) + ' 分钟前';
+      return Math.floor(secs / 3600) + ' 小时前';
+    }
+
+    function hangBadge(status) {
+      if (!status || status === 'Unknown') return '<span class="badge badge-unknown">未知</span>';
+      if (status === 'Disabled') return '<span class="badge badge-unknown">检测禁用</span>';
+      if (status === 'Normal') return '<span class="badge badge-normal">正常</span>';
+      if (status === 'Hang') return '<span class="badge badge-hang">⚠ HANG</span>';
+      return `<span class="badge badge-unknown">${status}</span>`;
+    }
+
+    function overallBadge(c) {
+      if (c.hang_status === 'Hang') return '<span class="badge badge-hang">⚠ HANG</span>';
+      if (c.critical_count > 0) return '<span class="badge badge-critical">故障</span>';
+      const warn = (c.global && c.global.warning_nodes) || 0;
+      if (warn > 0) return '<span class="badge badge-warning">告警</span>';
+      return '<span class="badge badge-normal">正常</span>';
+    }
+
+    function renderCard(c) {
+      const g = c.global || {};
+      const healthy = g.healthy_nodes ?? '-';
+      const warning = g.warning_nodes ?? '-';
+      const critical = g.critical_nodes ?? '-';
+      const step = g.current_step ?? '-';
+      const gpu = g.global_avg_gpu_utilization != null && !isNaN(g.global_avg_gpu_utilization)
+        ? g.global_avg_gpu_utilization.toFixed(1) + '%' : 'N/A';
+
+      return `
+        <a class="card" href="/collector/${encodeURIComponent(c.id)}">
+          <div class="card-header">
+            <div>
+              <div class="card-id">${c.id}</div>
+              <div class="card-ip">${c.source_ip} · ${c.node_count} 个节点</div>
+            </div>
+            ${overallBadge(c)}
+          </div>
+          <div class="stats">
+            <div class="stat"><div class="stat-val green">${healthy}</div><div class="stat-label">健康</div></div>
+            <div class="stat"><div class="stat-val yellow">${warning}</div><div class="stat-label">告警</div></div>
+            <div class="stat"><div class="stat-val red">${critical}</div><div class="stat-label">故障</div></div>
+          </div>
+          <div class="stats">
+            <div class="stat"><div class="stat-val">${step}</div><div class="stat-label">当前 Step</div></div>
+            <div class="stat"><div class="stat-val">${gpu}</div><div class="stat-label">GPU 利用率</div></div>
+            <div class="stat"><div class="stat-val">${c.node_count}</div><div class="stat-label">节点总数</div></div>
+          </div>
+          <div class="hang-row">HANG 检测：${hangBadge(c.hang_status)}</div>
+          <div class="card-footer">
+            <span>最后推送：${ago(c.last_seen_ago_secs)}</span>
+            <span>查看详情 →</span>
+          </div>
+        </a>`;
+    }
+
+    async function load() {
+      try {
+        const resp = await fetch('/api/collectors');
+        const data = await resp.json();
+        const grid = document.getElementById('grid');
+        const empty = document.getElementById('empty-state');
+        if (!data || data.length === 0) {
+          grid.innerHTML = '';
+          empty.style.display = 'block';
+        } else {
+          empty.style.display = 'none';
+          grid.innerHTML = data.map(renderCard).join('');
+        }
+        document.getElementById('status-bar').textContent =
+          `共 ${data.length} 个集群  ·  ${new Date().toLocaleTimeString()}`;
+      } catch (e) {
+        document.getElementById('status-bar').textContent = '加载失败: ' + e.message;
+      }
+    }
+
+    load();
+    setInterval(load, 30000);
+  </script>
+</body>
+</html>
