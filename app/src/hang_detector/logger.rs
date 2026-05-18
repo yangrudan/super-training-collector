@@ -174,17 +174,6 @@ impl HangLogger {
 
         Some(json_filepath.to_string_lossy().to_string())
     }
-
-    /// 当状态从 HANG 变为非 HANG 时重置日志标记
-    pub fn reset_on_recovery(&self) {
-        let state = get_hang_state();
-        let mut state = state.write().unwrap();
-
-        if state.status != HangStatus::Hang && state.hang_logged {
-            state.reset_logged();
-            tracing::debug!("HANG log flag reset after recovery");
-        }
-    }
 }
 
 /// 写入日志文件
@@ -269,6 +258,7 @@ mod tests {
             blocking_patterns: vec!["checkpoint".to_string()],
             log_enabled: true,
             log_dir: log_dir.to_string(),
+            ..HangConfig::default()
         }
     }
 

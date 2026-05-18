@@ -3,7 +3,7 @@
 //! 提供异步运行时集成，用于服务端启动调度器
 
 use super::config::HangConfig;
-use super::detector::HangDetector;
+use super::detector::{HangDetector, NodeObservation};
 use super::logger::HangLogger;
 use super::notifier::send_hang_alert;
 use super::state::HangStatus;
@@ -15,7 +15,7 @@ use crate::rank_analyzer::{
 use serde_json;
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::time::interval;
+use tokio::time::{interval, MissedTickBehavior};
 use tracing;
 
 /// 启动 HANG 检测调度器
@@ -37,6 +37,8 @@ pub async fn start_hang_detector_scheduler() {
     let detector = HangDetector::new(config.clone());
     let logger = HangLogger::new(config.clone());
     let mut tick = interval(Duration::from_secs(config.sample_interval_secs));
+    // 长时间的 rank 分析可能让多个 tick 堆积，使用 Skip 行为避免短时间内连续触发
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // 存储本轮各节点的堆栈数据（用于日志记录）
     let mut round_stacks: HashMap<String, Vec<Vec<String>>> = HashMap::new();
@@ -77,90 +79,97 @@ pub async fn start_hang_detector_scheduler() {
         detector.increment_sample_round();
 
         // 为每个选中的节点采集堆栈
-        let mut results = Vec::new();
+        let mut results: Vec<(String, NodeObservation, f64)> = Vec::new();
         for node_ip in selected_nodes {
             match fetch_stacks(&node_ip).await {
                 Ok(stacks) => {
                     // 保存堆栈数据用于日志记录
                     round_stacks.insert(node_ip.clone(), stacks.clone());
 
-                    let (is_hang, similarity) = detector.process_node_stacks(&node_ip, stacks);
-                    results.push((node_ip.clone(), is_hang, similarity));
+                    let (observation, similarity) =
+                        detector.process_node_stacks(&node_ip, stacks);
+                    results.push((node_ip.clone(), observation, similarity));
                     tracing::debug!(
-                        "Node {}: hang={}, similarity={:.3}",
+                        "Node {}: observation={:?}, similarity={:.3}",
                         node_ip,
-                        is_hang,
+                        observation,
                         similarity
                     );
                 }
                 Err(e) => {
                     tracing::warn!("Failed to fetch stacks for node {}: {}", node_ip, e);
+                    results.push((node_ip.clone(), NodeObservation::NoSignal, 0.0));
                 }
             }
         }
 
-        // 更新全局状态
+        // 更新全局状态（事件 ID / 恢复阈值由 state 内部统一管理）
         let status = detector.update_global_status(&results);
         tracing::info!("HANG detection round completed, status: {:?}", status);
 
         // 根据状态处理日志
         match &status {
             HangStatus::Hang => {
-                // 检测到 HANG，尝试记录日志并采集全局火焰图
+                // 检测到 HANG，尝试记录日志并采集全局火焰图（事件期内只记一次）
                 if let Some(log_path) = logger.log_hang_event(round_stacks.clone()).await {
                     tracing::warn!("HANG detected! Log saved to: {}", log_path);
                 }
 
-                // 自动触发问题 Rank 分析
-                let analysis_config = RankAnalysisConfig::from_env();
-                let analysis_summary = if analysis_config.enabled {
-                    match run_rank_analysis(&analysis_config).await {
-                        Ok(result) => {
-                            let count = result.problematic_ranks.len();
-                            tracing::info!(
-                                "Rank analysis completed: {} problematic ranks found in {}ms",
-                                count,
-                                result.analysis_duration_ms
-                            );
-                            let summary = format_rank_analysis_summary(&result);
-                            set_last_analysis(result);
-                            summary
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to run rank analysis: {}", e);
-                            format!("问题 Rank 分析执行失败：{}", e)
-                        }
-                    }
-                } else {
-                    "问题 Rank 分析未启用".to_string()
+                // 仅在尚未发送过本事件的通知时才执行 rank 分析 + 发钉钉
+                let need_notify = {
+                    use super::state::get_hang_state;
+                    let state = get_hang_state();
+                    let state = state.read().unwrap();
+                    state.should_notify()
                 };
 
-                // 发送钉钉告警（每次 HANG 事件只通知一次）
-                {
-                    use super::state::get_hang_state;
-                    let should_notify = {
+                if need_notify {
+                    // 自动触发问题 Rank 分析
+                    let analysis_config = RankAnalysisConfig::from_env();
+                    let analysis_summary = if analysis_config.enabled {
+                        match run_rank_analysis(&analysis_config).await {
+                            Ok(result) => {
+                                let count = result.problematic_ranks.len();
+                                tracing::info!(
+                                    "Rank analysis completed: {} problematic ranks found in {}ms",
+                                    count,
+                                    result.analysis_duration_ms
+                                );
+                                let summary = format_rank_analysis_summary(&result);
+                                set_last_analysis(result);
+                                summary
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to run rank analysis: {}", e);
+                                format!("问题 Rank 分析执行失败：{}", e)
+                            }
+                        }
+                    } else {
+                        "问题 Rank 分析未启用".to_string()
+                    };
+
+                    // 拿到事件元数据（event_id + 持续时长）
+                    let (event_id, duration_secs) = {
+                        use super::state::get_hang_state;
                         let state = get_hang_state();
                         let state = state.read().unwrap();
-                        state.should_notify()
+                        (state.hang_event_id, state.hang_duration_secs())
                     };
-                    if should_notify {
-                        tracing::warn!("Sending DingTalk HANG alert");
-                        send_hang_alert(Some(&analysis_summary)).await;
-                        let state = get_hang_state();
-                        let mut state = state.write().unwrap();
-                        state.mark_notified();
-                    }
-                }
-            }
-            _ => {
-                // 状态恢复正常，重置日志和通知标记
-                logger.reset_on_recovery();
-                {
+
+                    tracing::warn!(
+                        "Sending DingTalk HANG alert (event_id={:?})",
+                        event_id
+                    );
+                    send_hang_alert(Some(&analysis_summary), event_id, duration_secs).await;
+
                     use super::state::get_hang_state;
                     let state = get_hang_state();
                     let mut state = state.write().unwrap();
-                    state.reset_notified();
+                    state.mark_notified();
                 }
+            }
+            _ => {
+                // 非 HANG：state 的 observe_normal 已经管理了事件清理，这里无需手动 reset
             }
         }
     }
@@ -209,16 +218,22 @@ async fn fetch_stacks(node_ip: &str) -> Result<Vec<Vec<String>>, String> {
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-    let mut stacks = Vec::new();
+    // 并发地拉取所有 rank，避免单个 rank（如被 STOP 的进程导致 py-spy attach 卡住）阻塞整节点
+    let fetches = urls.into_iter().map(|url| {
+        let client = client.clone();
+        async move {
+            let result = fetch_callstack(&client, &url).await;
+            (url, result)
+        }
+    });
+    let results = futures::future::join_all(fetches).await;
 
-    for url in urls {
-        match fetch_callstack(&client, &url).await {
-            Ok(stack) => {
-                stacks.push(stack);
-            }
+    let mut stacks = Vec::with_capacity(results.len());
+    for (url, result) in results {
+        match result {
+            Ok(stack) => stacks.push(stack),
             Err(e) => {
                 tracing::warn!("Failed to fetch from {}: {}", url, e);
-                // 即使一个 rank 失败，也继续尝试其他 rank
                 stacks.push(Vec::new());
             }
         }

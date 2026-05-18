@@ -9,7 +9,7 @@ use std::env;
 pub struct HangConfig {
     /// 是否启用 HANG 检测
     pub enabled: bool,
-    /// 采样间隔（秒），默认 30
+    /// 采样间隔（秒），默认 60
     pub sample_interval_secs: u64,
     /// 连续采样次数，默认 3
     pub sample_count: usize,
@@ -23,26 +23,50 @@ pub struct HangConfig {
     pub log_enabled: bool,
     /// HANG 日志保存目录
     pub log_dir: String,
+    /// 节点级判定时，至少多少比例的 rank 连续高相似度才算节点 HANG
+    pub node_rank_quorum: f64,
+    /// 是否在 Jaccard 时保留行号（更敏感于函数内代码推进）
+    pub keep_line_numbers: bool,
+    /// 连续多少轮 Normal 才视为真正恢复（去抖动）
+    pub recovery_normal_rounds: u8,
 }
 
 impl Default for HangConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            sample_interval_secs: 30,
+            sample_interval_secs: 60,
             sample_count: 3,
             node_count: 4,
             jaccard_threshold: 0.95,
-            blocking_patterns: vec![
-                "checkpoint".to_string(),
-                "save_model".to_string(),
-                "load_data".to_string(),
-                "DataLoader".to_string(),
-            ],
+            blocking_patterns: default_blocking_patterns(),
             log_enabled: true,
             log_dir: "hang_logs".to_string(),
+            node_rank_quorum: 0.5,
+            keep_line_numbers: true,
+            recovery_normal_rounds: 2,
         }
     }
+}
+
+/// 默认的"已知长阻塞"白名单
+///
+/// **只包含明确的业务级长阻塞**（如 checkpoint 写盘、首轮数据加载），
+/// 这些操作堆栈在数十秒内保持稳定但属于正常行为。
+///
+/// **严禁加入 NCCL / c10d / CUDA 同步 / futex / epoll 等同步原语**：
+/// 真正的训练 HANG（如某 rank 死锁、慢节点）正是表现为其他 rank 全部卡在
+/// `ncclAllReduce` / `ProcessGroupNCCL` 等待，把它们放进白名单会直接掩盖事件。
+pub fn default_blocking_patterns() -> Vec<String> {
+    [
+        "checkpoint",
+        "save_model",
+        "load_data",
+        "DataLoader",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 impl HangConfig {
@@ -80,6 +104,25 @@ impl HangConfig {
         if let Ok(val) = env::var("HANG_JACCARD_THRESHOLD") {
             if let Ok(threshold) = val.parse::<f64>() {
                 config.jaccard_threshold = threshold.max(0.5).min(1.0); // 范围 [0.5, 1.0]
+            }
+        }
+
+        // HANG_NODE_RANK_QUORUM: 节点级 rank 占比阈值
+        if let Ok(val) = env::var("HANG_NODE_RANK_QUORUM") {
+            if let Ok(q) = val.parse::<f64>() {
+                config.node_rank_quorum = q.max(0.1).min(1.0);
+            }
+        }
+
+        // HANG_KEEP_LINE_NUMBERS: 是否保留行号
+        if let Ok(val) = env::var("HANG_KEEP_LINE_NUMBERS") {
+            config.keep_line_numbers = val.to_lowercase() == "true" || val == "1";
+        }
+
+        // HANG_RECOVERY_NORMAL_ROUNDS: 恢复阈值
+        if let Ok(val) = env::var("HANG_RECOVERY_NORMAL_ROUNDS") {
+            if let Ok(r) = val.parse::<u8>() {
+                config.recovery_normal_rounds = r.max(1).min(10);
             }
         }
 
@@ -138,13 +181,45 @@ mod tests {
         let config = HangConfig::default();
 
         assert!(!config.enabled);
-        assert_eq!(config.sample_interval_secs, 30);
+        assert_eq!(config.sample_interval_secs, 60);
         assert_eq!(config.sample_count, 3);
         assert_eq!(config.node_count, 4);
         assert_eq!(config.jaccard_threshold, 0.95);
         assert!(!config.blocking_patterns.is_empty());
         assert!(config.log_enabled);
         assert_eq!(config.log_dir, "hang_logs");
+        assert_eq!(config.node_rank_quorum, 0.5);
+        assert!(config.keep_line_numbers);
+        assert_eq!(config.recovery_normal_rounds, 2);
+    }
+
+    #[test]
+    fn test_default_blocking_patterns_exclude_sync_primitives() {
+        // 关键回归保护：NCCL/c10d/CUDA 同步原语**绝不**能进默认白名单，
+        // 否则真正的训练 HANG（典型表现就是这些原语阻塞）会被掩盖。
+        let patterns = default_blocking_patterns();
+        let joined = patterns.join(",");
+        for needle in [
+            "checkpoint",
+            "DataLoader",
+        ] {
+            assert!(joined.contains(needle), "missing pattern: {}", needle);
+        }
+        for forbidden in [
+            "nccl",
+            "ProcessGroupNCCL",
+            "cuda",
+            "c10d",
+            "pthread_cond",
+            "futex",
+            "epoll",
+        ] {
+            assert!(
+                !joined.to_lowercase().contains(&forbidden.to_lowercase()),
+                "默认白名单不应包含同步原语: {}",
+                forbidden
+            );
+        }
     }
 
     #[test]
