@@ -5,7 +5,7 @@
 use super::config::HangConfig;
 use super::detector::{HangDetector, NodeObservation};
 use super::logger::HangLogger;
-use super::notifier::send_hang_alert;
+use super::notifier::{send_hang_alert, send_hang_recovery_alert};
 use super::state::HangStatus;
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{build_callstack_url, build_callstack_urls, load_collector_config};
@@ -169,7 +169,22 @@ pub async fn start_hang_detector_scheduler() {
                 }
             }
             _ => {
-                // 非 HANG：state 的 observe_normal 已经管理了事件清理，这里无需手动 reset
+                // 非 HANG：state 的 observe_normal 已经管理了事件清理。
+                // 若刚刚从 HANG 转为 Normal 且之前已发过告警，发送"告警解除"通知。
+                let pending = {
+                    use super::state::get_hang_state;
+                    let state = get_hang_state();
+                    let mut state = state.write().unwrap();
+                    state.take_pending_recovery()
+                };
+                if let Some((event_id, hang_duration_secs)) = pending {
+                    tracing::warn!(
+                        "Sending DingTalk HANG recovery alert (event_id={}, hang_duration={}s)",
+                        event_id,
+                        hang_duration_secs
+                    );
+                    send_hang_recovery_alert(Some(event_id), Some(hang_duration_secs)).await;
+                }
             }
         }
     }

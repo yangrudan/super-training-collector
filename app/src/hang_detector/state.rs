@@ -87,6 +87,11 @@ pub struct HangDetectorState {
     pub hang_notified: bool,
     /// 连续被判定为 Normal 的轮次数（用于判断是否真正恢复）
     pub consecutive_normal_count: u8,
+    /// 待发送的"HANG 解除"通知（仅当上一次 HANG 已经发过告警时才会被设置）
+    ///
+    /// Some((event_id, hang_duration_secs)) 表示从 HANG 转为 Normal 的瞬间需要发恢复通知。
+    /// 发送完成后由 [`Self::mark_recovery_notified`] 清空。
+    pub pending_recovery: Option<(u64, u64)>,
 }
 
 impl Default for HangDetectorState {
@@ -102,6 +107,7 @@ impl Default for HangDetectorState {
             hang_logged: false,
             hang_notified: false,
             consecutive_normal_count: 0,
+            pending_recovery: None,
         }
     }
 }
@@ -144,13 +150,22 @@ impl HangDetectorState {
     /// 若上一状态不是 HANG，则生成新的 event_id，并清零 notified/logged 标志。
     /// 返回是否是"新事件"（即本次刚刚从 Normal 转入 Hang）。
     pub fn enter_hang(&mut self) -> bool {
+        self.enter_hang_with_backdate(0)
+    }
+
+    /// 进入 HANG 并将事件起始时间回溯 `backdate_secs` 秒
+    ///
+    /// 判定为 HANG 的瞬间已经是"连续 N 次相同堆栈"之后，真实卡住时间应当回溯
+    /// 约 `sample_count × sample_interval` 秒，否则首次告警的"已持续"会贴近 0。
+    pub fn enter_hang_with_backdate(&mut self, backdate_secs: u64) -> bool {
         self.consecutive_normal_count = 0;
         let was_new = self.hang_event_id.is_none();
         if was_new {
-            let event_id = SystemTime::now()
+            let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
+            let event_id = now.saturating_sub(backdate_secs);
             self.hang_event_id = Some(event_id);
             self.hang_logged = false;
             self.hang_notified = false;
@@ -162,10 +177,17 @@ impl HangDetectorState {
     /// 进入 Normal 状态（仅在连续达到阈值后才真正清空事件）
     ///
     /// 返回是否本次刚刚"真正恢复"（即从 HANG 转为 Normal 的瞬间）。
+    /// 若上一次 HANG 已发过钉钉通知，则同步设置 `pending_recovery`，由 runner 触发解除通知。
     pub fn observe_normal(&mut self, recovery_threshold: u8) -> bool {
         self.consecutive_normal_count = self.consecutive_normal_count.saturating_add(1);
         if self.consecutive_normal_count >= recovery_threshold {
             let was_in_hang = self.hang_event_id.is_some();
+            if was_in_hang && self.hang_notified {
+                // 上一次 HANG 已发过通知 → 需要发"告警解除"通知
+                let event_id = self.hang_event_id.unwrap_or(0);
+                let duration = self.hang_duration_secs().unwrap_or(0);
+                self.pending_recovery = Some((event_id, duration));
+            }
             self.status = HangStatus::Normal;
             self.hang_event_id = None;
             self.hang_logged = false;
@@ -174,6 +196,11 @@ impl HangDetectorState {
         } else {
             false
         }
+    }
+
+    /// 取出待发送的"HANG 解除"通知任务（取出后不再返回）
+    pub fn take_pending_recovery(&mut self) -> Option<(u64, u64)> {
+        self.pending_recovery.take()
     }
 
     /// 本轮无法判断（采集失败 / 新选节点首次采样），不改变 status 和事件标志
@@ -305,11 +332,29 @@ mod tests {
         assert!(state.hang_event_id.is_none());
         assert!(!state.hang_notified);
         assert!(!state.hang_logged);
+        // 恢复瞬间应当排队一条"告警解除"通知
+        let recovery = state.take_pending_recovery();
+        assert!(recovery.is_some(), "已发过告警的事件恢复时应当排队解除通知");
+        // 取出后应当被清空
+        assert!(state.take_pending_recovery().is_none());
 
         // 再次进入 HANG -> 新事件 -> 重新可通知
         state.enter_hang();
         assert!(state.should_notify());
         assert!(state.should_log());
+    }
+
+    /// 未发过告警的 HANG 事件恢复时**不**应当排队恢复通知（避免误发）
+    #[test]
+    fn test_recovery_without_prior_notify_skips_alert() {
+        let mut state = HangDetectorState::new();
+        state.enter_hang();
+        // 注意：不调用 mark_notified，模拟"该 HANG 短到没来得及发告警就恢复"
+        for _ in 0..RECOVERY_NORMAL_ROUNDS {
+            state.observe_normal(RECOVERY_NORMAL_ROUNDS);
+        }
+        assert_eq!(state.status, HangStatus::Normal);
+        assert!(state.take_pending_recovery().is_none());
     }
 
     #[test]

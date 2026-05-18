@@ -231,7 +231,10 @@ impl HangDetector {
 
         if hang_count * 2 >= total_count {
             state.details.consecutive_high_similarity = self.config.sample_count as u8;
-            state.enter_hang();
+            // 回溯：判 HANG 那一刻起堆栈已经"卡了 sample_count 个采样窗口"
+            let backdate = (self.config.sample_count as u64)
+                .saturating_mul(self.config.sample_interval_secs);
+            state.enter_hang_with_backdate(backdate);
         } else {
             state.observe_normal(self.config.recovery_normal_rounds);
         }

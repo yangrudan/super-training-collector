@@ -144,6 +144,66 @@ fn build_hang_alert_markdown(
     text
 }
 
+/// 发送 HANG 告警**解除**通知
+///
+/// - `event_id`：原 HANG 事件 ID（与告警通知里的 ID 对应，便于关联）
+/// - `hang_duration_secs`：本次 HANG 总共持续了多少秒
+pub async fn send_hang_recovery_alert(event_id: Option<u64>, hang_duration_secs: Option<u64>) {
+    let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
+    let title = format!("[{}] HANG 告警解除", job_name);
+    let text = build_hang_recovery_markdown(&job_name, event_id, hang_duration_secs);
+
+    let body = serde_json::json!({
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": text
+        }
+    });
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("DingTalk: 创建 HTTP client 失败: {}", e);
+            return;
+        }
+    };
+
+    let user_dingbot = env::var("USER_DINGBOT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知/恢复");
+    if let Some(url) = user_dingbot {
+        let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT/恢复");
+        tokio::join!(main_fut, user_fut);
+    } else {
+        main_fut.await;
+    }
+}
+
+fn build_hang_recovery_markdown(
+    job_name: &str,
+    event_id: Option<u64>,
+    hang_duration_secs: Option<u64>,
+) -> String {
+    let mut text = format!("### [{}] HANG 告警解除", job_name);
+    text.push_str("\n\n训练已恢复正常。");
+
+    if let Some(id) = event_id {
+        text.push_str(&format!("\n\n**关联事件 ID**: `{}`", id));
+    }
+    if let Some(secs) = hang_duration_secs {
+        text.push_str(&format!("\n\n**HANG 总持续**: {}s", secs));
+    }
+
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +234,25 @@ mod tests {
     fn build_alert_markdown_contains_job_name() {
         let text = build_hang_alert_markdown("my-job", None, None, None);
         assert!(text.contains("my-job"));
+    }
+
+    #[test]
+    fn build_recovery_markdown_contains_title_and_event() {
+        let text = build_hang_recovery_markdown("my-job", Some(1700000000), Some(240));
+        assert!(text.contains("HANG 告警解除"));
+        assert!(text.contains("my-job"));
+        assert!(text.contains("**关联事件 ID**: `1700000000`"));
+        assert!(text.contains("**HANG 总持续**: 240s"));
+        assert!(text.contains("训练已恢复正常"));
+    }
+
+    #[test]
+    fn build_recovery_markdown_without_optional_fields() {
+        let text = build_hang_recovery_markdown("job-x", None, None);
+        assert!(text.contains("### [job-x] HANG 告警解除"));
+        assert!(text.contains("训练已恢复正常"));
+        assert!(!text.contains("**关联事件 ID**"));
+        assert!(!text.contains("**HANG 总持续**"));
     }
 
     /// 手动测试：向真实钉钉机器人发送一条测试告警
