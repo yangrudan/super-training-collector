@@ -22,6 +22,18 @@ pub fn jaccard_similarity(set1: &HashSet<String>, set2: &HashSet<String>) -> f64
     }
 }
 
+/// 将堆栈行转换为集合，行号是否保留可选
+///
+/// `keep_line_numbers = false`（默认旧行为）：忽略行号，便于跨进程对齐；
+/// `keep_line_numbers = true`：保留行号，分辨"函数内代码推进"的真实变化，
+/// 用于区分"长 step（仍在跑）"和"真正卡死"。
+pub fn stack_to_set_with_options(stack: &[String], keep_line_numbers: bool) -> HashSet<String> {
+    if keep_line_numbers {
+        return stack.iter().cloned().collect();
+    }
+    stack_to_set(stack)
+}
+
 /// 将堆栈行转换为集合，忽略行号
 pub fn stack_to_set(stack: &[String]) -> HashSet<String> {
     stack

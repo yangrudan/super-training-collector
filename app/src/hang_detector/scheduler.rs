@@ -55,6 +55,7 @@ mod tests {
             blocking_patterns: vec!["checkpoint".to_string()],
             log_enabled: true,
             log_dir: "hang_logs".to_string(),
+            ..HangConfig::default()
         };
 
         let scheduler = HangScheduler::new(config);

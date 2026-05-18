@@ -1,14 +1,24 @@
 //! HANG 检测核心逻辑模块
 //!
-//! 实现节点选择、相似度判定和 HANG 状态更新
+//! 实现节点选择、per-rank Jaccard 相似度判定和 HANG 状态更新
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::collections::HashSet;
 
 use super::config::HangConfig;
-use super::jaccard::{jaccard_similarity, stack_to_set};
-use super::state::{get_hang_state, HangStatus, NodeStackHistory};
+use super::jaccard::{jaccard_similarity, stack_to_set_with_options};
+use super::state::{get_hang_state, HangStatus, NodeStackHistory, RankStackHistory};
+
+/// 单节点本轮检测结果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeObservation {
+    /// 无有效信号（采集失败 / 新选节点首次采样）
+    NoSignal,
+    /// 本节点被判定为 HANG
+    Hang,
+    /// 本节点正常
+    Normal,
+}
 
 /// HANG 检测器
 pub struct HangDetector {
@@ -32,9 +42,6 @@ impl HangDetector {
     }
 
     /// 随机选择 N 个节点进行采样
-    ///
-    /// - 如果总节点数 <= N，返回所有节点
-    /// - 否则随机选择 N 个
     pub fn select_nodes(&self, all_nodes: &[String]) -> Vec<String> {
         if all_nodes.is_empty() {
             return Vec::new();
@@ -55,122 +62,185 @@ impl HangDetector {
 
     /// 处理单个节点的堆栈采集
     ///
-    /// 返回该节点是否被判定为可能 HANG
+    /// 返回该节点的观测结果以及（用于 UI 展示的）代表性相似度。
+    /// 当返回 `NoSignal` 时，调用方不应将其计入全局投票。
     pub fn process_node_stacks(
         &self,
         node_ip: &str,
-        stacks: Vec<Vec<String>>, // 各个 rank 的堆栈
-    ) -> (bool, f64) {
+        stacks: Vec<Vec<String>>,
+    ) -> (NodeObservation, f64) {
+        // 节点首轮：所有 rank 全空且无历史 → 真无信号
+        if stacks.iter().all(|s| s.is_empty()) {
+            let state = get_hang_state();
+            let state = state.read().unwrap();
+            let any_history = state
+                .node_history
+                .get(node_ip)
+                .map(|h| h.ranks.iter().any(|r| r.has_history()))
+                .unwrap_or(false);
+            drop(state);
+            if !any_history {
+                return (NodeObservation::NoSignal, 0.0);
+            }
+        }
+
+        // 白名单检查：任一 rank 命中已知长阻塞则放行
+        let is_known_blocking = stacks
+            .iter()
+            .any(|stack| !stack.is_empty() && self.config.is_known_blocking(stack));
+
         let state = get_hang_state();
         let mut state = state.write().unwrap();
 
-        // 合并所有 rank 的堆栈为一个集合
-        let current_set = self.merge_rank_stacks(&stacks);
-        // 如果当前堆栈为空，说明采集失败，不更新状态
-        if current_set.is_empty() {
-            return (false, 0.0);
-        }
-
-        // 获取或创建该节点的历史记录
         let history = state
             .node_history
             .entry(node_ip.to_string())
             .or_insert_with(NodeStackHistory::default);
+        history.ensure_rank_count(stacks.len());
 
-        // 计算与上一次的相似度（使用 last() 而不是 previous()）
-        let similarity = if let Some(last) = history.last() {
-            if last.is_empty() {
-                0.0 // 上次采集也失败了
-            } else {
-                jaccard_similarity(last, &current_set)
+        let mut similarities: Vec<f64> = Vec::with_capacity(stacks.len());
+        let mut had_history_count = 0usize;
+        let mut high_sim_rank_count = 0usize;
+        let threshold = self.config.sample_count as u8;
+
+        for (i, stack) in stacks.iter().enumerate() {
+            let rank_history: &mut RankStackHistory = &mut history.ranks[i];
+
+            // 采集失败/空：只对"曾经成功采集过"的 rank 累计失败计数
+            if stack.is_empty() {
+                if rank_history.has_history() {
+                    rank_history.consecutive_failure_count =
+                        rank_history.consecutive_failure_count.saturating_add(1);
+                    rank_history.high_similarity_count = 0;
+                    rank_history.last_similarity = None;
+                    had_history_count += 1;
+                    if rank_history.consecutive_failure_count >= threshold {
+                        high_sim_rank_count += 1;
+                    }
+                }
+                continue;
             }
+
+            // 成功采集：清零失败计数
+            rank_history.consecutive_failure_count = 0;
+
+            let current_set =
+                stack_to_set_with_options(stack, self.config.keep_line_numbers);
+            if current_set.is_empty() {
+                continue;
+            }
+
+            let similarity = rank_history.last().map(|last| {
+                had_history_count += 1;
+                jaccard_similarity(last, &current_set)
+            });
+
+            rank_history.push(current_set, self.config.sample_count + 1);
+
+            if let Some(sim) = similarity {
+                similarities.push(sim);
+                rank_history.last_similarity = Some(sim);
+                if sim >= self.config.jaccard_threshold {
+                    rank_history.high_similarity_count =
+                        rank_history.high_similarity_count.saturating_add(1);
+                } else {
+                    rank_history.high_similarity_count = 0;
+                }
+            } else {
+                // 这是该 rank 的第一次采样，无法比较
+                rank_history.last_similarity = None;
+            }
+
+            if rank_history.high_similarity_count >= threshold {
+                high_sim_rank_count += 1;
+            }
+        }
+
+        // 计算节点级代表性相似度（用于 UI / 日志）
+        let representative = if similarities.is_empty() {
+            0.0
         } else {
-            0.0 // 没有历史数据，无法比较
+            similarities.iter().copied().sum::<f64>() / similarities.len() as f64
         };
+        history.last_similarity = representative;
 
-        // 更新历史记录
-        history.push(current_set.clone(), self.config.sample_count + 1);
-        history.last_similarity = similarity;
+        // 若本轮没有任何 rank 可比（既无相似度可算、也无失败可计） → 无信号
+        if had_history_count == 0 {
+            return (NodeObservation::NoSignal, representative);
+        }
 
-        // 判断是否高相似度
-        let is_similar = similarity >= self.config.jaccard_threshold;
+        // 白名单优先：节点不判 HANG
+        if is_known_blocking {
+            return (NodeObservation::Normal, representative);
+        }
 
-        if is_similar {
-            history.high_similarity_count += 1;
+        // 节点级 quorum：至少多少比例的 rank 表现出 hang 证据（高相似 或 持续采集失败）
+        let quorum_threshold =
+            ((stacks.len().max(1)) as f64 * self.config.node_rank_quorum).ceil() as usize;
+        let is_hang = high_sim_rank_count >= quorum_threshold.max(1);
+
+        let observation = if is_hang {
+            NodeObservation::Hang
         } else {
-            history.high_similarity_count = 0; // 重置计数
-        }
-
-        // 检查白名单
-        let is_known_blocking = stacks
-            .iter()
-            .any(|stack| self.config.is_known_blocking(stack));
-
-        // 判断是否 HANG（连续高相似度且不在白名单中）
-        let is_hang =
-            history.high_similarity_count >= self.config.sample_count as u8 && !is_known_blocking;
-
-        (is_hang, similarity)
-    }
-
-    /// 合并多个 rank 的堆栈为一个集合
-    fn merge_rank_stacks(&self, stacks: &[Vec<String>]) -> HashSet<String> {
-        let mut merged = HashSet::new();
-        for stack in stacks {
-            merged.extend(stack_to_set(stack));
-        }
-        merged
+            NodeObservation::Normal
+        };
+        (observation, representative)
     }
 
     /// 根据各节点的检测结果更新全局状态
     ///
-    /// 投票机制：>= 50% 节点被判定为 HANG，则全局状态为 HANG；否则为 NORMAL
+    /// - 若所有节点都是 `NoSignal`：保持当前 status（视为本轮无效）；
+    /// - 否则按 ≥ 50% Hang 节点投票判定；
+    /// - HANG 事件 ID 与"连续 Normal 才恢复"的去抖动逻辑统一在 state 内。
     pub fn update_global_status(
         &self,
-        node_results: &[(String, bool, f64)], // (node_ip, is_hang, similarity)
+        node_results: &[(String, NodeObservation, f64)],
     ) -> HangStatus {
         let state = get_hang_state();
         let mut state = state.write().unwrap();
 
-        if node_results.is_empty() {
-            state.status = HangStatus::Normal;
-            state.touch();
-            return HangStatus::Normal;
-        }
-
-        let hang_count = node_results
-            .iter()
-            .filter(|(_, is_hang, _)| *is_hang)
-            .count();
-        let total_count = node_results.len();
-
-        // 更新详细信息
-        state.details.hang_nodes = node_results
-            .iter()
-            .filter(|(_, is_hang, _)| *is_hang)
-            .map(|(ip, _, _)| ip.clone())
-            .collect();
-
+        // 更新可用的相似度详情（即便本轮整体无信号，也尽量展示采集到的部分）
         state.details.node_similarities = node_results
             .iter()
             .map(|(ip, _, sim)| (ip.clone(), *sim))
             .collect();
+        state.details.hang_nodes = node_results
+            .iter()
+            .filter(|(_, obs, _)| *obs == NodeObservation::Hang)
+            .map(|(ip, _, _)| ip.clone())
+            .collect();
 
-        // 投票判定：只分为 HANG 或 NORMAL
-        let new_status = if hang_count * 2 >= total_count {
-            // >= 50% 节点 HANG
+        let valid: Vec<&NodeObservation> = node_results
+            .iter()
+            .map(|(_, obs, _)| obs)
+            .filter(|obs| **obs != NodeObservation::NoSignal)
+            .collect();
+
+        if valid.is_empty() {
+            // 全无信号，保持原状态（避免节点重选导致的伪 Normal 抖动）
+            state.observe_no_signal();
+            state.touch();
+            return state.status.clone();
+        }
+
+        let hang_count = valid
+            .iter()
+            .filter(|obs| ***obs == NodeObservation::Hang)
+            .count();
+        let total_count = valid.len();
+
+        if hang_count * 2 >= total_count {
             state.details.consecutive_high_similarity = self.config.sample_count as u8;
-            HangStatus::Hang
+            // 回溯：判 HANG 那一刻起堆栈已经"卡了 sample_count 个采样窗口"
+            let backdate = (self.config.sample_count as u64)
+                .saturating_mul(self.config.sample_interval_secs);
+            state.enter_hang_with_backdate(backdate);
         } else {
-            // 其他情况都是 NORMAL，不在这里重置 high_similarity_count
-            // 让轮次切换时在 reset_round 中统一处理
-            HangStatus::Normal
-        };
+            state.observe_normal(self.config.recovery_normal_rounds);
+        }
 
-        state.status = new_status.clone();
         state.touch();
-
-        new_status
+        state.status.clone()
     }
 
     /// 增加采样轮次计数
@@ -180,7 +250,7 @@ impl HangDetector {
         state.sample_round += 1;
     }
 
-    /// 重置当前轮次（节点失败时调用）
+    /// 重置当前轮次（节点失败或新一轮开始时调用）
     pub fn reset_round(&self) {
         let state = get_hang_state();
         let mut state = state.write().unwrap();
@@ -219,6 +289,11 @@ impl HangDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hang_detector::state::HANG_STATE;
+    use std::sync::Mutex;
+
+    /// 涉及全局 HANG_STATE 的测试必须串行执行
+    static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_config() -> HangConfig {
         HangConfig {
@@ -230,7 +305,16 @@ mod tests {
             blocking_patterns: vec!["checkpoint".to_string()],
             log_enabled: true,
             log_dir: "hang_logs".to_string(),
+            node_rank_quorum: 0.5,
+            keep_line_numbers: true,
+            recovery_normal_rounds: 2,
         }
+    }
+
+    fn reset_state() {
+        let state = HANG_STATE.clone();
+        let mut s = state.write().unwrap();
+        *s = super::super::state::HangDetectorState::new();
     }
 
     #[test]
@@ -240,7 +324,6 @@ mod tests {
 
         let selected = detector.select_nodes(&nodes);
 
-        // 节点数 < node_count，返回全部
         assert_eq!(selected.len(), 2);
     }
 
@@ -251,9 +334,7 @@ mod tests {
 
         let selected = detector.select_nodes(&nodes);
 
-        // 应该只选择 4 个
         assert_eq!(selected.len(), 4);
-        // 每个选中的节点都应该在原始列表中
         for node in &selected {
             assert!(nodes.contains(node));
         }
@@ -269,20 +350,155 @@ mod tests {
         assert!(selected.is_empty());
     }
 
+    /// 节点重选后的第一个 tick 不应当触发 status 切换为 Normal
     #[test]
-    fn test_merge_rank_stacks() {
+    fn test_no_signal_preserves_status() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
         let detector = HangDetector::new(test_config());
-        let stacks = vec![
-            vec!["a (file:1)".to_string(), "b (file:2)".to_string()],
-            vec!["b (file:3)".to_string(), "c (file:4)".to_string()],
-        ];
 
-        let merged = detector.merge_rank_stacks(&stacks);
+        // 模拟先进入 HANG
+        {
+            let state = HANG_STATE.clone();
+            let mut s = state.write().unwrap();
+            s.enter_hang();
+        }
 
-        // 忽略行号后，应该有 3 个不同的元素
-        assert_eq!(merged.len(), 3);
-        assert!(merged.contains("a (file)"));
-        assert!(merged.contains("b (file)"));
-        assert!(merged.contains("c (file)"));
+        // 新节点首次采样 -> 无历史 -> NoSignal
+        let stacks = vec![vec!["foo (a.py:1)".to_string(), "bar (b.py:2)".to_string()]];
+        let (obs, _) = detector.process_node_stacks("newnode", stacks);
+        assert_eq!(obs, NodeObservation::NoSignal);
+
+        // update_global_status 接收 NoSignal -> 保持 HANG
+        let status = detector.update_global_status(&[(
+            "newnode".to_string(),
+            NodeObservation::NoSignal,
+            0.0,
+        )]);
+        assert_eq!(status, HangStatus::Hang);
+    }
+
+    /// 持续 HANG 期间，状态在节点重选 tick 之间不会被清空
+    #[test]
+    fn test_persistent_hang_keeps_event_id_across_reselection() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let detector = HangDetector::new(test_config());
+
+        // 进入 HANG
+        {
+            let state = HANG_STATE.clone();
+            let mut s = state.write().unwrap();
+            s.enter_hang();
+            s.mark_notified();
+            s.mark_logged();
+        }
+        let event_id_before = HANG_STATE.read().unwrap().hang_event_id;
+        assert!(event_id_before.is_some());
+
+        // 模拟新一轮节点重选：reset_round + 第一个 tick NoSignal
+        detector.reset_round();
+        let status = detector.update_global_status(&[(
+            "n".to_string(),
+            NodeObservation::NoSignal,
+            0.0,
+        )]);
+        assert_eq!(status, HangStatus::Hang);
+
+        let event_id_after = HANG_STATE.read().unwrap().hang_event_id;
+        assert_eq!(event_id_before, event_id_after);
+
+        // 标志仍保留 -> 不会重复通知 / 写日志
+        let s = HANG_STATE.read().unwrap();
+        assert!(s.hang_notified);
+        assert!(s.hang_logged);
+    }
+
+    /// 连续 N 次 Normal 才视为恢复
+    #[test]
+    fn test_recovery_requires_consecutive_normals() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let detector = HangDetector::new(test_config());
+
+        {
+            let state = HANG_STATE.clone();
+            let mut s = state.write().unwrap();
+            s.enter_hang();
+            s.mark_notified();
+        }
+
+        // 第一次 Normal -> 仍保持 Hang，避免抖动
+        let status = detector.update_global_status(&[(
+            "n".to_string(),
+            NodeObservation::Normal,
+            0.5,
+        )]);
+        assert_eq!(status, HangStatus::Hang);
+        assert!(HANG_STATE.read().unwrap().hang_event_id.is_some());
+
+        // 第二次 Normal -> 真正恢复
+        let status = detector.update_global_status(&[(
+            "n".to_string(),
+            NodeObservation::Normal,
+            0.5,
+        )]);
+        assert_eq!(status, HangStatus::Normal);
+        let s = HANG_STATE.read().unwrap();
+        assert!(s.hang_event_id.is_none());
+        assert!(!s.hang_notified);
+    }
+
+    /// 某 rank 持续采集失败（如 kill -STOP 后 py-spy attach 卡死）应当被识别为 HANG
+    #[test]
+    fn test_persistent_fetch_failure_triggers_hang() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let mut cfg = test_config();
+        cfg.sample_count = 3;
+        cfg.node_rank_quorum = 0.25; // 单节点 4 rank，1 个失败即满足 quorum
+        let detector = HangDetector::new(cfg);
+
+        // 第 1 轮：4 个 rank 都正常采集，建立历史
+        let normal_stack = vec!["foo (a.py:1)".to_string(), "bar (b.py:2)".to_string()];
+        let stacks: Vec<Vec<String>> = (0..4).map(|_| normal_stack.clone()).collect();
+        let (obs1, _) = detector.process_node_stacks("node1", stacks);
+        // 第一次没有历史可比 -> NoSignal
+        assert_eq!(obs1, NodeObservation::NoSignal);
+
+        // 第 2~4 轮：rank 0 fetch 超时（空 Vec），其他 rank 正常但堆栈变化（不算 hang）
+        let mut last_obs = NodeObservation::NoSignal;
+        for round in 0..3 {
+            let mut stacks: Vec<Vec<String>> = vec![Vec::new()]; // rank 0 失败
+            for i in 1..4 {
+                // 其他 rank 堆栈每轮都不同 -> 不会 high_similarity
+                stacks.push(vec![
+                    format!("foo_{}_{} (a.py:1)", round, i),
+                    format!("bar_{}_{} (b.py:2)", round, i),
+                ]);
+            }
+            let (obs, _) = detector.process_node_stacks("node1", stacks);
+            last_obs = obs;
+        }
+
+        // rank 0 连续 3 次失败 >= sample_count(3) -> 计入 hang rank
+        // quorum_threshold = ceil(4 * 0.25) = 1 -> 1 个 hang rank 即可触发
+        assert_eq!(
+            last_obs,
+            NodeObservation::Hang,
+            "持续采集失败的 rank 应当触发 HANG"
+        );
+    }
+
+    /// 节点首轮全失败应当返回 NoSignal（避免冷启动误报）
+    #[test]
+    fn test_first_round_all_failure_is_no_signal() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let detector = HangDetector::new(test_config());
+
+        let stacks: Vec<Vec<String>> = (0..4).map(|_| Vec::new()).collect();
+        let (obs, _) = detector.process_node_stacks("brandnew", stacks);
+        assert_eq!(obs, NodeObservation::NoSignal);
     }
 }
