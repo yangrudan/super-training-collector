@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post},
 };
 use state::new_state;
+use tower_http::trace::TraceLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 #[tokio::main]
@@ -28,6 +29,8 @@ async fn main() {
     let app = Router::new()
         // Push 接收端点
         .route("/push", post(handlers::push_handler))
+        // 健康检查
+        .route("/healthz", get(handlers::healthz))
         // JSON API
         .route("/api/collectors", get(handlers::api_collectors))
         .route("/api/collector/{id}", get(handlers::api_collector))
@@ -43,16 +46,29 @@ async fn main() {
         .route("/", get(handlers::page_dashboard))
         .route("/collector/{id}", get(handlers::page_collector))
         .layer(cors)
+        .layer(TraceLayer::new_for_http())
         .with_state(shared);
 
     let addr = std::env::var("ECS_ADDR").unwrap_or_else(|_| "0.0.0.0:4000".to_string());
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    tracing::info!("ECS 服务器启动: http://{}", addr);
+    tracing::info!("准备启动 ECS 服务器: bind_addr={}", addr);
+
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            tracing::error!("ECS 服务器绑定失败: bind_addr={}, error={}", addr, err);
+            return;
+        }
+    };
+
+    match listener.local_addr() {
+        Ok(local_addr) => tracing::info!("ECS 服务器启动: http://{}", local_addr),
+        Err(err) => tracing::warn!("ECS 服务器已启动，但无法读取本地监听地址: {}", err),
+    }
 
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .await
-    .unwrap();
+    .unwrap_or_else(|err| tracing::error!("ECS 服务器运行失败: {}", err));
 }

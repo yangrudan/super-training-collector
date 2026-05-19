@@ -40,8 +40,15 @@ pub async fn push_handler(
         .unwrap_or("")
         .to_string();
     let (id, collector_addr) = resolve_collector_identity(&state, &job_id, &addr);
+    let payload_keys = payload.as_object().map(|m| m.len()).unwrap_or(0);
 
-    tracing::debug!("[ecs/push] 收到来自 {} 的推送，task_id={}", addr, id);
+    tracing::debug!(
+        "[ecs/push] 收到推送: source_ip={}, task_id={}, job_id={}, payload_keys={}",
+        addr.ip(),
+        id,
+        if job_id.is_empty() { "<empty>" } else { &job_id },
+        payload_keys,
+    );
 
     // 检测是否 HANG（保留旧的 job_info，仅在 HANG 时触发新查询）
     let is_hanging = payload
@@ -91,6 +98,14 @@ pub async fn push_handler(
     }
 
     StatusCode::OK.into_response()
+}
+
+/// GET /healthz  — 健康检查
+pub async fn healthz() -> impl IntoResponse {
+    Json(json!({
+        "status": "ok",
+        "service": "ecs-server"
+    }))
 }
 
 // ─── JSON API ─────────────────────────────────────────────────────────────────
