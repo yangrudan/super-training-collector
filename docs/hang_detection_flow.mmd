@@ -1,0 +1,156 @@
+%% HANG 检测完整流程图
+flowchart TD
+    subgraph 启动["🚀 启动阶段"]
+        A["server/main.rs<br/>tokio::spawn(start_hang_detector_scheduler)"]
+        B["HangConfig::from_env()<br/>读取所有环境变量配置"]
+        C["创建 HangDetector + HangLogger<br/>tokio::time::interval 定时器"]
+        A --> B --> C
+    end
+
+    subgraph TickLoop["⏱️ Tick 循环 (每 sample_interval_secs 秒)"]
+        D["tick.tick().await<br/>MissedTickBehavior::Skip"]
+        E["fetch_all_nodes()<br/>获取全量节点 IP 列表"]
+        F{"节点列表为空?<br/>或获取失败?"}
+        G["detector.reset_round()<br/>重置轮次, continue"]
+        H{"needs_new_nodes()?<br/>(selected_nodes 为空<br/>或 sample_round > sample_count)"}
+        I["detector.reset_round()<br/>清空旧轮堆栈数据"]
+        J["detector.select_nodes()<br/>从全量节点随机选 N 个"]
+        K["detector.increment_sample_round()"]
+    end
+
+    subgraph StackFetch["📡 堆栈采集 (per selected node)"]
+        L["fetch_stacks(node_ip)<br/>并发拉取所有 rank 堆栈"]
+        M["对每个 rank:<br/>GET /callstack?rank=N<br/>reqwest 10s 超时"]
+        N{"采集成功?"}
+        O["解析 JSON → Vec&lt;String&gt;"]
+        P["返回空 Vec (标记失败)"]
+    end
+
+    subgraph PerNodeDetection["🔍 单节点检测 (process_node_stacks)"]
+        Q["遍历每个 rank 的堆栈"]
+        R{"堆栈为空?"}
+        S{"该 rank 有历史?"}
+        T["consecutive_failure_count++<br/>high_similarity_count = 0"]
+        U{"failure_count<br/>>= sample_count?"}
+        V["计入 high_sim_rank_count"]
+        W["跳过该 rank"]
+        X["consecutive_failure_count = 0<br/>stack_to_set_with_options()"]
+        Y{"成功集合为空?"}
+        Z["与历史上次集合计算<br/>Jaccard 相似度"]
+        AA{"sim >= jaccard_threshold?"}
+        AB["high_similarity_count++"]
+        AC["high_similarity_count = 0"]
+        AD{"high_sim_count<br/>>= sample_count?"}
+        AE{"白名单匹配?<br/>(checkpoint/save_model<br/>/load_data/DataLoader)"}
+        AF["NodeObservation::Normal<br/>(白名单放行)"]
+        AG{"high_sim_rank_count<br/>>= ceil(rank_count<br/>× node_rank_quorum)?"}
+        AH["NodeObservation::Hang"]
+        AI["NodeObservation::Normal"]
+        AJ{"所有 rank 既无历史<br/>也无失败?"}
+        AK["NodeObservation::NoSignal"]
+    end
+
+    subgraph GlobalVote["🗳️ 全局投票 (update_global_status)"]
+        BA["收集所有节点观测结果"]
+        BB{"有效观测 (非NoSignal)<br/>数量 > 0?"}
+        BC["observe_no_signal()<br/>保持原状态不变"]
+        BD{"hang_count × 2<br/>>= total_count?"}
+        BE["enter_hang_with_backdate()<br/>回溯 = sample_count<br/>× sample_interval_secs"]
+        BF["observe_normal()<br/>consecutive_normal_count++"]
+        BG{"normal_count<br/>>= recovery_normal_rounds?"}
+        BH["clear hang_event_id<br/>若发过告警则排队<br/>pending_recovery"]
+        BI["保持 Hang 状态<br/>(去抖)"]
+    end
+
+    subgraph Actions["📢 操作执行"]
+        CA{"状态 == Hang?"}
+        CB{"should_log()?<br/>(本事件未记录过)"}
+        CC["HangLogger::log_hang_event()<br/>写 JSON + 火焰图 SVG"]
+        CD{"should_notify()?<br/>(本事件未通知过)"}
+        CE["run_rank_analysis()<br/>全量 StackTrie 分析<br/>找分叉点 / 慢 rank"]
+        CF["send_hang_alert()<br/>钉钉 Webhook 通知<br/>+ USER_DINGBOT 并行"]
+        CG["mark_notified()"]
+        CH{"pending_recovery?"}
+        CI["send_hang_recovery_alert()<br/>钉钉告警解除通知"]
+        CJ["不做操作"]
+    end
+
+    subgraph HealthOverlay["🩺 健康状态叠加 (adapter.rs)"]
+        DA["apply_hang_state_to_metrics()"]
+        DB{"全局状态 == Hang?"}
+        DC["不修改健康状态"]
+        DD{"有 Rank 分析结果?"}
+        DE["issue_reason 非空 → Critical<br/>anomaly_score>0 → Warning<br/>hang_node 上其余 rank → Warning"]
+        DF["hang_node 上全量 rank<br/>→ Critical (疑似根因)"]
+        DG["重算节点级<br/>Critical/Warning/Healthy"]
+    end
+
+    D --> E
+    E --> F
+    F -->|是| G
+    F -->|否| H
+    G --> D
+    H -->|是| I --> J --> K
+    H -->|否| K
+    K --> L
+    L --> M --> N
+    N -->|是| O
+    N -->|否| P
+    O --> Q
+    P --> Q
+    Q --> R
+    R -->|是| S
+    S -->|是| T --> U
+    U -->|是| V
+    U -->|否| W
+    S -->|否| W
+    R -->|否| X --> Y
+    Y -->|是| W
+    Y -->|否| Z --> AA
+    AA -->|是| AB --> AD
+    AA -->|否| AC --> AD
+    AD -->|是| V
+    AD -->|否| AE
+    V --> AE
+    W --> AJ
+    AE -->|是| AF
+    AE -->|否| AG
+    AG -->|是| AH
+    AG -->|否| AI
+    AJ -->|是| AK
+    AJ -->|否| AH
+    AK --> BA
+    AF --> BA
+    AH --> BA
+    AI --> BA
+    BA --> BB
+    BB -->|否| BC --> CA
+    BB -->|是| BD
+    BD -->|是| BE --> CA
+    BD -->|否| BF --> BG
+    BG -->|是| BH --> CA
+    BG -->|否| BI --> CA
+    CA -->|是| CB
+    CB -->|是| CC
+    CB -->|否| CD
+    CC --> CD
+    CD -->|是| CE --> CF --> CG
+    CD -->|否| D
+    CA -->|否| CH
+    CH -->|是| CI --> D
+    CH -->|否| CJ --> D
+    DA --> DB
+    DB -->|否| DC
+    DB -->|是| DD
+    DD -->|有| DE --> DG
+    DD -->|无| DF --> DG
+
+    style A fill:#4CAF50,color:#fff
+    style AH fill:#f44336,color:#fff
+    style AK fill:#FF9800,color:#fff
+    style BE fill:#f44336,color:#fff
+    style BH fill:#4CAF50,color:#fff
+    style CF fill:#9C27B0,color:#fff
+    style CI fill:#2196F3,color:#fff
+    style DE fill:#f44336,color:#fff
+    style DF fill:#FF5722,color:#fff
