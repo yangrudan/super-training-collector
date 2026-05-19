@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use serde::Serialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ─── 任务平台配置 ─────────────────────────────────────────────────────────────
 
@@ -45,6 +46,8 @@ pub struct JobInfo {
 
 pub struct AppState {
     pub collectors: DashMap<String, CollectorEntry>,
+    pub unnamed_collectors: DashMap<String, String>,
+    pub unnamed_counter: AtomicU64,
     pub job_platform: JobPlatformConfig,
 }
 
@@ -53,6 +56,8 @@ pub type SharedState = Arc<AppState>;
 pub fn new_state() -> SharedState {
     Arc::new(AppState {
         collectors: DashMap::new(),
+        unnamed_collectors: DashMap::new(),
+        unnamed_counter: AtomicU64::new(1),
         job_platform: JobPlatformConfig::from_env(),
     })
 }
@@ -71,28 +76,28 @@ pub struct CollectorEntry {
     pub job_info: Option<JobInfo>,
 }
 
-/// 从请求中提取 Collector ID 和地址
-pub fn resolve_collector_id(
-    headers: &axum::http::HeaderMap,
+/// 使用 JOB_ID 作为 ECS 管理标识；未提供时按来源 IP 分配稳定的“未命名任务N”。
+pub fn resolve_collector_identity(
+    state: &SharedState,
+    job_id: &str,
     connect_info: &SocketAddr,
 ) -> (String, String) {
     let source_ip = connect_info.ip().to_string();
 
-    let id = headers
-        .get("x-collector-id")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| source_ip.clone());
+    let id = if job_id.trim().is_empty() {
+        let entry = state
+            .unnamed_collectors
+            .entry(source_ip.clone())
+            .or_insert_with(|| {
+                let index = state.unnamed_counter.fetch_add(1, Ordering::SeqCst);
+                format!("未命名任务{}", index)
+            });
+        entry.value().clone()
+    } else {
+        job_id.trim().to_string()
+    };
 
-    let addr = headers
-        .get("x-collector-addr")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("http://{}:3000", source_ip));
-
-    (id, addr)
+    (id, format!("http://{}:3000", source_ip))
 }
 
 // ─── API 响应结构 ─────────────────────────────────────────────────────────────

@@ -29,6 +29,12 @@ pub async fn start_hang_detector_scheduler() {
         return;
     }
 
+    {
+        let state = super::state::get_hang_state();
+        let mut state = state.write().unwrap();
+        state.mark_enabled();
+    }
+
     tracing::info!(
         "Starting HANG detection scheduler with interval: {}s",
         config.sample_interval_secs

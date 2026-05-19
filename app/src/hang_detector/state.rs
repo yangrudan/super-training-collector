@@ -140,6 +140,14 @@ impl HangDetectorState {
         self.hang_notified = true;
     }
 
+    /// HANG 检测已启用，但尚未得到可判定信号时，状态不应继续显示为 Disabled。
+    pub fn mark_enabled(&mut self) {
+        if self.status == HangStatus::Disabled {
+            self.status = HangStatus::Normal;
+        }
+        self.touch();
+    }
+
     /// 检查是否需要发送通知（HANG 且未通知过）
     pub fn should_notify(&self) -> bool {
         self.status == HangStatus::Hang && self.hang_event_id.is_some() && !self.hang_notified

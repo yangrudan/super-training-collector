@@ -152,9 +152,7 @@ chmod +x run_server.sh
 | `RANK_ANALYSIS_MINORITY_THRESHOLD` | `0.3` | 少数派阈值 (0.05-0.5)，低于此覆盖率的分支视为异常 |
 | `PUSH_TARGET_URL`  | _(空，禁用)_      | ECS 推送端点，设置后启用推送（例：`http://ecs-host:4000/push`） |
 | `PUSH_INTERVAL_SECS` | `30`           | 推送间隔（秒），最小 10  |
-| `PUSH_COLLECTOR_ID` | _(空)_          | 本 Collector 在 ECS 中的唯一标识 |
-| `PUSH_COLLECTOR_ADDR` | _(空)_        | ECS 反向代理火焰图时访问本机的地址（如 `http://10.0.0.1:3000`） |
-| `JOB_ID`           | _(空)_            | 训练任务 ID，推送至 ECS 后当 HANG 时自动查询任务详情 |
+| `JOB_ID`           | _(空)_            | 训练任务 ID，ECS 使用它作为任务标识；为空时 ECS 自动分配未命名任务 |
 
 ### 手动启动
 
@@ -211,7 +209,7 @@ Collector B (3000) ──► ECS Server (4000) ──► Web 仪表盘
 Collector C (3000) ─┘
 ```
 
-每台 Collector 每隔 `PUSH_INTERVAL_SECS` 秒通过 HTTP POST 将指标数据推送到 ECS，ECS 保留每台 Collector 的最新快照并在 Web UI 分别展示。
+每台 Collector 每隔 `PUSH_INTERVAL_SECS` 秒通过 HTTP POST 将指标数据推送到 ECS，ECS 使用 `JOB_ID` 作为任务标识并保留每个任务的最新快照。未提供 `JOB_ID` 时，ECS 按来源 IP 自动分配 `未命名任务1`、`未命名任务2` 等名称。
 
 ### 快速启动 ECS 服务器
 
@@ -230,17 +228,14 @@ ECS_ADDR=0.0.0.0:4000 ./target/release/ecs-server
 ```bash
 export PUSH_TARGET_URL="http://<ecs-host>:4000/push"
 export PUSH_INTERVAL_SECS=30
-export PUSH_COLLECTOR_ID="cluster-A"           # 唯一标识，供 UI 显示
-export PUSH_COLLECTOR_ADDR="http://<本机IP>:3000"  # ECS 反向代理火焰图时访问本机
+export JOB_ID="training-job-12345"             # 可选；为空时 ECS 自动命名
 ```
 
 | 字段 | config/collector.json 键 | 对应环境变量 | 说明 |
 | ---- | ------------------------ | ------------ | ---- |
 | 推送目标 | `push_target_url` | `PUSH_TARGET_URL` | ECS `/push` 端点，空则禁用 |
 | 推送间隔 | `push_interval_secs` | `PUSH_INTERVAL_SECS` | 秒，最小 10 |
-| Collector ID | `push_collector_id` | `PUSH_COLLECTOR_ID` | 空时 ECS 用源 IP 作为 ID |
-| Collector 地址 | `push_collector_addr` | `PUSH_COLLECTOR_ADDR` | 空时 ECS 推算为 `http://<源IP>:3000` |
-| 训练任务 ID | _(无)_ | `JOB_ID` | HANG 时 ECS 用此 ID 查询任务信息 |
+| 训练任务 ID | _(无)_ | `JOB_ID` | ECS 使用此 ID 管理任务；为空时自动分配未命名任务 |
 
 ### ECS 服务器 API
 
@@ -248,11 +243,11 @@ export PUSH_COLLECTOR_ADDR="http://<本机IP>:3000"  # ECS 反向代理火焰图
 | ---- | ---- | ---- |
 | `POST` | `/push` | 接收 Collector 推送数据（JSON Body + 请求头）|
 | `GET` | `/api/collectors` | 返回所有 Collector 摘要列表 |
-| `GET` | `/api/collector/:id` | 返回单个 Collector 详情 |
-| `GET` | `/api/collector/:id/flamegraph/all` | 代理拉取全量火焰图 SVG |
-| `GET` | `/api/collector/:id/flamegraph/:node_ip` | 代理拉取指定节点火焰图 SVG |
+| `GET` | `/api/collector/{id}` | 返回单个 Collector 详情 |
+| `GET` | `/api/collector/{id}/flamegraph/all` | 代理拉取全量火焰图 SVG |
+| `GET` | `/api/collector/{id}/flamegraph/{node_ip}` | 代理拉取指定节点火焰图 SVG |
 | `GET` | `/` | Web 仪表盘首页（所有 Collector 卡片）|
-| `GET` | `/collector/:id` | 单个 Collector 详情页 |
+| `GET` | `/collector/{id}` | 单个 Collector 详情页 |
 
 ### ECS 服务器环境变量
 
@@ -276,12 +271,7 @@ export PUSH_COLLECTOR_ADDR="http://<本机IP>:3000"  # ECS 反向代理火焰图
 }
 ```
 
-请求头：
-
-| 请求头 | 说明 |
-| ------ | ---- |
-| `X-Collector-ID` | Collector 标识，优先于源 IP |
-| `X-Collector-Addr` | Collector REST 地址，用于火焰图代理 |
+ECS 使用 payload 中的 `job_id` 作为任务标识；为空时按来源 IP 自动分配未命名任务。火焰图代理地址由 ECS 根据请求来源 IP 推算为 `http://<来源IP>:3000`。
 
 ---
 
@@ -370,9 +360,7 @@ super-trainning-collector/
   "job_platform_app_secret": "",
   "job_platform_user_id": "",
   "push_target_url": "",
-  "push_interval_secs": 30,
-  "push_collector_id": "",
-  "push_collector_addr": ""
+  "push_interval_secs": 30
 }
 ```
 
@@ -383,8 +371,6 @@ super-trainning-collector/
 | `batch_size` | `500` | 批量拉取调用栈的并发数 |
 | `push_target_url` | `""` | ECS 推送端点（空表示禁用）|
 | `push_interval_secs` | `30` | 推送间隔（秒）|
-| `push_collector_id` | `""` | 本 Collector 标识（空时 ECS 用源 IP）|
-| `push_collector_addr` | `""` | 本 Collector 的 REST 访问地址（供 ECS 火焰图代理使用）|
 
 ### 测试连通性
 

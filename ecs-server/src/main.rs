@@ -30,18 +30,18 @@ async fn main() {
         .route("/push", post(handlers::push_handler))
         // JSON API
         .route("/api/collectors", get(handlers::api_collectors))
-        .route("/api/collector/:id", get(handlers::api_collector))
+        .route("/api/collector/{id}", get(handlers::api_collector))
         .route(
-            "/api/collector/:id/flamegraph/all",
+            "/api/collector/{id}/flamegraph/all",
             get(handlers::api_flamegraph_all),
         )
         .route(
-            "/api/collector/:id/flamegraph/:node_ip",
+            "/api/collector/{id}/flamegraph/{node_ip}",
             get(handlers::api_flamegraph_node),
         )
         // HTML 页面
         .route("/", get(handlers::page_dashboard))
-        .route("/collector/:id", get(handlers::page_collector))
+        .route("/collector/{id}", get(handlers::page_collector))
         .layer(cors)
         .with_state(shared);
 

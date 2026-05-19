@@ -3,7 +3,5 @@
   "step_query_port_offset": 1,
   "batch_size": 500,
   "push_target_url": "",
-  "push_interval_secs": 30,
-  "push_collector_id": "",
-  "push_collector_addr": ""
+  "push_interval_secs": 30
 }

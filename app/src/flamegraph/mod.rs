@@ -47,13 +47,6 @@ pub struct CollectorConfig {
     /// 数据推送间隔（秒），默认 30 秒
     #[serde(default = "default_push_interval_secs")]
     pub push_interval_secs: u64,
-    /// 本 Collector 在 ECS 中的唯一标识（如 "cluster-A"），空时由 ECS 用源 IP 识别
-    #[serde(default)]
-    pub push_collector_id: String,
-    /// ECS 反向代理火焰图时访问本 Collector 的地址（如 "http://10.0.0.1:3000"）
-    /// 空时 ECS 自动用源 IP + 3000 端口推算
-    #[serde(default)]
-    pub push_collector_addr: String,
 }
 
 fn default_push_interval_secs() -> u64 {

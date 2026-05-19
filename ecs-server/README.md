@@ -15,7 +15,7 @@ Collector C (port 3000) ─┘
 ```
 
 - 每台 Collector 每隔 N 秒将全局指标、节点列表、HANG 状态以 JSON POST 推送至 ECS。
-- ECS 使用 `X-Collector-ID` 请求头（或源 IP）区分不同 Collector。
+- ECS 使用 payload 中的 `job_id` 区分任务；为空时按来源 IP 自动分配 `未命名任务N`。
 - ECS 保留每台 Collector 的最新数据快照，Web 仪表盘每 30 秒自动刷新。
 - 火焰图通过 ECS 代理从对应 Collector 实时拉取（SVG）。
 
@@ -66,11 +66,8 @@ export PUSH_TARGET_URL="http://<ecs-host>:4000/push"
 # 可选：推送间隔（秒，最小 10，默认 30）
 export PUSH_INTERVAL_SECS=30
 
-# 推荐：Collector 唯一标识，显示在 ECS 仪表盘上
-export PUSH_COLLECTOR_ID="gpu-cluster-A"
-
-# 推荐：ECS 代理火焰图时访问本机的 URL
-export PUSH_COLLECTOR_ADDR="http://10.0.0.1:3000"
+# 可选：训练任务 ID，ECS 使用它作为任务标识
+export JOB_ID="training-job-12345"
 ```
 
 或写入 `config/collector.json`：
@@ -79,9 +76,7 @@ export PUSH_COLLECTOR_ADDR="http://10.0.0.1:3000"
 {
   "callstack_base_port": 9933,
   "push_target_url": "http://10.0.0.100:4000/push",
-  "push_interval_secs": 30,
-  "push_collector_id": "gpu-cluster-A",
-  "push_collector_addr": "http://10.0.0.1:3000"
+  "push_interval_secs": 30
 }
 ```
 
@@ -102,8 +97,6 @@ export PUSH_COLLECTOR_ADDR="http://10.0.0.1:3000"
 | 请求头 | 必须 | 说明 |
 | ------ | ---- | ---- |
 | `Content-Type` | 是 | `application/json` |
-| `X-Collector-ID` | 否 | Collector 标识；未提供时使用源 IP |
-| `X-Collector-Addr` | 否 | Collector 的 REST 基础 URL（用于火焰图代理） |
 
 **请求体**
 
@@ -171,15 +164,15 @@ export PUSH_COLLECTOR_ADDR="http://10.0.0.1:3000"
 ]
 ```
 
-#### `GET /api/collector/:id`
+#### `GET /api/collector/{id}`
 
 返回单个 Collector 的完整快照（全局指标 + 节点列表 + HANG 状态）。
 
-#### `GET /api/collector/:id/flamegraph/all`
+#### `GET /api/collector/{id}/flamegraph/all`
 
 代理拉取该 Collector 的全量火焰图（SVG），转发至 `{collector_addr}/rest/flamegraph/all`。
 
-#### `GET /api/collector/:id/flamegraph/:node_ip`
+#### `GET /api/collector/{id}/flamegraph/{node_ip}`
 
 代理拉取指定节点的火焰图，转发至 `{collector_addr}/rest/flamegraph/{node_ip}`。
 
@@ -190,7 +183,7 @@ export PUSH_COLLECTOR_ADDR="http://10.0.0.1:3000"
 | 路径 | 说明 |
 | ---- | ---- |
 | `GET /` | 仪表盘首页，展示所有 Collector 状态卡片 |
-| `GET /collector/:id` | 单个 Collector 详情页（指标、节点表格、火焰图）|
+| `GET /collector/{id}` | 单个 Collector 详情页（指标、节点表格、火焰图）|
 
 ---
 
@@ -213,7 +206,7 @@ ecs-server/
 ### 关键设计
 
 - **并发安全**：使用 `DashMap`（无锁分段并发 Map）存储 Collector 数据，无需额外 Mutex。
-- **Collector 识别**：优先使用 `X-Collector-ID` 请求头，未提供则降级为源 IP。
+- **任务识别**：使用 payload 中的 `job_id` 作为 ECS 任务标识；为空时按来源 IP 分配稳定的 `未命名任务N`。
 - **火焰图代理**：ECS 将火焰图请求转发给对应 Collector 的 REST 端点（`/rest/flamegraph/*`），超时 120 秒。
 - **HTML 嵌入**：模板文件通过 `include_str!()` 在编译时嵌入二进制，无需外部文件。
 
@@ -232,6 +225,6 @@ ecs-server/
 ## 注意事项
 
 - **数据保留**：ECS 仅保存每台 Collector 的**最新快照**，无历史记录。
-- **网络要求**：ECS 代理火焰图时需能直接访问 Collector 的 `PUSH_COLLECTOR_ADDR`，请确保网络可达。
+- **网络要求**：ECS 代理火焰图时会根据推送来源 IP 访问 `http://<来源IP>:3000`，请确保该地址从 ECS 可达。
 - **无鉴权**：当前无内置认证机制，建议部署在内网或通过 Nginx 加 TLS + Basic Auth。
 - **Collector 下线**：Collector 停止推送后，ECS 仍保留其最后一次数据，不会自动清除。

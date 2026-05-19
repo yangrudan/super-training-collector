@@ -148,7 +148,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/rest/flamegraph/all", axum::routing::get(rest_flamegraph_all))
-        .route("/rest/flamegraph/:ip", axum::routing::get(rest_flamegraph_node))
+        .route("/rest/flamegraph/{ip}", axum::routing::get(rest_flamegraph_node))
         .leptos_routes(&leptos_options, routes, {
             let leptos_options = leptos_options.clone();
             move || shell(leptos_options.clone())

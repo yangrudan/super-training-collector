@@ -36,17 +36,9 @@ pub struct PushPayload {
 /// 解析推送配置：目标 URL 和推送间隔（秒）
 fn resolve_push_config() -> (String, u64) {
     let config_path = get_config_path();
-    let (url_from_file, interval_from_file, id_from_file, addr_from_file) =
-        load_collector_config(&config_path)
-            .map(|c| {
-                (
-                    c.push_target_url,
-                    c.push_interval_secs,
-                    c.push_collector_id,
-                    c.push_collector_addr,
-                )
-            })
-            .unwrap_or_default();
+    let (url_from_file, interval_from_file) = load_collector_config(&config_path)
+        .map(|c| (c.push_target_url, c.push_interval_secs))
+        .unwrap_or_default();
 
     let target_url = std::env::var("PUSH_TARGET_URL")
         .unwrap_or(url_from_file)
@@ -60,26 +52,6 @@ fn resolve_push_config() -> (String, u64) {
 
     // 推送间隔最小 10 秒，避免过于频繁
     (target_url, interval.max(10))
-}
-
-/// 解析 Collector 标识和地址（供 ECS 识别和反向代理使用）
-fn resolve_collector_meta() -> (String, String) {
-    let config_path = get_config_path();
-    let (id_from_file, addr_from_file) = load_collector_config(&config_path)
-        .map(|c| (c.push_collector_id, c.push_collector_addr))
-        .unwrap_or_default();
-
-    let collector_id = std::env::var("PUSH_COLLECTOR_ID")
-        .unwrap_or(id_from_file)
-        .trim()
-        .to_string();
-
-    let collector_addr = std::env::var("PUSH_COLLECTOR_ADDR")
-        .unwrap_or(addr_from_file)
-        .trim()
-        .to_string();
-
-    (collector_id, collector_addr)
 }
 
 /// 采集当前数据并构建推送 Payload
@@ -145,18 +117,9 @@ pub async fn start_push_scheduler() {
         .build()
         .unwrap_or_default();
 
-    let (collector_id, collector_addr) = resolve_collector_meta();
-
     loop {
         if let Some(payload) = build_payload().await {
-            let mut req = client.post(&target_url).json(&payload);
-            if !collector_id.is_empty() {
-                req = req.header("X-Collector-ID", &collector_id);
-            }
-            if !collector_addr.is_empty() {
-                req = req.header("X-Collector-Addr", &collector_addr);
-            }
-            match req.send().await {
+            match client.post(&target_url).json(&payload).send().await {
                 Ok(resp) => {
                     let status = resp.status();
                     if !status.is_success() {

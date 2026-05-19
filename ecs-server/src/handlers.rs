@@ -1,10 +1,10 @@
 //! HTTP 请求处理器
 
 use crate::job_info_client::fetch_job_info;
-use crate::state::{CollectorEntry, SharedState, resolve_collector_id};
+use crate::state::{CollectorEntry, SharedState, resolve_collector_identity};
 use axum::{
     extract::{ConnectInfo, Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
 use serde_json::json;
@@ -24,7 +24,6 @@ fn now_secs() -> u64 {
 pub async fn push_handler(
     State(state): State<SharedState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
@@ -35,14 +34,14 @@ pub async fn push_handler(
         }
     };
 
-    let (id, collector_addr) = resolve_collector_id(&headers, &addr);
     let job_id = payload
         .get("job_id")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let (id, collector_addr) = resolve_collector_identity(&state, &job_id, &addr);
 
-    tracing::debug!("[ecs/push] 收到来自 {} 的推送，collector_id={}", addr, id);
+    tracing::debug!("[ecs/push] 收到来自 {} 的推送，task_id={}", addr, id);
 
     // 检测是否 HANG（保留旧的 job_info，仅在 HANG 时触发新查询）
     let is_hanging = payload
@@ -112,7 +111,7 @@ pub async fn api_collectors(State(state): State<SharedState>) -> impl IntoRespon
     Json(list)
 }
 
-/// GET /api/collector/:id  — 单个 Collector 详情
+/// GET /api/collector/{id}  — 单个 Collector 详情
 pub async fn api_collector(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -126,7 +125,7 @@ pub async fn api_collector(
 
 // ─── 火焰图反向代理 ────────────────────────────────────────────────────────────
 
-/// GET /api/collector/:id/flamegraph/all
+/// GET /api/collector/{id}/flamegraph/all
 pub async fn api_flamegraph_all(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -134,7 +133,7 @@ pub async fn api_flamegraph_all(
     proxy_flamegraph(&state, &id, "all").await
 }
 
-/// GET /api/collector/:id/flamegraph/:node_ip
+/// GET /api/collector/{id}/flamegraph/{node_ip}
 pub async fn api_flamegraph_node(
     State(state): State<SharedState>,
     Path((id, node_ip)): Path<(String, String)>,
@@ -184,8 +183,7 @@ pub async fn page_dashboard() -> impl IntoResponse {
     axum::response::Html(DASHBOARD_HTML)
 }
 
-/// GET /collector/:id  — 单个 Collector 详情页
+/// GET /collector/{id}  — 单个 Collector 详情页
 pub async fn page_collector(Path(_id): Path<String>) -> impl IntoResponse {
     axum::response::Html(COLLECTOR_HTML)
 }
-
