@@ -55,8 +55,9 @@ pub async fn push_handler(
     // 检测当前 HANG 状态及与上一帧的差异
     let is_hanging = payload
         .get("hang")
-        .and_then(|h| h.get("is_hanging"))
-        .and_then(|v| v.as_bool())
+        .and_then(|h| h.get("status"))
+        .and_then(|v| v.as_str())
+        .map(|s| s == "Hang")
         .unwrap_or(false);
     let hang_status_now = hang_status_of(&payload);
 
@@ -68,8 +69,9 @@ pub async fn push_handler(
             let prev_hanging = entry
                 .payload
                 .get("hang")
-                .and_then(|h| h.get("is_hanging"))
-                .and_then(|v| v.as_bool())
+                .and_then(|h| h.get("status"))
+                .and_then(|v| v.as_str())
+                .map(|s| s == "Hang")
                 .unwrap_or(false);
             let prev_status = hang_status_of(&entry.payload);
             let prev_critical = entry

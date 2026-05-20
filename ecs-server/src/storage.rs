@@ -407,8 +407,9 @@ pub fn extract_metrics(ts: i64, payload: &serde_json::Value) -> MetricsRow {
 
     let is_hanging = payload
         .get("hang")
-        .and_then(|h| h.get("is_hanging"))
-        .and_then(|v| v.as_bool())
+        .and_then(|h| h.get("status"))
+        .and_then(|v| v.as_str())
+        .map(|s| s == "Hang")
         .unwrap_or(false);
 
     MetricsRow {
