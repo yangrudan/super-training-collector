@@ -28,7 +28,7 @@ pub struct PushPayload {
     pub nodes: Vec<NodeMetrics>,
     /// HANG 检测状态快照
     pub hang: HangStatusSnapshot,
-    /// 训练任务 ID（来自环境变量 JOB_ID），供 ECS 查询任务信息
+    /// 训练任务名（来自环境变量 JOB_NAME），供 ECS 查询任务信息
     #[serde(default)]
     pub job_id: String,
 }
@@ -88,7 +88,7 @@ async fn build_payload() -> Option<PushPayload> {
         global,
         nodes,
         hang,
-        job_id: std::env::var("JOB_ID").unwrap_or_default(),
+        job_id: std::env::var("JOB_NAME").unwrap_or_default(),
     })
 }
 

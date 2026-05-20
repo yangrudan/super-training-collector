@@ -93,7 +93,7 @@ pub struct CollectorEntry {
     pub job_info: Option<JobInfo>,
 }
 
-/// 使用 JOB_ID 作为 ECS 管理标识；未提供时按来源 IP 分配稳定的“未命名任务N”。
+/// 使用推送中的任务标识作为 ECS 管理标识；未提供时按来源 IP 分配稳定的“未命名任务N”。
 pub fn resolve_collector_identity(
     state: &SharedState,
     job_id: &str,

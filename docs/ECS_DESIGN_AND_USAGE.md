@@ -28,7 +28,7 @@ Collector C ─┘                                     /
 
 | 组件 | 位置 | 职责 |
 | --- | --- | --- |
-| Collector 推送调度器 | `app/src/push_scheduler.rs` | 定时采集全局指标、节点列表、HANG 快照和 `JOB_ID`，POST 到 ECS `/push` |
+| Collector 推送调度器 | `app/src/push_scheduler.rs` | 定时采集全局指标、节点列表、HANG 快照和 `JOB_NAME`，POST 到 ECS `/push` |
 | ECS HTTP 服务 | `ecs-server/src/main.rs` | 注册 `/push`、JSON API、HTML 页面和火焰图代理路由 |
 | ECS 共享状态 | `ecs-server/src/state.rs` | 使用 `DashMap<String, CollectorEntry>` 保存各 Collector 最新快照 |
 | ECS 请求处理器 | `ecs-server/src/handlers.rs` | 处理推送、查询、页面渲染和火焰图代理 |
@@ -134,7 +134,7 @@ ECS_ADDR=0.0.0.0:8080 ./target/release/ecs-server
 ```bash
 export PUSH_TARGET_URL="http://<ecs-host>:4000/push"
 export PUSH_INTERVAL_SECS=30
-export JOB_ID="training-job-12345"
+export JOB_NAME="training-job-12345"
 ```
 
 也可以写入 `config/collector.json`：
@@ -155,7 +155,7 @@ export JOB_ID="training-job-12345"
 | --- | --- | --- | --- |
 | 推送目标 | `PUSH_TARGET_URL` | `push_target_url` | 为空时禁用推送 |
 | 推送间隔 | `PUSH_INTERVAL_SECS` | `push_interval_secs` | 最小 10 秒，默认 30 秒 |
-| 训练任务 ID | `JOB_ID` | 无 | ECS 使用此 ID 管理任务；为空时自动分配未命名任务 |
+| 训练任务名 | `JOB_NAME` | 无 | ECS 使用此值管理任务；为空时自动分配未命名任务 |
 
 火焰图代理地址由 ECS 根据推送来源 IP 推算为 `http://<来源IP>:3000`。如果 ECS 无法访问该地址，总览和详情仍可显示，但火焰图代理会失败。
 
@@ -236,7 +236,7 @@ Collector 不存在时返回 `404`。
 ## 10. 部署建议
 
 - ECS 与 Collector 建议部署在同一内网，确保 ECS 能通过推送来源 IP 访问 Collector 的 3000 端口。
-- 生产环境建议设置 `JOB_ID`，这样 ECS 可以按训练任务稳定管理；未设置时仅按来源 IP 分配未命名任务。
+- 生产环境建议设置 `JOB_NAME`，这样 ECS 可以按训练任务稳定管理；未设置时仅按来源 IP 分配未命名任务。
 - 当前 ECS 不内置鉴权，建议通过内网访问控制或反向代理添加 TLS、Basic Auth、IP 白名单等保护。
 - ECS 仅保存最新快照，不保存历史数据；如需历史趋势，需要额外接入时序数据库或日志链路。
 - Collector 下线后，ECS 会保留其最后一次快照，不会自动清理。
@@ -247,7 +247,7 @@ Collector 不存在时返回 `404`。
 | --- | --- | --- |
 | ECS 首页没有 Collector | Collector 未配置 `PUSH_TARGET_URL`，或网络不通 | 检查 Collector 日志中的 `[push_scheduler]`，确认目标 URL 和推送状态 |
 | Collector 卡片一直显示旧时间 | Collector 停止推送或推送失败 | 检查 Collector 进程、ECS 地址、防火墙和 `/push` 返回状态 |
-| 多个任务被合并成一个 | 多个 Collector 使用相同 `JOB_ID`，或未设置 `JOB_ID` 且来源 IP 相同 | 为不同训练任务设置不同 `JOB_ID` |
+| 多个任务被合并成一个 | 多个 Collector 使用相同 `JOB_NAME`，或未设置 `JOB_NAME` 且来源 IP 相同 | 为不同训练任务设置不同 `JOB_NAME` |
 | 火焰图加载失败 | ECS 无法通过来源 IP 访问 Collector | 在 ECS 机器上访问 `http://<来源IP>:3000/rest/flamegraph/all` 验证连通性 |
-| HANG 时没有任务详情 | 未配置任务平台变量，或 `JOB_ID` 为空，或平台 API 查询失败 | 检查 ECS 的 `JOB_PLATFORM_*` 环境变量和 `[job_info]` 日志 |
+| HANG 时没有任务详情 | 未配置任务平台变量，或 `JOB_NAME` 为空，或平台 API 查询失败 | 检查 ECS 的 `JOB_PLATFORM_*` 环境变量和 `[job_info]` 日志 |
 | `/push` 返回 400 | 请求体不是合法 JSON | 检查推送 payload 或手工请求中的 JSON 格式 |

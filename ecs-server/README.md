@@ -67,7 +67,7 @@ export PUSH_TARGET_URL="http://<ecs-host>:4000/push"
 export PUSH_INTERVAL_SECS=30
 
 # 可选：训练任务 ID，ECS 使用它作为任务标识
-export JOB_ID="training-job-12345"
+export JOB_NAME="training-job-12345"
 ```
 
 或写入 `config/collector.json`：

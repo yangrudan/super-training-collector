@@ -152,7 +152,7 @@ chmod +x run_server.sh
 | `RANK_ANALYSIS_MINORITY_THRESHOLD` | `0.3` | 少数派阈值 (0.05-0.5)，低于此覆盖率的分支视为异常 |
 | `PUSH_TARGET_URL`  | _(空，禁用)_      | ECS 推送端点，设置后启用推送（例：`http://ecs-host:4000/push`） |
 | `PUSH_INTERVAL_SECS` | `30`           | 推送间隔（秒），最小 10  |
-| `JOB_ID`           | _(空)_            | 训练任务 ID，ECS 使用它作为任务标识；为空时 ECS 自动分配未命名任务 |
+| `JOB_NAME`         | _(空)_            | 训练任务名，ECS 使用它作为任务标识；为空时 ECS 自动分配未命名任务 |
 
 ### 手动启动
 
@@ -209,7 +209,7 @@ Collector B (3000) ──► ECS Server (4000) ──► Web 仪表盘
 Collector C (3000) ─┘
 ```
 
-每台 Collector 每隔 `PUSH_INTERVAL_SECS` 秒通过 HTTP POST 将指标数据推送到 ECS，ECS 使用 `JOB_ID` 作为任务标识并保留每个任务的最新快照。未提供 `JOB_ID` 时，ECS 按来源 IP 自动分配 `未命名任务1`、`未命名任务2` 等名称。
+每台 Collector 每隔 `PUSH_INTERVAL_SECS` 秒通过 HTTP POST 将指标数据推送到 ECS，ECS 使用 `JOB_NAME` 作为任务标识并保留每个任务的最新快照。未提供 `JOB_NAME` 时，ECS 按来源 IP 自动分配 `未命名任务1`、`未命名任务2` 等名称。
 
 ### 快速启动 ECS 服务器
 
@@ -228,14 +228,14 @@ ECS_ADDR=0.0.0.0:4000 ./target/release/ecs-server
 ```bash
 export PUSH_TARGET_URL="http://<ecs-host>:4000/push"
 export PUSH_INTERVAL_SECS=30
-export JOB_ID="training-job-12345"             # 可选；为空时 ECS 自动命名
+export JOB_NAME="training-job-12345"           # 可选；为空时 ECS 自动命名
 ```
 
 | 字段 | config/collector.json 键 | 对应环境变量 | 说明 |
 | ---- | ------------------------ | ------------ | ---- |
 | 推送目标 | `push_target_url` | `PUSH_TARGET_URL` | ECS `/push` 端点，空则禁用 |
 | 推送间隔 | `push_interval_secs` | `PUSH_INTERVAL_SECS` | 秒，最小 10 |
-| 训练任务 ID | _(无)_ | `JOB_ID` | ECS 使用此 ID 管理任务；为空时自动分配未命名任务 |
+| 训练任务名 | _(无)_ | `JOB_NAME` | ECS 使用此值管理任务；为空时自动分配未命名任务 |
 
 ### ECS 服务器 API
 
