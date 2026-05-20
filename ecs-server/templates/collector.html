@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Collector 详情 · ECS 监控</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -20,6 +21,15 @@
     .back-btn:hover { border-color: var(--blue); color: var(--text); }
     header h1 { font-size: 1.1rem; font-weight: 700; }
     .header-meta { font-size: 0.8rem; color: var(--muted); margin-left: auto; }
+    .stale-banner {
+      max-width: 1300px; margin: 0 auto 0; padding: 0.75rem 2rem;
+      background: rgba(234,179,8,.12); border-bottom: 1px solid var(--yellow);
+      color: var(--yellow); font-size: 0.9rem; display: none;
+    }
+    .stale-banner.offline {
+      background: rgba(148,163,184,.15); border-bottom-color: var(--muted);
+      color: var(--text);
+    }
     main { padding: 24px; display: flex; flex-direction: column; gap: 24px; }
     section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
     section h2 { font-size: 0.9rem; font-weight: 600; color: var(--muted); text-transform: uppercase;
@@ -60,6 +70,24 @@
     /* refresh */
     #refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--muted);
       border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 0.8rem; margin-left: 8px; }
+    /* charts */
+    .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+    .chart-card { background: var(--surface2); border-radius: 8px; padding: 14px; }
+    .chart-card h3 { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-bottom: 8px;
+      text-transform: uppercase; letter-spacing: .05em; }
+    .chart-card canvas { width: 100% !important; height: 180px !important; }
+    .range-tabs { display: flex; gap: 6px; }
+    .range-tab { background: var(--surface2); color: var(--muted); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 0.8rem; }
+    .range-tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .events-list { max-height: 240px; overflow-y: auto; }
+    .events-list .row { display: grid; grid-template-columns: 160px 120px 1fr; gap: 12px;
+      padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+    .events-list .row:last-child { border-bottom: none; }
+    .events-list .ts { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .kind-hang_start, .kind-critical_change { color: var(--red); font-weight: 600; }
+    .kind-hang_end { color: var(--green); font-weight: 600; }
+    .kind-job_info_fetched { color: var(--blue); }
   </style>
 </head>
 <body>
@@ -69,6 +97,7 @@
     <span class="header-meta" id="header-meta"></span>
     <button id="refresh-btn" onclick="load()">🔄 刷新</button>
   </header>
+  <div class="stale-banner" id="stale-banner"></div>
   <main>
     <!-- 全局指标 -->
     <section>
@@ -80,6 +109,29 @@
     <section>
       <h2>HANG 检测状态</h2>
       <div id="hang-section" class="hang-info">加载中...</div>
+    </section>
+
+    <!-- 时序趋势 -->
+    <section>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+        <h2 style="margin:0;">趋势（最近 <span id="range-label">6 小时</span>）</h2>
+        <div class="range-tabs">
+          <button class="range-tab" data-secs="3600">1h</button>
+          <button class="range-tab active" data-secs="21600">6h</button>
+          <button class="range-tab" data-secs="86400">24h</button>
+        </div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card"><h3>节点健康分布</h3><canvas id="chart-nodes"></canvas></div>
+        <div class="chart-card"><h3>HANG 状态</h3><canvas id="chart-hang"></canvas></div>
+        <div class="chart-card"><h3>平均 GPU 利用率 (%)</h3><canvas id="chart-gpu"></canvas></div>
+      </div>
+    </section>
+
+    <!-- 事件日志 -->
+    <section>
+      <h2>关键事件（HANG 起止 / 故障节点变化 / 任务信息抓取）</h2>
+      <div class="events-list" id="events-list">加载中...</div>
     </section>
 
     <!-- 节点列表 -->
@@ -158,8 +210,17 @@
       ).join('');
     }
 
-    function renderHang(hang) {
+    function renderHang(hang, data) {
       if (!hang) { document.getElementById('hang-section').textContent = '无数据'; return; }
+      if (data && (data.is_offline || data.is_stale)) {
+        const cls = data.is_offline ? 'yellow' : 'yellow';
+        const tag = data.is_offline ? '⏸ 任务已停止' : '⌛ 数据陈旧';
+        const original = hang.status || 'Unknown';
+        document.getElementById('hang-section').innerHTML =
+          `<span class="hang-status ${cls}">${tag}</span>` +
+          `<span class="hang-detail">最后状态: ${original} · 最后推送 ${ago(data.last_seen_ago_secs)}</span>`;
+        return;
+      }
       const status = hang.status || 'Unknown';
       const cls = status === 'Hang' ? 'red' : status === 'Normal' ? 'green' : 'yellow';
       const label = { Disabled: '检测禁用', Normal: '正常', Hang: '⚠ 检测到 HANG', Unknown: '未知' }[status] || status;
@@ -235,9 +296,21 @@
         document.getElementById('header-title').textContent = `集群：${data.id}`;
         document.getElementById('header-meta').textContent =
           `来源 ${data.source_ip}  ·  最后推送 ${ago(data.last_seen_ago_secs)}`;
+        const banner = document.getElementById('stale-banner');
+        if (data.is_offline) {
+          banner.className = 'stale-banner offline';
+          banner.style.display = 'block';
+          banner.innerHTML = `⏸ <b>该 Collector 已离线</b>：最后推送在 ${ago(data.last_seen_ago_secs)}，下方显示的是停止前的最后一帧数据，可能已不反映当前实际状态。`;
+        } else if (data.is_stale) {
+          banner.className = 'stale-banner';
+          banner.style.display = 'block';
+          banner.innerHTML = `⌛ <b>数据陈旧</b>：最后推送在 ${ago(data.last_seen_ago_secs)}，超过预期推送间隔。状态可能已过期。`;
+        } else {
+          banner.style.display = 'none';
+        }
         const p = data.payload || {};
         renderGlobal(p.global);
-        renderHang(p.hang);
+        renderHang(p.hang, data);
         renderNodes(p.nodes);
       } catch (e) {
         document.getElementById('header-title').textContent = '加载失败: ' + e.message;
@@ -246,6 +319,110 @@
 
     load();
     setInterval(load, 30000);
+
+    // ─── 历史趋势 & 事件 ────────────────────────────────────────────────────
+    let windowSecs = 21600; // 6h 默认
+    const charts = {};
+    const rangeLabelMap = { 3600: '1 小时', 21600: '6 小时', 86400: '24 小时' };
+
+    document.querySelectorAll('.range-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.range-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        windowSecs = parseInt(btn.dataset.secs, 10);
+        document.getElementById('range-label').textContent = rangeLabelMap[windowSecs] || (windowSecs/3600) + ' 小时';
+        loadHistory();
+      });
+    });
+
+    function toLinearChart(canvasId, datasets, opts = {}) {
+      if (charts[canvasId]) {
+        charts[canvasId].data.datasets = datasets;
+        charts[canvasId].update('none');
+        return;
+      }
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      charts[canvasId] = new Chart(ctx, {
+        type: opts.type || 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: opts.legend !== false, labels: { color: '#94a3b8', boxWidth: 10, font: { size: 10 } } },
+            tooltip: {
+              backgroundColor: '#1e293b', titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+              borderColor: '#334155', borderWidth: 1,
+              callbacks: { title: items => new Date(items[0].parsed.x * 1000).toLocaleString() },
+            },
+          },
+          scales: {
+            x: { type: 'linear',
+                 ticks: { color: '#94a3b8', maxTicksLimit: 6, font: { size: 10 },
+                          callback: v => new Date(v * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) },
+                 grid: { color: 'rgba(148,163,184,0.1)' } },
+            y: { beginAtZero: opts.beginAtZero !== false,
+                 ticks: { color: '#94a3b8', font: { size: 10 } },
+                 grid: { color: 'rgba(148,163,184,0.1)' }, stacked: !!opts.stacked,
+                 min: opts.min, max: opts.max },
+          },
+        },
+      });
+    }
+
+    async function loadHistory() {
+      try {
+        const resp = await fetch(`/api/collector/${encodeURIComponent(id)}/history?window_secs=${windowSecs}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const pts = data.points || [];
+        const map = key => pts.map(p => ({ x: p.ts, y: p[key] }));
+
+        toLinearChart('chart-nodes', [
+          { label: '健康', data: map('healthy_nodes'), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.6)', stack: 's', fill: true, pointRadius: 0 },
+          { label: '告警', data: map('warning_nodes'), borderColor: '#eab308', backgroundColor: 'rgba(234,179,8,.6)', stack: 's', fill: true, pointRadius: 0 },
+          { label: '故障', data: map('critical_nodes'), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.6)', stack: 's', fill: true, pointRadius: 0 },
+        ], { stacked: true });
+
+        toLinearChart('chart-hang', [
+          { label: 'HANG (1=是 0=否)', data: pts.map(p => ({ x: p.ts, y: p.is_hanging ? 1 : 0 })),
+            borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.3)', stepped: true, fill: true, pointRadius: 0 },
+        ], { min: 0, max: 1 });
+
+        toLinearChart('chart-gpu', [
+          { label: 'GPU%', data: map('avg_gpu_utilization'), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.15)', tension: 0.25, pointRadius: 0, fill: true },
+        ], { min: 0, max: 100 });
+      } catch (e) {
+        console.warn('history load failed', e);
+      }
+    }
+
+    async function loadEvents() {
+      try {
+        const resp = await fetch(`/api/collector/${encodeURIComponent(id)}/events?window_secs=86400`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const evs = (data.events || []).slice().reverse();
+        const box = document.getElementById('events-list');
+        if (evs.length === 0) { box.innerHTML = '<div class="row"><span class="ts">—</span><span>无事件</span><span></span></div>'; return; }
+        box.innerHTML = evs.map(e => {
+          const t = new Date(e.ts * 1000).toLocaleString();
+          const detail = e.detail ? JSON.stringify(e.detail) : '';
+          return `<div class="row">
+                    <span class="ts">${t}</span>
+                    <span class="kind-${e.kind}">${e.kind}</span>
+                    <span style="color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title='${detail.replace(/'/g,"&#39;")}'>${detail}</span>
+                  </div>`;
+        }).join('');
+      } catch (e) { console.warn('events load failed', e); }
+    }
+
+    loadHistory();
+    loadEvents();
+    setInterval(loadHistory, 30000);
+    setInterval(loadEvents, 60000);
   </script>
 </body>
 </html>

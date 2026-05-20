@@ -28,3 +28,8 @@ hang_logs/
 
 # JetBrains IDE
 .idea/
+
+
+**.db
+**.db-shm
+**.db-wal

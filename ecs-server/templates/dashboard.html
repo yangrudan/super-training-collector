@@ -36,6 +36,11 @@
     .badge-critical { background: rgba(239,68,68,.15); color: var(--red); }
     .badge-unknown { background: rgba(148,163,184,.1); color: var(--muted); }
     .badge-hang { background: rgba(239,68,68,.2); color: var(--red); }
+    .badge-stale { background: rgba(234,179,8,.18); color: var(--yellow); }
+    .badge-offline { background: rgba(148,163,184,.2); color: var(--muted); }
+    .card.offline { opacity: 0.55; filter: grayscale(0.6); }
+    .card.offline:hover { opacity: 0.85; }
+    .card.stale { border-color: var(--yellow); }
     .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
     .stat { background: var(--surface2); border-radius: 6px; padding: 8px 10px; text-align: center; }
     .stat-val { font-size: 1.3rem; font-weight: 700; }
@@ -46,6 +51,15 @@
     .card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px;
       font-size: 0.75rem; color: var(--muted); }
     .hang-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 0.8rem; }
+    /* HANG 时间线条带：最近 24h */
+    .timeline { margin-top: 10px; }
+    .timeline-label { font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; display: flex; justify-content: space-between; }
+    .timeline-bar { position: relative; height: 12px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+    .timeline-bar .seg { position: absolute; top: 0; bottom: 0; }
+    .timeline-bar .seg.hang { background: var(--red); }
+    .timeline-bar .seg.warn { background: var(--yellow); opacity: .7; }
+    .timeline-bar .seg.normal { background: var(--green); opacity: .5; }
+    .timeline-bar .seg.gap { background: var(--surface2); }
   </style>
 </head>
 <body>
@@ -78,6 +92,8 @@
     }
 
     function overallBadge(c) {
+      if (c.is_offline) return '<span class="badge badge-offline">⏸ 已停止</span>';
+      if (c.is_stale)   return '<span class="badge badge-stale">⌛ 数据陈旧</span>';
       if (c.hang_status === 'Hang') return '<span class="badge badge-hang">⚠ HANG</span>';
       if (c.critical_count > 0) return '<span class="badge badge-critical">故障</span>';
       const warn = (c.global && c.global.warning_nodes) || 0;
@@ -95,7 +111,7 @@
         ? g.global_avg_gpu_utilization.toFixed(1) + '%' : 'N/A';
 
       return `
-        <a class="card" href="/collector/${encodeURIComponent(c.id)}">
+        <a class="card ${c.is_offline ? 'offline' : c.is_stale ? 'stale' : ''}" href="/collector/${encodeURIComponent(c.id)}">
           <div class="card-header">
             <div>
               <div class="card-id">${c.id}</div>
@@ -114,11 +130,66 @@
             <div class="stat"><div class="stat-val">${c.node_count}</div><div class="stat-label">节点总数</div></div>
           </div>
           <div class="hang-row">HANG 检测：${hangBadge(c.hang_status)}</div>
+          <div class="timeline" data-collector-id="${c.id}">
+            <div class="timeline-label"><span>近 24h 状态</span><span class="tl-summary">加载中...</span></div>
+            <div class="timeline-bar"></div>
+          </div>
           <div class="card-footer">
             <span>最后推送：${ago(c.last_seen_ago_secs)}</span>
             <span>查看详情 →</span>
           </div>
         </a>`;
+    }
+
+    // 为每张卡片拉取 24h 历史并渲染时间线条带
+    async function loadTimeline(el) {
+      const id = el.dataset.collectorId;
+      try {
+        const resp = await fetch(`/api/collector/${encodeURIComponent(id)}/history?window_secs=86400`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const pts = data.points || [];
+        const bar = el.querySelector('.timeline-bar');
+        const summary = el.querySelector('.tl-summary');
+        if (pts.length === 0) {
+          bar.innerHTML = '';
+          summary.textContent = '无历史';
+          return;
+        }
+        const since = data.since;
+        const until = data.until;
+        const span = Math.max(1, until - since);
+
+        // 把相邻同状态点合并成段
+        const segs = [];
+        let cur = null;
+        for (const p of pts) {
+          const state = p.is_hanging ? 'hang' :
+            ((p.critical_nodes || 0) > 0 ? 'hang' :
+             ((p.warning_nodes || 0) > 0 ? 'warn' : 'normal'));
+          if (cur && cur.state === state) {
+            cur.end = p.ts;
+          } else {
+            if (cur) segs.push(cur);
+            cur = { state, start: p.ts, end: p.ts };
+          }
+        }
+        if (cur) segs.push(cur);
+
+        bar.innerHTML = segs.map(s => {
+          // 单点段给最小宽度（120 秒），便于可见
+          const segEnd = Math.max(s.end, s.start + 120);
+          const left = Math.max(0, (s.start - since) / span * 100);
+          const width = Math.max(0.4, (segEnd - s.start) / span * 100);
+          return `<div class="seg ${s.state}" style="left:${left}%; width:${width}%"
+                       title="${new Date(s.start*1000).toLocaleString()} → ${new Date(s.end*1000).toLocaleString()} (${s.state})"></div>`;
+        }).join('');
+
+        const hangSecs = segs.filter(s => s.state === 'hang').reduce((a, s) => a + (s.end - s.start), 0);
+        summary.textContent = hangSecs > 0
+          ? `异常累计 ${Math.round(hangSecs/60)} 分钟`
+          : '24h 无异常';
+      } catch (e) { /* 忽略单卡失败 */ }
     }
 
     async function load() {
@@ -133,6 +204,7 @@
         } else {
           empty.style.display = 'none';
           grid.innerHTML = data.map(renderCard).join('');
+          document.querySelectorAll('.timeline[data-collector-id]').forEach(loadTimeline);
         }
         document.getElementById('status-bar').textContent =
           `共 ${data.length} 个集群  ·  ${new Date().toLocaleTimeString()}`;
