@@ -156,6 +156,10 @@ async fn main() {
             "/api/collector/{id}/flamegraph/{node_ip}",
             get(handlers::api_flamegraph_node),
         )
+        .route(
+            "/api/collector/{id}/flamegraph/push",
+            post(handlers::api_flamegraph_push),
+        )
         // HTML 页面
         .route("/", get(handlers::page_dashboard))
         .route("/collector/{id}", get(handlers::page_collector))

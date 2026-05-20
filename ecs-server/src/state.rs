@@ -6,6 +6,22 @@ use serde::Serialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::watch;
+
+// ─── 火焰图请求状态 ───────────────────────────────────────────────────────────
+
+/// 单个 Collector 的火焰图生成状态（通过 watch channel 跨任务共享）
+#[derive(Clone, Debug)]
+pub enum FlamegraphState {
+    /// 无待处理请求
+    Idle,
+    /// 已有客户端在等待，尚未通知 Collector
+    Requested,
+    /// Collector 已上传 SVG，可供返回
+    Ready(String),
+    /// 生成失败，携带错误信息
+    Error(String),
+}
 
 // ─── 任务平台配置 ─────────────────────────────────────────────────────────────
 
@@ -55,6 +71,9 @@ pub struct AppState {
     pub stale_secs: u64,
     /// 超过 offline_secs 未推送 → 视为"已离线/任务停止"（前端灰化卡片）
     pub offline_secs: u64,
+    /// 火焰图请求通道：collector_id → watch channel sender
+    /// 浏览器等待时为 Requested，Collector 上传后变 Ready/Error
+    pub flamegraph_channels: DashMap<String, Arc<watch::Sender<FlamegraphState>>>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -76,6 +95,7 @@ pub fn new_state(storage: Storage) -> SharedState {
         storage,
         stale_secs,
         offline_secs,
+        flamegraph_channels: DashMap::new(),
     })
 }
 

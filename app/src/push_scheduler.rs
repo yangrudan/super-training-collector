@@ -10,7 +10,9 @@
 //! 当目标 URL 为空时，本调度器自动禁用，无任何副作用。
 
 use crate::adapter::{generate_global_metrics_from_real_data, get_real_training_data};
-use crate::flamegraph::{get_config_path, load_collector_config};
+use crate::flamegraph::{
+    build_callstack_urls, collect_and_generate_flamegraph, get_config_path, load_collector_config,
+};
 use crate::hang_detector::state::get_hang_state;
 use crate::hang_types::HangStatusSnapshot;
 use crate::models::{GlobalMetrics, NodeMetrics};
@@ -54,6 +56,18 @@ fn resolve_push_config() -> (String, u64) {
     (target_url, interval.max(10))
 }
 
+/// 从推送目标 URL 中推导 ECS 基础 URL。
+/// 例如 "http://ecs-server:4000/push" → "http://ecs-server:4000"
+fn derive_ecs_base_url(push_url: &str) -> String {
+    if let Some(base) = push_url.strip_suffix("/push") {
+        return base.to_string();
+    }
+    if let Some(pos) = push_url.rfind("/push") {
+        return push_url[..pos].to_string();
+    }
+    String::new()
+}
+
 /// 采集当前数据并构建推送 Payload
 async fn build_payload() -> Option<PushPayload> {
     let timestamp = SystemTime::now()
@@ -92,6 +106,78 @@ async fn build_payload() -> Option<PushPayload> {
     })
 }
 
+/// 生成合并火焰图并上传到 ECS 的 flamegraph/push 端点
+async fn generate_and_push_flamegraph(push_url: String) {
+    tracing::info!("[flamegraph_push] 开始生成合并火焰图 → {}", push_url);
+
+    let config = match load_collector_config(&get_config_path()) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("[flamegraph_push] 加载配置失败: {}", e);
+            return;
+        }
+    };
+
+    let (ranks, _nodes) = match get_real_training_data().await {
+        Ok(data) => data,
+        Err(e) => {
+            tracing::warn!("[flamegraph_push] 获取训练数据失败: {}", e);
+            return;
+        }
+    };
+
+    if ranks.is_empty() {
+        tracing::warn!("[flamegraph_push] 无 rank 数据，跳过");
+        return;
+    }
+
+    let urls: Vec<String> = ranks
+        .iter()
+        .map(|r| {
+            build_callstack_urls(&r.node_ip, 1, config.callstack_base_port + r.local_rank as u16)
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        })
+        .filter(|u| !u.is_empty())
+        .collect();
+
+    let svg = match collect_and_generate_flamegraph("all_nodes", urls, Some(config.batch_size)).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("[flamegraph_push] 生成火焰图失败: {}", e);
+            return;
+        }
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+
+    match client
+        .post(&push_url)
+        .header("Content-Type", "image/svg+xml")
+        .body(svg)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!("[flamegraph_push] 火焰图上传成功 → {}", push_url);
+        }
+        Ok(resp) => {
+            tracing::warn!(
+                "[flamegraph_push] 上传返回非 2xx: {} → {}",
+                resp.status(),
+                push_url
+            );
+        }
+        Err(e) => {
+            tracing::warn!("[flamegraph_push] 上传失败: {} → {}", e, push_url);
+        }
+    }
+}
+
 /// 启动推送调度器（后台长运行任务）
 ///
 /// 在 `server/src/main.rs` 中通过 `tokio::spawn` 调用：
@@ -126,6 +212,29 @@ pub async fn start_push_scheduler() {
                         tracing::warn!("[push_scheduler] 推送返回非 2xx 状态: {}", status);
                     } else {
                         tracing::debug!("[push_scheduler] 推送成功，HTTP {}", status);
+
+                        // 检查 ECS 是否请求生成火焰图
+                        if let Ok(body) = resp.json::<serde_json::Value>().await {
+                            if body
+                                .get("flamegraph_requested")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            {
+                                let base_url = derive_ecs_base_url(&target_url);
+                                let job_id = std::env::var("JOB_NAME").unwrap_or_default();
+                                if !base_url.is_empty() && !job_id.is_empty() {
+                                    let push_url = format!(
+                                        "{}/api/collector/{}/flamegraph/push",
+                                        base_url, job_id
+                                    );
+                                    tokio::spawn(generate_and_push_flamegraph(push_url));
+                                } else {
+                                    tracing::warn!(
+                                        "[push_scheduler] 收到火焰图请求但 base_url 或 JOB_NAME 为空，跳过"
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => tracing::warn!("[push_scheduler] 推送失败: {}", e),

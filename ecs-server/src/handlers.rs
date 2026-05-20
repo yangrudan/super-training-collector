@@ -1,7 +1,7 @@
 //! HTTP 请求处理器
 
 use crate::job_info_client::fetch_job_info;
-use crate::state::{CollectorEntry, SharedState, resolve_collector_identity};
+use crate::state::{CollectorEntry, FlamegraphState, SharedState, resolve_collector_identity};
 use crate::storage::{SnapshotRow, extract_metrics, hang_status_of};
 use axum::{
     extract::{ConnectInfo, Path, Query, State},
@@ -11,7 +11,9 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::watch;
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -217,7 +219,19 @@ pub async fn push_handler(
         });
     }
 
-    StatusCode::OK.into_response()
+    // 检查是否有待处理的火焰图请求，若有则在响应体中通知 Collector
+    let flamegraph_requested = state
+        .flamegraph_channels
+        .get(&id)
+        .map(|tx| matches!(*tx.borrow(), FlamegraphState::Requested))
+        .unwrap_or(false);
+
+    if flamegraph_requested {
+        tracing::debug!("[ecs/push] 通知 collector 生成火焰图: id={}", id);
+        Json(json!({"flamegraph_requested": true})).into_response()
+    } else {
+        StatusCode::OK.into_response()
+    }
 }
 
 /// GET /healthz  — 健康检查
@@ -350,14 +364,38 @@ pub async fn api_events(
     }
 }
 
-// ─── 火焰图反向代理 ────────────────────────────────────────────────────────────
+// ─── 火焰图（Pull-via-Push）────────────────────────────────────────────────────
+
+/// 生成错误提示 SVG，在代理/生成失败时作为占位符返回
+fn error_svg(msg: &str) -> String {
+    // 对消息做简单的 XML 转义，避免 SVG 解析失败
+    let escaped = msg
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="600" height="100">
+  <rect width="600" height="100" fill="#fff3cd" stroke="#ffc107" stroke-width="1"/>
+  <text x="10" y="30" font-family="monospace" font-size="13" fill="#856404">火焰图获取失败</text>
+  <text x="10" y="55" font-family="monospace" font-size="11" fill="#856404">{}</text>
+  <text x="10" y="80" font-family="monospace" font-size="10" fill="#aaa">请稍候重试（Collector 正在生成中）</text>
+</svg>"##,
+        escaped
+    )
+}
 
 /// GET /api/collector/{id}/flamegraph/all
+///
+/// 采用 Pull-via-Push 模式：
+/// 1. 在 flamegraph_channels 中创建/复用 watch channel，状态置为 Requested
+/// 2. 等待 Collector 通过 POST /flamegraph/push 上传 SVG（最长 60s）
+/// 3. 超时或失败时返回错误 SVG
 pub async fn api_flamegraph_all(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Response {
-    proxy_flamegraph(&state, &id, "all").await
+    api_flamegraph_for_target(&state, &id, "all").await
 }
 
 /// GET /api/collector/{id}/flamegraph/{node_ip}
@@ -365,39 +403,141 @@ pub async fn api_flamegraph_node(
     State(state): State<SharedState>,
     Path((id, node_ip)): Path<(String, String)>,
 ) -> Response {
-    proxy_flamegraph(&state, &id, &node_ip).await
+    api_flamegraph_for_target(&state, &id, &node_ip).await
 }
 
-async fn proxy_flamegraph(state: &SharedState, id: &str, target: &str) -> Response {
-    let collector_addr = match state.collectors.get(id) {
-        Some(e) => e.collector_addr.clone(),
-        None => return (StatusCode::NOT_FOUND, "Collector not found").into_response(),
+async fn api_flamegraph_for_target(state: &SharedState, id: &str, target: &str) -> Response {
+    // 获取或创建该 collector 的 watch channel，并将状态设置为 Requested
+    let mut rx: watch::Receiver<FlamegraphState> = {
+        let entry = state
+            .flamegraph_channels
+            .entry(id.to_string())
+            .or_insert_with(|| {
+                let (tx, _) = watch::channel(FlamegraphState::Idle);
+                Arc::new(tx)
+            });
+        let tx = entry.value().clone();
+        // 只有 all 才有通知，node 级别暂时也走同一通道（target 信息写入 Error 消息中由 collector 区分）
+        if !matches!(*tx.borrow(), FlamegraphState::Ready(_)) {
+            let _ = tx.send(FlamegraphState::Requested);
+        }
+        tx.subscribe()
     };
 
-    let url = format!("{}/rest/flamegraph/{}", collector_addr.trim_end_matches('/'), target);
-    tracing::debug!("[ecs/flamegraph] 代理请求: {}", url);
+    tracing::debug!(
+        "[ecs/flamegraph] 等待 collector 生成火焰图: id={}, target={}",
+        id,
+        target
+    );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .unwrap_or_default();
-
-    match client.get(&url).send().await {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            (
-                StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+    // 如果已经有缓存的 Ready 状态，直接返回（避免重复等待）
+    {
+        let current = rx.borrow().clone();
+        if let FlamegraphState::Ready(svg) = current {
+            return (
+                StatusCode::OK,
                 [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
-                body,
+                svg,
+            )
+                .into_response();
+        }
+    }
+
+    // 等待状态变更（最长 60 秒）
+    let result = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            if rx.changed().await.is_err() {
+                return Err("channel closed".to_string());
+            }
+            match rx.borrow().clone() {
+                FlamegraphState::Ready(svg) => return Ok(svg),
+                FlamegraphState::Error(e) => return Err(e),
+                _ => {} // Idle / Requested → 继续等待
+            }
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(svg)) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+            svg,
+        )
+            .into_response(),
+        Ok(Err(e)) => {
+            tracing::warn!("[ecs/flamegraph] collector 报告生成失败: id={}, err={}", id, e);
+            (
+                StatusCode::BAD_GATEWAY,
+                [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+                error_svg(&e),
             )
                 .into_response()
         }
-        Err(e) => {
-            tracing::warn!("[ecs/flamegraph] 代理失败 ({}): {}", url, e);
-            (StatusCode::BAD_GATEWAY, format!("Failed to proxy flamegraph: {}", e)).into_response()
+        Err(_) => {
+            tracing::warn!("[ecs/flamegraph] 等待超时 60s: id={}", id);
+            // 超时后重置为 Idle，避免下次直接命中 Requested 但 Collector 已不再处理
+            if let Some(tx) = state.flamegraph_channels.get(id) {
+                let _ = tx.send(FlamegraphState::Idle);
+            }
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+                error_svg("等待超时（60s），Collector 可能无法访问 callstack 端口"),
+            )
+                .into_response()
         }
     }
+}
+
+/// POST /api/collector/{id}/flamegraph/push
+///
+/// Collector 生成完火焰图后，将 SVG 内容 POST 到此端点。
+/// ECS 通过 watch channel 唤醒所有等待该 collector 火焰图的客户端。
+pub async fn api_flamegraph_push(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let svg = match std::str::from_utf8(&body) {
+        Ok(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            return (StatusCode::BAD_REQUEST, "empty or invalid UTF-8 SVG body").into_response();
+        }
+    };
+
+    tracing::info!(
+        "[ecs/flamegraph] 收到 collector 上传的火焰图: id={}, bytes={}",
+        id,
+        svg.len()
+    );
+
+    // 获取或创建 channel，发送 Ready 状态
+    let tx = state
+        .flamegraph_channels
+        .entry(id.clone())
+        .or_insert_with(|| {
+            let (tx, _) = watch::channel(FlamegraphState::Idle);
+            Arc::new(tx)
+        })
+        .clone();
+
+    let _ = tx.send(FlamegraphState::Ready(svg));
+
+    // 延迟重置为 Idle（30 秒后），让短时间内的重复请求能直接命中缓存
+    let state_clone = state.clone();
+    let id_clone = id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        if let Some(tx) = state_clone.flamegraph_channels.get(&id_clone) {
+            // 仅在仍是 Ready 状态时才重置（避免覆盖新的 Requested）
+            if matches!(*tx.borrow(), FlamegraphState::Ready(_)) {
+                let _ = tx.send(FlamegraphState::Idle);
+            }
+        }
+    });
+
+    StatusCode::OK.into_response()
 }
 
 // ─── HTML 页面 ────────────────────────────────────────────────────────────────
