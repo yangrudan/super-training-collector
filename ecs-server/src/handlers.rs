@@ -419,7 +419,7 @@ async fn api_flamegraph_for_target(state: &SharedState, id: &str, target: &str) 
         let tx = entry.value().clone();
         // 只有 all 才有通知，node 级别暂时也走同一通道（target 信息写入 Error 消息中由 collector 区分）
         if !matches!(*tx.borrow(), FlamegraphState::Ready(_)) {
-            let _ = tx.send(FlamegraphState::Requested);
+            tx.send_replace(FlamegraphState::Requested);
         }
         tx.subscribe()
     };
@@ -478,7 +478,7 @@ async fn api_flamegraph_for_target(state: &SharedState, id: &str, target: &str) 
             tracing::warn!("[ecs/flamegraph] 等待超时 60s: id={}", id);
             // 超时后重置为 Idle，避免下次直接命中 Requested 但 Collector 已不再处理
             if let Some(tx) = state.flamegraph_channels.get(id) {
-                let _ = tx.send(FlamegraphState::Idle);
+                tx.send_replace(FlamegraphState::Idle);
             }
             (
                 StatusCode::GATEWAY_TIMEOUT,
@@ -522,7 +522,7 @@ pub async fn api_flamegraph_push(
         })
         .clone();
 
-    let _ = tx.send(FlamegraphState::Ready(svg));
+    tx.send_replace(FlamegraphState::Ready(svg));
 
     // 延迟重置为 Idle（30 秒后），让短时间内的重复请求能直接命中缓存
     let state_clone = state.clone();
@@ -532,7 +532,7 @@ pub async fn api_flamegraph_push(
         if let Some(tx) = state_clone.flamegraph_channels.get(&id_clone) {
             // 仅在仍是 Ready 状态时才重置（避免覆盖新的 Requested）
             if matches!(*tx.borrow(), FlamegraphState::Ready(_)) {
-                let _ = tx.send(FlamegraphState::Idle);
+                tx.send_replace(FlamegraphState::Idle);
             }
         }
     });
