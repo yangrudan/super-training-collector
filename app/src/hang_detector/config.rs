@@ -51,22 +51,20 @@ impl Default for HangConfig {
 
 /// 默认的"已知长阻塞"白名单
 ///
-/// **只包含明确的业务级长阻塞**（如 checkpoint 写盘、首轮数据加载），
-/// 这些操作堆栈在数十秒内保持稳定但属于正常行为。
+/// **默认为空**：实践中常见关键字（如 `checkpoint`、`DataLoader`）会与
+/// Megatron-LM 的 activation checkpointing (`_checkpointed_forward` /
+/// `checkpoint_handler`) 以及 PyTorch 训练栈中无处不在的 `DataLoader`
+/// 帧发生子串撞名，反而会**掩盖真正的 HANG**。
+///
+/// 如确需启用业务级白名单，请通过环境变量 `HANG_BLOCKING_PATTERNS`
+/// 显式配置，并优先选择高特异性的函数名（例如 `save_checkpoint_to_disk`
+/// 而非 `checkpoint`）。
 ///
 /// **严禁加入 NCCL / c10d / CUDA 同步 / futex / epoll 等同步原语**：
 /// 真正的训练 HANG（如某 rank 死锁、慢节点）正是表现为其他 rank 全部卡在
 /// `ncclAllReduce` / `ProcessGroupNCCL` 等待，把它们放进白名单会直接掩盖事件。
 pub fn default_blocking_patterns() -> Vec<String> {
-    [
-        "checkpoint",
-        "save_model",
-        "load_data",
-        "DataLoader",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
+    Vec::new()
 }
 
 impl HangConfig {
@@ -185,7 +183,8 @@ mod tests {
         assert_eq!(config.sample_count, 3);
         assert_eq!(config.node_count, 4);
         assert_eq!(config.jaccard_threshold, 0.95);
-        assert!(!config.blocking_patterns.is_empty());
+        // 默认无白名单：避免 `checkpoint` / `DataLoader` 子串撞名误屏蔽真 HANG
+        assert!(config.blocking_patterns.is_empty());
         assert!(config.log_enabled);
         assert_eq!(config.log_dir, "hang_logs");
         assert_eq!(config.node_rank_quorum, 0.5);
@@ -195,19 +194,18 @@ mod tests {
 
     #[test]
     fn test_default_blocking_patterns_exclude_sync_primitives() {
+        // 默认白名单应当为空：实践证明 `checkpoint`、`DataLoader` 等关键字
+        // 会与 Megatron 的 activation checkpointing / 训练栈中无处不在的
+        // DataLoader 帧子串撞名，反而掩盖真 HANG。
+        let patterns = default_blocking_patterns();
+        assert!(patterns.is_empty(), "默认白名单必须为空，避免误屏蔽真 HANG");
+
         // 关键回归保护：NCCL/c10d/CUDA 同步原语**绝不**能进默认白名单，
         // 否则真正的训练 HANG（典型表现就是这些原语阻塞）会被掩盖。
-        let patterns = default_blocking_patterns();
-        let joined = patterns.join(",");
-        for needle in [
-            "checkpoint",
-            "DataLoader",
-        ] {
-            assert!(joined.contains(needle), "missing pattern: {}", needle);
-        }
+        let joined = patterns.join(",").to_lowercase();
         for forbidden in [
             "nccl",
-            "ProcessGroupNCCL",
+            "processgroupnccl",
             "cuda",
             "c10d",
             "pthread_cond",
@@ -215,7 +213,7 @@ mod tests {
             "epoll",
         ] {
             assert!(
-                !joined.to_lowercase().contains(&forbidden.to_lowercase()),
+                !joined.contains(forbidden),
                 "默认白名单不应包含同步原语: {}",
                 forbidden
             );
@@ -224,21 +222,40 @@ mod tests {
 
     #[test]
     fn test_is_known_blocking() {
+        // 默认配置下白名单为空，任何栈都不应命中
         let config = HangConfig::default();
-
-        let frames_with_checkpoint = vec![
-            "main".to_string(),
-            "train_loop".to_string(),
-            "save_checkpoint".to_string(), // 包含 "checkpoint"
+        let frames = vec![
+            "save_checkpoint".to_string(),
+            "DataLoader".to_string(),
+            "_checkpointed_forward".to_string(),
         ];
-        assert!(config.is_known_blocking(&frames_with_checkpoint));
+        assert!(!config.is_known_blocking(&frames));
+
+        // 显式配置白名单后才生效
+        let mut config_with_pattern = HangConfig::default();
+        config_with_pattern.blocking_patterns = vec!["save_checkpoint_to_disk".to_string()];
+
+        let frames_hit = vec![
+            "main".to_string(),
+            "save_checkpoint_to_disk".to_string(),
+        ];
+        assert!(config_with_pattern.is_known_blocking(&frames_hit));
 
         let normal_frames = vec![
             "main".to_string(),
             "forward".to_string(),
             "backward".to_string(),
         ];
-        assert!(!config.is_known_blocking(&normal_frames));
+        assert!(!config_with_pattern.is_known_blocking(&normal_frames));
+
+        // 关键回归：Megatron activation checkpointing 不应被 `save_checkpoint_to_disk`
+        // 这种特异关键字误命中
+        let megatron_frames = vec![
+            "_checkpointed_forward".to_string(),
+            "checkpoint_handler".to_string(),
+            "checkpoint".to_string(),
+        ];
+        assert!(!config_with_pattern.is_known_blocking(&megatron_frames));
     }
 
     #[test]

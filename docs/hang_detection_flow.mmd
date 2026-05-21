@@ -41,7 +41,7 @@ flowchart TD
         AB["high_similarity_count++"]
         AC["high_similarity_count = 0"]
         AD{"high_sim_count<br/>>= sample_count?"}
-        AE{"白名单匹配?<br/>(checkpoint/save_model<br/>/load_data/DataLoader)"}
+        AE{"白名单匹配?<br/>(默认空，由<br/>HANG_BLOCKING_PATTERNS 配置)"}
         AF["NodeObservation::Normal<br/>(白名单放行)"]
         AG{"high_sim_rank_count<br/>>= ceil(rank_count<br/>× node_rank_quorum)?"}
         AH["NodeObservation::Hang"]

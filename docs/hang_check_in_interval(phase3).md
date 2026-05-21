@@ -54,7 +54,7 @@ app/src/hang_detector/
 | `HANG_SAMPLE_COUNT` | `3` | 连续采样次数 |
 | `HANG_NODE_COUNT` | `4` | 采样节点数 |
 | `HANG_JACCARD_THRESHOLD` | `0.95` | Jaccard 判定阈值 |
-| `HANG_BLOCKING_PATTERNS` | `checkpoint,save_model,load_data,DataLoader` | 白名单模式（逗号分隔） |
+| `HANG_BLOCKING_PATTERNS` | *(空)* | 白名单模式（逗号分隔）。**默认为空**：`checkpoint` / `DataLoader` 等子串会与 Megatron activation checkpointing、PyTorch 训练栈中无处不在的 DataLoader 帧撞名，反而掩盖真 HANG。如需启用请显式配置高特异性函数名（如 `save_checkpoint_to_disk`）。 |
 | `HANG_LOG_ENABLED` | `true` | 是否启用 HANG 日志记录（需 HANG_CHECK_ENABLED=true） |
 | `OUTPUT_DIR` | - | 输出目录（hang日志存储在 `$OUTPUT_DIR/hang_logs`） |
 | `HANG_LOG_DIR` | `hang_logs` | HANG 日志保存目录（OUTPUT_DIR 优先级更高） |
