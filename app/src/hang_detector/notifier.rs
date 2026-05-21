@@ -26,11 +26,10 @@ pub async fn send_hang_alert(
     analysis_summary: Option<&str>,
     event_id: Option<u64>,
     duration_secs: Option<u64>,
-) {
+) -> bool {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
     let title = format!("[{}] 训练任务 HANG 告警", job_name);
-    let text =
-        build_hang_alert_markdown(&job_name, analysis_summary, event_id, duration_secs);
+    let text = build_hang_alert_markdown(&job_name, analysis_summary, event_id, duration_secs);
 
     let body = serde_json::json!({
         "msgtype": "markdown",
@@ -47,7 +46,7 @@ pub async fn send_hang_alert(
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("DingTalk: 创建 HTTP client 失败: {}", e);
-            return;
+            return false;
         }
     };
 
@@ -60,9 +59,10 @@ pub async fn send_hang_alert(
     let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
     if let Some(url) = user_dingbot {
         let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT");
-        tokio::join!(main_fut, user_fut);
+        let (main_ok, _user_ok) = tokio::join!(main_fut, user_fut);
+        main_ok
     } else {
-        main_fut.await;
+        main_fut.await
     }
 }
 
@@ -72,14 +72,14 @@ async fn send_with_retry(
     url: &str,
     body: &serde_json::Value,
     label: &str,
-) {
+) -> bool {
     let mut last_err: Option<String> = None;
     for attempt in 0..=MAX_RETRIES {
         match client.post(url).json(body).send().await {
             Ok(resp) => {
                 let status = resp.status();
                 let body_text = resp.text().await.unwrap_or_default();
-                if status.is_success() {
+                if status.is_success() && dingtalk_response_ok(&body_text) {
                     tracing::info!(
                         "钉钉告警发送成功[{}]: attempt={}, status={}, body={}",
                         label,
@@ -87,11 +87,11 @@ async fn send_with_retry(
                         status,
                         body_text
                     );
-                    return;
+                    return true;
                 }
                 last_err = Some(format!("status={}, body={}", status, body_text));
                 tracing::warn!(
-                    "钉钉告警响应非 2xx[{}]: attempt={}, {}",
+                    "钉钉告警响应失败[{}]: attempt={}, {}",
                     label,
                     attempt,
                     last_err.as_deref().unwrap_or("")
@@ -119,6 +119,14 @@ async fn send_with_retry(
         MAX_RETRIES,
         last_err.unwrap_or_else(|| "unknown".to_string())
     );
+    false
+}
+
+fn dingtalk_response_ok(body_text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body_text)
+        .ok()
+        .and_then(|v| v.get("errcode").and_then(|code| code.as_i64()))
+        == Some(0)
 }
 
 fn build_hang_alert_markdown(
@@ -148,7 +156,10 @@ fn build_hang_alert_markdown(
 ///
 /// - `event_id`：原 HANG 事件 ID（与告警通知里的 ID 对应，便于关联）
 /// - `hang_duration_secs`：本次 HANG 总共持续了多少秒
-pub async fn send_hang_recovery_alert(event_id: Option<u64>, hang_duration_secs: Option<u64>) {
+pub async fn send_hang_recovery_alert(
+    event_id: Option<u64>,
+    hang_duration_secs: Option<u64>,
+) -> bool {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
     let title = format!("[{}] HANG 告警解除", job_name);
     let text = build_hang_recovery_markdown(&job_name, event_id, hang_duration_secs);
@@ -168,7 +179,7 @@ pub async fn send_hang_recovery_alert(event_id: Option<u64>, hang_duration_secs:
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("DingTalk: 创建 HTTP client 失败: {}", e);
-            return;
+            return false;
         }
     };
 
@@ -180,9 +191,10 @@ pub async fn send_hang_recovery_alert(event_id: Option<u64>, hang_duration_secs:
     let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知/恢复");
     if let Some(url) = user_dingbot {
         let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT/恢复");
-        tokio::join!(main_fut, user_fut);
+        let (main_ok, _user_ok) = tokio::join!(main_fut, user_fut);
+        main_ok
     } else {
-        main_fut.await;
+        main_fut.await
     }
 }
 

@@ -54,7 +54,8 @@ flowchart TD
         BA["收集所有节点观测结果"]
         BB{"有效观测 (非NoSignal)<br/>数量 > 0?"}
         BC["observe_no_signal()<br/>保持原状态不变"]
-        BD{"hang_count × 2<br/>>= total_count?"}
+        BD{"hang_count × 2<br/>>= total_count?<br/>(至少 50% 有效节点)"}
+        BL{"hang_count >= min(global_min_hang_nodes,<br/>total_count)?<br/>(默认 2，单节点夹紧为 1)"}
         BE["enter_hang_with_backdate()<br/>回溯 = sample_count<br/>× sample_interval_secs"]
         BF["observe_normal()<br/>consecutive_normal_count++"]
         BG{"normal_count<br/>>= recovery_normal_rounds?"}
@@ -126,7 +127,9 @@ flowchart TD
     BA --> BB
     BB -->|否| BC --> CA
     BB -->|是| BD
-    BD -->|是| BE --> CA
+    BD -->|是| BL
+    BL -->|是| BE --> CA
+    BL -->|否| BF
     BD -->|否| BF --> BG
     BG -->|是| BH --> CA
     BG -->|否| BI --> CA

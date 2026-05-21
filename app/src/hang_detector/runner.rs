@@ -90,8 +90,7 @@ pub async fn start_hang_detector_scheduler() {
                     // 保存堆栈数据用于日志记录
                     round_stacks.insert(node_ip.clone(), stacks.clone());
 
-                    let (observation, similarity) =
-                        detector.process_node_stacks(&node_ip, stacks);
+                    let (observation, similarity) = detector.process_node_stacks(&node_ip, stacks);
                     results.push((node_ip.clone(), observation, similarity));
                     tracing::debug!(
                         "Node {}: observation={:?}, similarity={:.3}",
@@ -160,16 +159,43 @@ pub async fn start_hang_detector_scheduler() {
                         (state.hang_event_id, state.hang_duration_secs())
                     };
 
-                    tracing::warn!(
-                        "Sending DingTalk HANG alert (event_id={:?})",
-                        event_id
-                    );
-                    send_hang_alert(Some(&analysis_summary), event_id, duration_secs).await;
+                    tracing::warn!("Sending DingTalk HANG alert (event_id={:?})", event_id);
+                    if let Some(event_id) = event_id {
+                        let should_spawn = {
+                            use super::state::get_hang_state;
+                            let state = get_hang_state();
+                            let mut state = state.write().unwrap();
+                            if state.should_notify() && state.hang_event_id == Some(event_id) {
+                                state.mark_notify_in_flight();
+                                true
+                            } else {
+                                false
+                            }
+                        };
 
-                    use super::state::get_hang_state;
-                    let state = get_hang_state();
-                    let mut state = state.write().unwrap();
-                    state.mark_notified();
+                        if should_spawn {
+                            tokio::spawn(async move {
+                                let ok = send_hang_alert(
+                                    Some(&analysis_summary),
+                                    Some(event_id),
+                                    duration_secs,
+                                )
+                                .await;
+                                use super::state::get_hang_state;
+                                let state = get_hang_state();
+                                let mut state = state.write().unwrap();
+                                if ok {
+                                    state.mark_notified_for(event_id);
+                                } else {
+                                    tracing::warn!(
+                                        "DingTalk HANG alert failed, will retry on next eligible round (event_id={})",
+                                        event_id
+                                    );
+                                    state.mark_notify_failed_for(event_id);
+                                }
+                            });
+                        }
+                    }
                 }
             }
             _ => {
@@ -178,8 +204,8 @@ pub async fn start_hang_detector_scheduler() {
                 let pending = {
                     use super::state::get_hang_state;
                     let state = get_hang_state();
-                    let mut state = state.write().unwrap();
-                    state.take_pending_recovery()
+                    let state = state.read().unwrap();
+                    state.pending_recovery()
                 };
                 if let Some((event_id, hang_duration_secs)) = pending {
                     tracing::warn!(
@@ -187,7 +213,37 @@ pub async fn start_hang_detector_scheduler() {
                         event_id,
                         hang_duration_secs
                     );
-                    send_hang_recovery_alert(Some(event_id), Some(hang_duration_secs)).await;
+                    let should_spawn = {
+                        use super::state::get_hang_state;
+                        let state = get_hang_state();
+                        let mut state = state.write().unwrap();
+                        if state.pending_recovery() == Some((event_id, hang_duration_secs)) {
+                            state.mark_recovery_in_flight(event_id);
+                            true
+                        } else {
+                            false
+                        }
+                    };
+
+                    if should_spawn {
+                        tokio::spawn(async move {
+                            let ok =
+                                send_hang_recovery_alert(Some(event_id), Some(hang_duration_secs))
+                                    .await;
+                            use super::state::get_hang_state;
+                            let state = get_hang_state();
+                            let mut state = state.write().unwrap();
+                            if ok {
+                                state.mark_recovery_notified(event_id);
+                            } else {
+                                tracing::warn!(
+                                    "DingTalk HANG recovery alert failed, will retry on next eligible round (event_id={})",
+                                    event_id
+                                );
+                                state.mark_recovery_failed(event_id);
+                            }
+                        });
+                    }
                 }
             }
         }

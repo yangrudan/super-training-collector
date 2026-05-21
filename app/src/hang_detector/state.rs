@@ -85,6 +85,8 @@ pub struct HangDetectorState {
     pub hang_logged: bool,
     /// 当前 HANG 事件是否已发送钉钉通知（按事件去重）
     pub hang_notified: bool,
+    /// 当前 HANG 事件是否已有钉钉通知发送任务在执行
+    pub hang_notify_in_flight: bool,
     /// 连续被判定为 Normal 的轮次数（用于判断是否真正恢复）
     pub consecutive_normal_count: u8,
     /// 待发送的"HANG 解除"通知（仅当上一次 HANG 已经发过告警时才会被设置）
@@ -92,6 +94,10 @@ pub struct HangDetectorState {
     /// Some((event_id, hang_duration_secs)) 表示从 HANG 转为 Normal 的瞬间需要发恢复通知。
     /// 发送完成后由 [`Self::mark_recovery_notified`] 清空。
     pub pending_recovery: Option<(u64, u64)>,
+    /// 当前是否已有 HANG 解除通知发送任务在执行
+    pub recovery_notify_in_flight: bool,
+    /// HANG 解除通知是否需要等待原 HANG 告警先发送成功
+    pub recovery_waiting_for_alert: bool,
 }
 
 impl Default for HangDetectorState {
@@ -106,8 +112,11 @@ impl Default for HangDetectorState {
             hang_event_id: None,
             hang_logged: false,
             hang_notified: false,
+            hang_notify_in_flight: false,
             consecutive_normal_count: 0,
             pending_recovery: None,
+            recovery_notify_in_flight: false,
+            recovery_waiting_for_alert: false,
         }
     }
 }
@@ -138,11 +147,50 @@ impl HangDetectorState {
     /// 标记当前 HANG 已发送钉钉通知
     pub fn mark_notified(&mut self) {
         self.hang_notified = true;
+        self.hang_notify_in_flight = false;
+    }
+
+    /// 标记当前 HANG 的钉钉通知正在发送
+    pub fn mark_notify_in_flight(&mut self) {
+        self.hang_notify_in_flight = true;
+    }
+
+    /// 指定事件的钉钉通知发送成功后，标记为已通知
+    pub fn mark_notified_for(&mut self, event_id: u64) {
+        if self.hang_event_id == Some(event_id) {
+            self.mark_notified();
+        } else if self.pending_recovery.map(|(id, _)| id) == Some(event_id)
+            && self.recovery_waiting_for_alert
+        {
+            self.recovery_waiting_for_alert = false;
+            if self.hang_event_id.is_none() {
+                self.hang_notify_in_flight = false;
+            }
+        }
+    }
+
+    /// 指定事件的钉钉通知发送失败后，允许后续轮次重试
+    pub fn mark_notify_failed_for(&mut self, event_id: u64) {
+        if self.hang_event_id == Some(event_id) {
+            self.hang_notify_in_flight = false;
+        } else if self.pending_recovery.map(|(id, _)| id) == Some(event_id)
+            && self.recovery_waiting_for_alert
+        {
+            self.pending_recovery = None;
+            self.recovery_notify_in_flight = false;
+            self.recovery_waiting_for_alert = false;
+            if self.hang_event_id.is_none() {
+                self.hang_notify_in_flight = false;
+            }
+        }
     }
 
     /// 检查是否需要发送通知（HANG 且未通知过）
     pub fn should_notify(&self) -> bool {
-        self.status == HangStatus::Hang && self.hang_event_id.is_some() && !self.hang_notified
+        self.status == HangStatus::Hang
+            && self.hang_event_id.is_some()
+            && !self.hang_notified
+            && !self.hang_notify_in_flight
     }
 
     /// 进入 / 维持 HANG 状态
@@ -169,6 +217,7 @@ impl HangDetectorState {
             self.hang_event_id = Some(event_id);
             self.hang_logged = false;
             self.hang_notified = false;
+            self.hang_notify_in_flight = false;
         }
         self.status = HangStatus::Hang;
         was_new
@@ -182,11 +231,12 @@ impl HangDetectorState {
         self.consecutive_normal_count = self.consecutive_normal_count.saturating_add(1);
         if self.consecutive_normal_count >= recovery_threshold {
             let was_in_hang = self.hang_event_id.is_some();
-            if was_in_hang && self.hang_notified {
+            if was_in_hang && (self.hang_notified || self.hang_notify_in_flight) {
                 // 上一次 HANG 已发过通知 → 需要发"告警解除"通知
                 let event_id = self.hang_event_id.unwrap_or(0);
                 let duration = self.hang_duration_secs().unwrap_or(0);
                 self.pending_recovery = Some((event_id, duration));
+                self.recovery_waiting_for_alert = self.hang_notify_in_flight && !self.hang_notified;
             }
             self.status = HangStatus::Normal;
             self.hang_event_id = None;
@@ -198,9 +248,41 @@ impl HangDetectorState {
         }
     }
 
+    /// 查看待发送的"HANG 解除"通知任务，不消费它
+    pub fn pending_recovery(&self) -> Option<(u64, u64)> {
+        if self.recovery_notify_in_flight || self.recovery_waiting_for_alert {
+            None
+        } else {
+            self.pending_recovery
+        }
+    }
+
     /// 取出待发送的"HANG 解除"通知任务（取出后不再返回）
     pub fn take_pending_recovery(&mut self) -> Option<(u64, u64)> {
         self.pending_recovery.take()
+    }
+
+    /// 标记指定恢复通知正在发送
+    pub fn mark_recovery_in_flight(&mut self, event_id: u64) {
+        if self.pending_recovery.map(|(id, _)| id) == Some(event_id) {
+            self.recovery_notify_in_flight = true;
+        }
+    }
+
+    /// 指定恢复通知发送成功后，清空 pending
+    pub fn mark_recovery_notified(&mut self, event_id: u64) {
+        if self.pending_recovery.map(|(id, _)| id) == Some(event_id) {
+            self.pending_recovery = None;
+        }
+        self.recovery_notify_in_flight = false;
+        self.recovery_waiting_for_alert = false;
+    }
+
+    /// 指定恢复通知发送失败后，保留 pending，允许后续轮次重试
+    pub fn mark_recovery_failed(&mut self, event_id: u64) {
+        if self.pending_recovery.map(|(id, _)| id) == Some(event_id) {
+            self.recovery_notify_in_flight = false;
+        }
     }
 
     /// 本轮无法判断（采集失败 / 新选节点首次采样），不改变 status 和事件标志
@@ -284,7 +366,11 @@ mod tests {
         assert!(state.hang_event_id.is_none());
         assert!(!state.hang_logged);
         assert!(!state.hang_notified);
+        assert!(!state.hang_notify_in_flight);
         assert_eq!(state.consecutive_normal_count, 0);
+        assert!(state.pending_recovery.is_none());
+        assert!(!state.recovery_notify_in_flight);
+        assert!(!state.recovery_waiting_for_alert);
     }
 
     #[test]
@@ -368,6 +454,61 @@ mod tests {
         assert!(state.hang_event_id.is_some());
         assert!(state.hang_notified);
         assert_eq!(state.consecutive_normal_count, 0);
+    }
+
+    #[test]
+    fn test_notify_in_flight_prevents_duplicate_and_retries_on_failure() {
+        let mut state = HangDetectorState::new();
+        state.enter_hang();
+        let event_id = state.hang_event_id.unwrap();
+
+        assert!(state.should_notify());
+        state.mark_notify_in_flight();
+        assert!(!state.should_notify());
+
+        state.mark_notify_failed_for(event_id);
+        assert!(state.should_notify());
+
+        state.mark_notify_in_flight();
+        state.mark_notified_for(event_id);
+        assert!(!state.should_notify());
+        assert!(state.hang_notified);
+    }
+
+    #[test]
+    fn test_recovery_waits_for_in_flight_alert_success() {
+        let mut state = HangDetectorState::new();
+        state.enter_hang();
+        let event_id = state.hang_event_id.unwrap();
+        state.mark_notify_in_flight();
+
+        for _ in 0..RECOVERY_NORMAL_ROUNDS {
+            state.observe_normal(RECOVERY_NORMAL_ROUNDS);
+        }
+
+        assert!(state.pending_recovery.is_some());
+        assert!(state.recovery_waiting_for_alert);
+        assert!(state.pending_recovery().is_none());
+
+        state.mark_notified_for(event_id);
+        assert_eq!(state.pending_recovery().map(|(id, _)| id), Some(event_id));
+    }
+
+    #[test]
+    fn test_recovery_is_dropped_if_in_flight_alert_fails() {
+        let mut state = HangDetectorState::new();
+        state.enter_hang();
+        let event_id = state.hang_event_id.unwrap();
+        state.mark_notify_in_flight();
+
+        for _ in 0..RECOVERY_NORMAL_ROUNDS {
+            state.observe_normal(RECOVERY_NORMAL_ROUNDS);
+        }
+
+        assert!(state.pending_recovery.is_some());
+        state.mark_notify_failed_for(event_id);
+        assert!(state.pending_recovery.is_none());
+        assert!(state.pending_recovery().is_none());
     }
 
     #[test]
