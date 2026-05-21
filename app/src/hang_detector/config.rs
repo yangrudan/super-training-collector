@@ -9,8 +9,10 @@ use std::env;
 pub struct HangConfig {
     /// 是否启用 HANG 检测
     pub enabled: bool,
-    /// 采样间隔（秒），默认 60
-    pub sample_interval_secs: u64,
+    /// 采样间隔下限（秒），每 tick 在 [min, max] 随机
+    pub sample_interval_min_secs: u64,
+    /// 采样间隔上限（秒），每 tick 在 [min, max] 随机
+    pub sample_interval_max_secs: u64,
     /// 连续采样次数，默认 3
     pub sample_count: usize,
     /// 采样节点数，默认 4
@@ -29,22 +31,27 @@ pub struct HangConfig {
     pub keep_line_numbers: bool,
     /// 连续多少轮 Normal 才视为真正恢复（去抖动）
     pub recovery_normal_rounds: u8,
+    /// 全局判 HANG 所需的"最少 hang 节点绝对数"（与 50% 票数共同生效）
+    /// 默认 2：避免 2 节点小集群里"1 个节点孤鸣 = 50%"的误报。
+    pub global_min_hang_nodes: usize,
 }
 
 impl Default for HangConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            sample_interval_secs: 60,
+            sample_interval_min_secs: 50,
+            sample_interval_max_secs: 60,
             sample_count: 3,
             node_count: 4,
             jaccard_threshold: 0.95,
             blocking_patterns: default_blocking_patterns(),
             log_enabled: true,
             log_dir: "hang_logs".to_string(),
-            node_rank_quorum: 0.5,
+            node_rank_quorum: 1.0,
             keep_line_numbers: true,
             recovery_normal_rounds: 2,
+            global_min_hang_nodes: 2,
         }
     }
 }
@@ -77,11 +84,32 @@ impl HangConfig {
             config.enabled = val.to_lowercase() == "true" || val == "1";
         }
 
-        // HANG_SAMPLE_INTERVAL: 采样间隔（秒）
+        // HANG_SAMPLE_INTERVAL: 采样间隔（秒），向后兼容：设为固定值时 min=max
         if let Ok(val) = env::var("HANG_SAMPLE_INTERVAL") {
             if let Ok(secs) = val.parse::<u64>() {
-                config.sample_interval_secs = secs.max(10); // 最小 10 秒
+                let s = secs.max(10);
+                config.sample_interval_min_secs = s;
+                config.sample_interval_max_secs = s;
             }
+        }
+
+        // HANG_SAMPLE_INTERVAL_MIN_SECS / _MAX_SECS: 显式区间（优先级高于 HANG_SAMPLE_INTERVAL）
+        if let Ok(val) = env::var("HANG_SAMPLE_INTERVAL_MIN_SECS") {
+            if let Ok(secs) = val.parse::<u64>() {
+                config.sample_interval_min_secs = secs.max(10);
+            }
+        }
+        if let Ok(val) = env::var("HANG_SAMPLE_INTERVAL_MAX_SECS") {
+            if let Ok(secs) = val.parse::<u64>() {
+                config.sample_interval_max_secs = secs.max(10);
+            }
+        }
+        // 保证 min <= max
+        if config.sample_interval_min_secs > config.sample_interval_max_secs {
+            std::mem::swap(
+                &mut config.sample_interval_min_secs,
+                &mut config.sample_interval_max_secs,
+            );
         }
 
         // HANG_SAMPLE_COUNT: 连续采样次数
@@ -121,6 +149,14 @@ impl HangConfig {
         if let Ok(val) = env::var("HANG_RECOVERY_NORMAL_ROUNDS") {
             if let Ok(r) = val.parse::<u8>() {
                 config.recovery_normal_rounds = r.max(1).min(10);
+            }
+        }
+
+        // HANG_GLOBAL_MIN_HANG_NODES: 全局判 HANG 所需的"最少 hang 节点绝对数"
+        // 与 50% 票数共同生效；默认 2，避免单节点孤鸣误报
+        if let Ok(val) = env::var("HANG_GLOBAL_MIN_HANG_NODES") {
+            if let Ok(n) = val.parse::<usize>() {
+                config.global_min_hang_nodes = n.max(1);
             }
         }
 
@@ -168,18 +204,42 @@ impl HangConfig {
                 .any(|pattern| frame.contains(pattern))
         })
     }
+
+    /// 采样间隔的"代表值"（区间均值），用于 backdate 等需要确定值的场景
+    pub fn sample_interval_secs(&self) -> u64 {
+        let min = self.sample_interval_min_secs;
+        let max = self.sample_interval_max_secs.max(min);
+        (min + max) / 2
+    }
+
+    /// 在配置区间内随机抽取一个采样间隔（含端点）
+    pub fn random_sample_interval_secs(&self) -> u64 {
+        let min = self.sample_interval_min_secs;
+        let max = self.sample_interval_max_secs.max(min);
+        if min == max {
+            return min;
+        }
+        use rand::Rng;
+        rand::thread_rng().gen_range(min..=max)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // 序列化所有修改进程级 env 的测试，避免并行竞态污染 from_env() 结果
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
         let config = HangConfig::default();
 
         assert!(!config.enabled);
-        assert_eq!(config.sample_interval_secs, 60);
+        assert_eq!(config.sample_interval_min_secs, 50);
+        assert_eq!(config.sample_interval_max_secs, 60);
+        assert_eq!(config.sample_interval_secs(), 55);
         assert_eq!(config.sample_count, 3);
         assert_eq!(config.node_count, 4);
         assert_eq!(config.jaccard_threshold, 0.95);
@@ -187,9 +247,12 @@ mod tests {
         assert!(config.blocking_patterns.is_empty());
         assert!(config.log_enabled);
         assert_eq!(config.log_dir, "hang_logs");
-        assert_eq!(config.node_rank_quorum, 0.5);
+        // 默认要求全部 rank 都满足条件才判节点 HANG（误报率优先）
+        assert_eq!(config.node_rank_quorum, 1.0);
         assert!(config.keep_line_numbers);
         assert_eq!(config.recovery_normal_rounds, 2);
+        // 默认要求至少 2 个节点同时 hang 才判全局 HANG，避免 2 节点小集群单点孤鸣误报
+        assert_eq!(config.global_min_hang_nodes, 2);
     }
 
     #[test]
@@ -260,6 +323,10 @@ mod tests {
 
     #[test]
     fn test_from_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // 清理可能残留的 env，确保 HANG_SAMPLE_INTERVAL 走兼容路径
+        env::remove_var("HANG_SAMPLE_INTERVAL_MIN_SECS");
+        env::remove_var("HANG_SAMPLE_INTERVAL_MAX_SECS");
         // 设置环境变量
         env::set_var("HANG_CHECK_ENABLED", "true");
         env::set_var("HANG_SAMPLE_INTERVAL", "60");
@@ -268,7 +335,10 @@ mod tests {
         let config = HangConfig::from_env();
 
         assert!(config.enabled);
-        assert_eq!(config.sample_interval_secs, 60);
+        // 旧 HANG_SAMPLE_INTERVAL 兼容：min == max
+        assert_eq!(config.sample_interval_min_secs, 60);
+        assert_eq!(config.sample_interval_max_secs, 60);
+        assert_eq!(config.sample_interval_secs(), 60);
         assert_eq!(config.jaccard_threshold, 0.98);
 
         // 清理环境变量
@@ -278,8 +348,46 @@ mod tests {
     }
 
     #[test]
+    fn test_interval_range_from_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // 显式区间应覆盖 HANG_SAMPLE_INTERVAL
+        env::remove_var("HANG_SAMPLE_INTERVAL");
+        env::set_var("HANG_SAMPLE_INTERVAL_MIN_SECS", "20");
+        env::set_var("HANG_SAMPLE_INTERVAL_MAX_SECS", "40");
+        let config = HangConfig::from_env();
+        assert_eq!(config.sample_interval_min_secs, 20);
+        assert_eq!(config.sample_interval_max_secs, 40);
+        assert_eq!(config.sample_interval_secs(), 30);
+        for _ in 0..32 {
+            let v = config.random_sample_interval_secs();
+            assert!(v >= 20 && v <= 40, "random {} out of [20,40]", v);
+        }
+        env::remove_var("HANG_SAMPLE_INTERVAL_MIN_SECS");
+        env::remove_var("HANG_SAMPLE_INTERVAL_MAX_SECS");
+
+        // min > max 时自动交换
+        env::set_var("HANG_SAMPLE_INTERVAL_MIN_SECS", "80");
+        env::set_var("HANG_SAMPLE_INTERVAL_MAX_SECS", "30");
+        let config = HangConfig::from_env();
+        assert_eq!(config.sample_interval_min_secs, 30);
+        assert_eq!(config.sample_interval_max_secs, 80);
+        env::remove_var("HANG_SAMPLE_INTERVAL_MIN_SECS");
+        env::remove_var("HANG_SAMPLE_INTERVAL_MAX_SECS");
+
+        // 低于 10 强制为 10
+        env::set_var("HANG_SAMPLE_INTERVAL_MIN_SECS", "1");
+        env::set_var("HANG_SAMPLE_INTERVAL_MAX_SECS", "5");
+        let config = HangConfig::from_env();
+        assert!(config.sample_interval_min_secs >= 10);
+        assert!(config.sample_interval_max_secs >= 10);
+        env::remove_var("HANG_SAMPLE_INTERVAL_MIN_SECS");
+        env::remove_var("HANG_SAMPLE_INTERVAL_MAX_SECS");
+    }
+
+    #[test]
     fn test_log_dir_priority() {
         use std::env;
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         // 清理所有相关环境变量
         env::remove_var("OUTPUT_DIR");

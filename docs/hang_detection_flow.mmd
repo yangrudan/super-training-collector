@@ -3,12 +3,12 @@ flowchart TD
     subgraph 启动["🚀 启动阶段"]
         A["server/main.rs<br/>tokio::spawn(start_hang_detector_scheduler)"]
         B["HangConfig::from_env()<br/>读取所有环境变量配置"]
-        C["创建 HangDetector + HangLogger<br/>tokio::time::interval 定时器"]
+        C["创建 HangDetector + HangLogger<br/>sleep 循环（每 tick 随机 50–60s）"]
         A --> B --> C
     end
 
-    subgraph TickLoop["⏱️ Tick 循环 (每 sample_interval_secs 秒)"]
-        D["tick.tick().await<br/>MissedTickBehavior::Skip"]
+    subgraph TickLoop["⏱️ Tick 循环 (每次随机 sleep min~max 秒)"]
+        D["sleep(rand_range(min..=max)).await<br/>默认 50–60s 随机"]
         E["fetch_all_nodes()<br/>获取全量节点 IP 列表"]
         F{"节点列表为空?<br/>或获取失败?"}
         G["detector.reset_round()<br/>重置轮次, continue"]
@@ -43,7 +43,7 @@ flowchart TD
         AD{"high_sim_count<br/>>= sample_count?"}
         AE{"白名单匹配?<br/>(默认空，由<br/>HANG_BLOCKING_PATTERNS 配置)"}
         AF["NodeObservation::Normal<br/>(白名单放行)"]
-        AG{"high_sim_rank_count<br/>>= ceil(rank_count<br/>× node_rank_quorum)?"}
+        AG{"high_sim_rank_count<br/>>= ceil(rank_count<br/>× node_rank_quorum)?<br/>(默认 quorum=1.0：<br/>需全部 rank 满足)"}
         AH["NodeObservation::Hang"]
         AI["NodeObservation::Normal"]
         AJ{"所有 rank 既无历史<br/>也无失败?"}

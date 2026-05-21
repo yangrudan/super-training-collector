@@ -229,11 +229,21 @@ impl HangDetector {
             .count();
         let total_count = valid.len();
 
-        if hang_count * 2 >= total_count {
+        // 全局判定：必须同时满足
+        //   (1) hang 节点占比 >= 50%（多数票）
+        //   (2) hang 节点绝对数 >= global_min_hang_nodes（避免小集群单点孤鸣）
+        // 当集群只有 1 个节点时，使 effective_min = min(配置, total_count)，
+        // 否则单节点集群将永远无法触发 HANG。
+        let effective_min = self.config.global_min_hang_nodes.min(total_count.max(1));
+        let majority_ok = hang_count * 2 >= total_count;
+        let absolute_ok = hang_count >= effective_min;
+
+        if majority_ok && absolute_ok {
             state.details.consecutive_high_similarity = self.config.sample_count as u8;
             // 回溯：判 HANG 那一刻起堆栈已经"卡了 sample_count 个采样窗口"
+            // 间隔随机化时取区间均值作为代表，保持与告警里"已持续"贴近真实值
             let backdate = (self.config.sample_count as u64)
-                .saturating_mul(self.config.sample_interval_secs);
+                .saturating_mul(self.config.sample_interval_secs());
             state.enter_hang_with_backdate(backdate);
         } else {
             state.observe_normal(self.config.recovery_normal_rounds);
@@ -298,7 +308,8 @@ mod tests {
     fn test_config() -> HangConfig {
         HangConfig {
             enabled: true,
-            sample_interval_secs: 30,
+            sample_interval_min_secs: 30,
+            sample_interval_max_secs: 30,
             sample_count: 3,
             node_count: 4,
             jaccard_threshold: 0.95,
@@ -308,6 +319,7 @@ mod tests {
             node_rank_quorum: 0.5,
             keep_line_numbers: true,
             recovery_normal_rounds: 2,
+            global_min_hang_nodes: 1,
         }
     }
 
@@ -500,5 +512,103 @@ mod tests {
         let stacks: Vec<Vec<String>> = (0..4).map(|_| Vec::new()).collect();
         let (obs, _) = detector.process_node_stacks("brandnew", stacks);
         assert_eq!(obs, NodeObservation::NoSignal);
+    }
+
+    /// quorum=1.0 时必须**所有 rank**都满足条件才判节点 HANG
+    #[test]
+    fn test_quorum_full_requires_all_ranks() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let mut cfg = test_config();
+        cfg.sample_count = 2;
+        cfg.node_rank_quorum = 1.0; // 全员制
+        let detector = HangDetector::new(cfg);
+
+        let frozen = vec!["foo (a.py:1)".to_string(), "bar (b.py:2)".to_string()];
+        let make_changing = |round: usize, idx: usize| -> Vec<String> {
+            vec![
+                format!("foo_{}_{} (a.py:1)", round, idx),
+                format!("bar_{}_{} (b.py:2)", round, idx),
+            ]
+        };
+
+        // 建立第 1 轮历史
+        let stacks_round0: Vec<Vec<String>> = (0..4).map(|i| make_changing(0, i)).collect();
+        let (obs0, _) = detector.process_node_stacks("nodeA", stacks_round0);
+        assert_eq!(obs0, NodeObservation::NoSignal);
+
+        // 第 2、3 轮：rank 0~2 完全冻结（高相似），rank 3 持续变化
+        for round in 1..=2 {
+            let mut stacks: Vec<Vec<String>> =
+                (0..3).map(|_| frozen.clone()).collect();
+            stacks.push(make_changing(round, 3));
+            let (obs, _) = detector.process_node_stacks("nodeA", stacks);
+            // quorum=1.0 → 哪怕 3/4 hang，仍然 Normal
+            assert_eq!(
+                obs,
+                NodeObservation::Normal,
+                "round {} 仍有 1 个 rank 在变化，quorum=full 不应判 HANG",
+                round
+            );
+        }
+
+        // 让 rank 3 也冻结：连续 sample_count(2) 轮高相似 → 全员 hang → Hang
+        // 先让 rank 3 进入 frozen，本轮 sim=jaccard(prev_changing, frozen) 通常 <0.95，
+        // high_similarity_count 重置为 0，所以**两轮**才能再次累计到 sample_count
+        for round in 0..3 {
+            let stacks: Vec<Vec<String>> = (0..4).map(|_| frozen.clone()).collect();
+            let (obs, _) = detector.process_node_stacks("nodeA", stacks);
+            if round < 2 {
+                // rank 3 还没攒够，至少不会判 Hang
+                assert_ne!(obs, NodeObservation::Hang);
+            } else {
+                assert_eq!(
+                    obs,
+                    NodeObservation::Hang,
+                    "全部 4 个 rank 都连续 {} 轮高相似后必须判 HANG",
+                    2
+                );
+            }
+        }
+    }
+
+    /// 单节点 hang 不应触发全局 HANG（避免 2 节点小集群单点孤鸣误报）
+    #[test]
+    fn test_global_min_hang_nodes_blocks_single_node_false_positive() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let mut cfg = test_config();
+        cfg.global_min_hang_nodes = 2;
+        let detector = HangDetector::new(cfg);
+
+        // 2 节点：1 个 hang + 1 个 normal —— 50% 占比但绝对数 < 2，不应判 HANG
+        let status = detector.update_global_status(&[
+            ("n1".to_string(), NodeObservation::Hang, 1.0),
+            ("n2".to_string(), NodeObservation::Normal, 0.3),
+        ]);
+        assert_ne!(status, HangStatus::Hang, "1/2 hang 不应触发全局 HANG");
+
+        // 2 节点全 hang → 触发
+        reset_state();
+        let mut cfg = test_config();
+        cfg.global_min_hang_nodes = 2;
+        let detector = HangDetector::new(cfg);
+        let status = detector.update_global_status(&[
+            ("n1".to_string(), NodeObservation::Hang, 1.0),
+            ("n2".to_string(), NodeObservation::Hang, 1.0),
+        ]);
+        assert_eq!(status, HangStatus::Hang);
+
+        // 单节点集群：effective_min 自动夹紧到 1，不应被门槛永久阻塞
+        reset_state();
+        let mut cfg = test_config();
+        cfg.global_min_hang_nodes = 2;
+        let detector = HangDetector::new(cfg);
+        let status = detector.update_global_status(&[(
+            "only".to_string(),
+            NodeObservation::Hang,
+            1.0,
+        )]);
+        assert_eq!(status, HangStatus::Hang, "1 节点集群应允许触发");
     }
 }

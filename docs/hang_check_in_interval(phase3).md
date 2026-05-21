@@ -50,10 +50,14 @@ app/src/hang_detector/
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `HANG_CHECK_ENABLED` | `false` | 是否启用 HANG 检测 |
-| `HANG_SAMPLE_INTERVAL` | `30` | 采样间隔（秒） |
+| `HANG_SAMPLE_INTERVAL_MIN_SECS` | `50` | 采样间隔下界（秒，≥10）。每 tick 在 `[min, max]` 内随机睡眠，避免与训练 step 周期共振。 |
+| `HANG_SAMPLE_INTERVAL_MAX_SECS` | `60` | 采样间隔上界（秒）。若 `min > max` 自动交换。 |
+| `HANG_SAMPLE_INTERVAL` | *(无)* | **向后兼容**：仅设此变量时等价于 `min = max = 该值`（固定间隔）。同时设了 `_MIN_SECS` / `_MAX_SECS` 时被覆盖。 |
 | `HANG_SAMPLE_COUNT` | `3` | 连续采样次数 |
 | `HANG_NODE_COUNT` | `4` | 采样节点数 |
 | `HANG_JACCARD_THRESHOLD` | `0.95` | Jaccard 判定阈值 |
+| `HANG_NODE_RANK_QUORUM` | `1.0` | 节点判 HANG 所需的"hang rank 比例"。**默认 1.0** = 必须**全部 rank** 同时满足条件，优先压制误报；代价是"部分 rank 卡死、其他 rank 仍在跑"这类异常会被判 Normal。如需更敏感可调低（如 0.5 表示半数 rank 即触发），范围 `[0.1, 1.0]`。 |
+| `HANG_GLOBAL_MIN_HANG_NODES` | `2` | 全局判 HANG 所需的"最少 hang 节点绝对数"，与 ≥50% 票数共同生效。默认 2 防止 2 节点小集群里"1 节点孤鸣 = 50%"的误报；单节点集群会自动夹紧到 1。 |
 | `HANG_BLOCKING_PATTERNS` | *(空)* | 白名单模式（逗号分隔）。**默认为空**：`checkpoint` / `DataLoader` 等子串会与 Megatron activation checkpointing、PyTorch 训练栈中无处不在的 DataLoader 帧撞名，反而掩盖真 HANG。如需启用请显式配置高特异性函数名（如 `save_checkpoint_to_disk`）。 |
 | `HANG_LOG_ENABLED` | `true` | 是否启用 HANG 日志记录（需 HANG_CHECK_ENABLED=true） |
 | `OUTPUT_DIR` | - | 输出目录（hang日志存储在 `$OUTPUT_DIR/hang_logs`） |
@@ -84,7 +88,9 @@ app/src/hang_detector/
   },
   "consecutive_high_similarity": 3,
   "config": {
-    "sample_interval_secs": 30,
+    "sample_interval_secs": 55,
+    "sample_interval_min_secs": 50,
+    "sample_interval_max_secs": 60,
     "sample_count": 3,
     "node_count": 4,
     "jaccard_threshold": 0.95

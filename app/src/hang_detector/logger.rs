@@ -36,7 +36,12 @@ pub struct HangLogEntry {
 /// 日志中的配置信息
 #[derive(Debug, Serialize)]
 pub struct HangLogConfig {
+    /// 区间均值（兼容历史字段，便于离线分析）
     pub sample_interval_secs: u64,
+    /// 采样间隔下限（秒）
+    pub sample_interval_min_secs: u64,
+    /// 采样间隔上限（秒）
+    pub sample_interval_max_secs: u64,
     pub sample_count: usize,
     pub node_count: usize,
     pub jaccard_threshold: f64,
@@ -45,7 +50,9 @@ pub struct HangLogConfig {
 impl From<&HangConfig> for HangLogConfig {
     fn from(config: &HangConfig) -> Self {
         Self {
-            sample_interval_secs: config.sample_interval_secs,
+            sample_interval_secs: config.sample_interval_secs(),
+            sample_interval_min_secs: config.sample_interval_min_secs,
+            sample_interval_max_secs: config.sample_interval_max_secs,
             sample_count: config.sample_count,
             node_count: config.node_count,
             jaccard_threshold: config.jaccard_threshold,
@@ -251,7 +258,8 @@ mod tests {
     fn test_config(log_dir: &str) -> HangConfig {
         HangConfig {
             enabled: true,
-            sample_interval_secs: 30,
+            sample_interval_min_secs: 30,
+            sample_interval_max_secs: 30,
             sample_count: 3,
             node_count: 4,
             jaccard_threshold: 0.95,
@@ -268,6 +276,8 @@ mod tests {
         let log_config = HangLogConfig::from(&config);
 
         assert_eq!(log_config.sample_interval_secs, 30);
+        assert_eq!(log_config.sample_interval_min_secs, 30);
+        assert_eq!(log_config.sample_interval_max_secs, 30);
         assert_eq!(log_config.sample_count, 3);
         assert_eq!(log_config.node_count, 4);
         assert_eq!(log_config.jaccard_threshold, 0.95);
@@ -295,6 +305,8 @@ mod tests {
             consecutive_high_similarity: 3,
             config: HangLogConfig {
                 sample_interval_secs: 30,
+                sample_interval_min_secs: 30,
+                sample_interval_max_secs: 30,
                 sample_count: 3,
                 node_count: 4,
                 jaccard_threshold: 0.95,

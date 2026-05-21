@@ -29,9 +29,9 @@ impl HangScheduler {
         self.detector.is_enabled()
     }
 
-    /// 获取采样间隔（秒）
+    /// 获取采样间隔的代表值（区间均值，秒）
     pub fn sample_interval_secs(&self) -> u64 {
-        self.config.sample_interval_secs
+        self.config.sample_interval_secs()
     }
 
     /// 获取检测器引用
@@ -48,7 +48,8 @@ mod tests {
     fn test_scheduler_creation() {
         let config = HangConfig {
             enabled: true,
-            sample_interval_secs: 30,
+            sample_interval_min_secs: 30,
+            sample_interval_max_secs: 30,
             sample_count: 3,
             node_count: 4,
             jaccard_threshold: 0.95,

@@ -15,7 +15,7 @@ use crate::rank_analyzer::{
 use serde_json;
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::sleep;
 use tracing;
 
 /// 启动 HANG 检测调度器
@@ -30,21 +30,25 @@ pub async fn start_hang_detector_scheduler() {
     }
 
     tracing::info!(
-        "Starting HANG detection scheduler with interval: {}s",
-        config.sample_interval_secs
+        "Starting HANG detection scheduler with interval: {}~{}s (random per tick), \
+         node_rank_quorum={}, global_min_hang_nodes={}",
+        config.sample_interval_min_secs,
+        config.sample_interval_max_secs,
+        config.node_rank_quorum,
+        config.global_min_hang_nodes
     );
 
     let detector = HangDetector::new(config.clone());
     let logger = HangLogger::new(config.clone());
-    let mut tick = interval(Duration::from_secs(config.sample_interval_secs));
-    // 长时间的 rank 分析可能让多个 tick 堆积，使用 Skip 行为避免短时间内连续触发
-    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // 存储本轮各节点的堆栈数据（用于日志记录）
     let mut round_stacks: HashMap<String, Vec<Vec<String>>> = HashMap::new();
 
     loop {
-        tick.tick().await;
+        // 每 tick 在 [min, max] 内随机睡眠，避免与训练 step 周期同频共振
+        let next_secs = config.random_sample_interval_secs();
+        sleep(Duration::from_secs(next_secs)).await;
+        tracing::debug!("HANG detection tick (slept {}s)", next_secs);
 
         // 获取所有节点 IP 列表
         let all_nodes = match fetch_all_nodes().await {
