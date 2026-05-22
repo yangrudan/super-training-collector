@@ -159,39 +159,52 @@ pub async fn start_hang_detector_scheduler() {
                         (state.hang_event_id, state.hang_duration_secs())
                     };
 
-                    tracing::warn!("Sending DingTalk HANG alert (event_id={:?})", event_id);
+                    tracing::warn!("Sending HANG alert (event_id={:?})", event_id);
                     if let Some(event_id) = event_id {
-                        let should_spawn = {
+                        let (should_spawn, skip_dingtalk, skip_intranet) = {
                             use super::state::get_hang_state;
                             let state = get_hang_state();
                             let mut state = state.write().unwrap();
                             if state.should_notify() && state.hang_event_id == Some(event_id) {
                                 state.mark_notify_in_flight();
-                                true
+                                (true, state.hang_notified, state.hang_intranet_notified)
                             } else {
-                                false
+                                (false, false, false)
                             }
                         };
 
                         if should_spawn {
                             tokio::spawn(async move {
-                                let ok = send_hang_alert(
+                                let outcome = send_hang_alert(
                                     Some(&analysis_summary),
                                     Some(event_id),
                                     duration_secs,
+                                    skip_dingtalk,
+                                    skip_intranet,
                                 )
                                 .await;
                                 use super::state::get_hang_state;
                                 let state = get_hang_state();
                                 let mut state = state.write().unwrap();
-                                if ok {
+                                if outcome.intranet_done {
+                                    state.mark_intranet_notified_for(event_id);
+                                }
+                                if outcome.all_done() {
                                     state.mark_notified_for(event_id);
                                 } else {
-                                    tracing::warn!(
-                                        "DingTalk HANG alert failed, will retry on next eligible round (event_id={})",
-                                        event_id
-                                    );
-                                    state.mark_notify_failed_for(event_id);
+                                    if !outcome.dingtalk_done {
+                                        tracing::warn!(
+                                            "DingTalk HANG alert failed, will retry on next eligible round (event_id={})",
+                                            event_id
+                                        );
+                                    }
+                                    if !outcome.intranet_done {
+                                        tracing::warn!(
+                                            "Intranet HANG alert failed, will retry on next eligible round (event_id={})",
+                                            event_id
+                                        );
+                                    }
+                                    state.finish_notify_attempt_for(event_id);
                                 }
                             });
                         }

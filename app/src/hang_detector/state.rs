@@ -83,8 +83,12 @@ pub struct HangDetectorState {
     pub hang_event_id: Option<u64>,
     /// 当前 HANG 事件是否已记录日志（按事件去重）
     pub hang_logged: bool,
-    /// 当前 HANG 事件是否已发送钉钉通知（按事件去重）
+    /// 当前 HANG 事件钉钉通知是否已发送成功（按事件去重，粘性）
     pub hang_notified: bool,
+    /// 当前 HANG 事件内网后台告警是否已发送成功或本事件无需发送（按事件去重，粘性）
+    ///
+    /// 一旦置 true，本事件内不再重复发送内网告警，即使后续钉钉告警仍在重试。
+    pub hang_intranet_notified: bool,
     /// 当前 HANG 事件是否已有钉钉通知发送任务在执行
     pub hang_notify_in_flight: bool,
     /// 连续被判定为 Normal 的轮次数（用于判断是否真正恢复）
@@ -112,6 +116,7 @@ impl Default for HangDetectorState {
             hang_event_id: None,
             hang_logged: false,
             hang_notified: false,
+            hang_intranet_notified: false,
             hang_notify_in_flight: false,
             consecutive_normal_count: 0,
             pending_recovery: None,
@@ -144,9 +149,10 @@ impl HangDetectorState {
         self.status == HangStatus::Hang && self.hang_event_id.is_some() && !self.hang_logged
     }
 
-    /// 标记当前 HANG 已发送钉钉通知
+    /// 标记当前 HANG 钉钉与内网两路均已成功（兼容旧测试用法）
     pub fn mark_notified(&mut self) {
         self.hang_notified = true;
+        self.hang_intranet_notified = true;
         self.hang_notify_in_flight = false;
     }
 
@@ -155,14 +161,46 @@ impl HangDetectorState {
         self.hang_notify_in_flight = true;
     }
 
-    /// 指定事件的钉钉通知发送成功后，标记为已通知
+    /// 标记内网后台告警已成功或本事件不需要再发送内网告警
+    pub fn mark_intranet_notified_for(&mut self, event_id: u64) {
+        if self.hang_event_id == Some(event_id) {
+            self.hang_intranet_notified = true;
+        }
+    }
+
+    /// 标记钉钉告警已成功，并处理待发的恢复通知唤醒
     pub fn mark_notified_for(&mut self, event_id: u64) {
         if self.hang_event_id == Some(event_id) {
-            self.mark_notified();
+            self.hang_notified = true;
+            self.hang_intranet_notified = true;
+            self.hang_notify_in_flight = false;
         } else if self.pending_recovery.map(|(id, _)| id) == Some(event_id)
             && self.recovery_waiting_for_alert
         {
             self.recovery_waiting_for_alert = false;
+            if self.hang_event_id.is_none() {
+                self.hang_notify_in_flight = false;
+            }
+        }
+    }
+
+    /// 完成一次发送尝试后调用：清掉 in_flight 标志，并根据已落地的成功标志决定恢复通知去向
+    pub fn finish_notify_attempt_for(&mut self, event_id: u64) {
+        let any_channel_ok = self.hang_notified || self.hang_intranet_notified;
+        if self.hang_event_id == Some(event_id) {
+            self.hang_notify_in_flight = false;
+        } else if self.pending_recovery.map(|(id, _)| id) == Some(event_id)
+            && self.recovery_waiting_for_alert
+        {
+            if any_channel_ok {
+                // 至少一路成功 → 唤醒等待中的恢复通知
+                self.recovery_waiting_for_alert = false;
+            } else {
+                // 两路都失败 → 丢弃这一次的恢复通知
+                self.pending_recovery = None;
+                self.recovery_notify_in_flight = false;
+                self.recovery_waiting_for_alert = false;
+            }
             if self.hang_event_id.is_none() {
                 self.hang_notify_in_flight = false;
             }
@@ -170,27 +208,19 @@ impl HangDetectorState {
     }
 
     /// 指定事件的钉钉通知发送失败后，允许后续轮次重试
+    ///
+    /// 注意：仅在两路告警都失败时调用。任一路成功后应改用 [`Self::finish_notify_attempt_for`]，
+    /// 以保证已成功的一路（如内网）不会再被重发。
     pub fn mark_notify_failed_for(&mut self, event_id: u64) {
-        if self.hang_event_id == Some(event_id) {
-            self.hang_notify_in_flight = false;
-        } else if self.pending_recovery.map(|(id, _)| id) == Some(event_id)
-            && self.recovery_waiting_for_alert
-        {
-            self.pending_recovery = None;
-            self.recovery_notify_in_flight = false;
-            self.recovery_waiting_for_alert = false;
-            if self.hang_event_id.is_none() {
-                self.hang_notify_in_flight = false;
-            }
-        }
+        self.finish_notify_attempt_for(event_id);
     }
 
-    /// 检查是否需要发送通知（HANG 且未通知过）
+    /// 检查是否需要发送通知（HANG 且任一路尚未成功）
     pub fn should_notify(&self) -> bool {
         self.status == HangStatus::Hang
             && self.hang_event_id.is_some()
-            && !self.hang_notified
             && !self.hang_notify_in_flight
+            && !(self.hang_notified && self.hang_intranet_notified)
     }
 
     /// 进入 / 维持 HANG 状态
@@ -217,6 +247,7 @@ impl HangDetectorState {
             self.hang_event_id = Some(event_id);
             self.hang_logged = false;
             self.hang_notified = false;
+            self.hang_intranet_notified = false;
             self.hang_notify_in_flight = false;
         }
         self.status = HangStatus::Hang;
@@ -231,17 +262,19 @@ impl HangDetectorState {
         self.consecutive_normal_count = self.consecutive_normal_count.saturating_add(1);
         if self.consecutive_normal_count >= recovery_threshold {
             let was_in_hang = self.hang_event_id.is_some();
-            if was_in_hang && (self.hang_notified || self.hang_notify_in_flight) {
-                // 上一次 HANG 已发过通知 → 需要发"告警解除"通知
+            let any_channel_done = self.hang_notified || self.hang_intranet_notified;
+            if was_in_hang && (any_channel_done || self.hang_notify_in_flight) {
+                // 上一次 HANG 已发过通知（任一路成功，或仍在发送中）→ 排队"告警解除"通知
                 let event_id = self.hang_event_id.unwrap_or(0);
                 let duration = self.hang_duration_secs().unwrap_or(0);
                 self.pending_recovery = Some((event_id, duration));
-                self.recovery_waiting_for_alert = self.hang_notify_in_flight && !self.hang_notified;
+                self.recovery_waiting_for_alert = self.hang_notify_in_flight && !any_channel_done;
             }
             self.status = HangStatus::Normal;
             self.hang_event_id = None;
             self.hang_logged = false;
             self.hang_notified = false;
+            self.hang_intranet_notified = false;
             was_in_hang
         } else {
             false

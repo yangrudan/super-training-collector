@@ -1,6 +1,8 @@
-//! 钉钉告警通知模块
+//! 告警通知模块
 //!
-//! 当检测到 HANG 时，通过钉钉 Webhook 发送告警消息
+//! 当检测到 HANG 时，并行通过内网后台和钉钉 Webhook 发送告警。
+//! 内网与钉钉两路相互独立，调用方可分别指定本次是否跳过其中一路，
+//! 以便实现"已成功的一路不再重发，只重试失败的一路"的语义。
 
 use std::env;
 use std::time::Duration;
@@ -8,7 +10,7 @@ use tracing;
 
 const DINGTALK_WEBHOOK: &str = "https://oapi.dingtalk.com/robot/send?access_token=f573c7f5bcd6085ccce705e839027da213f2d954d68c5ca0eddb29fa2af4789e";
 const INTRANET_ALERT_URL: &str =
-    " http://compute-guard.meta-controller.nhss.zhejianglab.com/api/compute/guard/runtime/alert/events";
+    "http://compute-guard.meta-controller.nhss.zhejianglab.com/api/compute/guard/runtime/alert/events";
 const INTRANET_ALERT_TOKEN: &str = "6w03zfedNsvXyDmWaEOckY7joxrURqPS";
 const INTRANET_ALERT_ENABLED_ENV: &str = "INTRANET_ALERT_ENABLED";
 
@@ -19,18 +21,38 @@ const RETRY_BACKOFFS_MS: [u64; MAX_RETRIES] = [500, 1500];
 /// 单次请求超时
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 
-/// 发送 HANG 告警到钉钉
+/// 单次发送 HANG 告警的结果
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HangAlertOutcome {
+    /// 钉钉告警是否完成（成功 或 本次跳过/未启用）
+    pub dingtalk_done: bool,
+    /// 内网后台告警是否完成（成功 或 本次跳过/未启用）
+    pub intranet_done: bool,
+}
+
+impl HangAlertOutcome {
+    /// 两路均已完成
+    pub fn all_done(&self) -> bool {
+        self.dingtalk_done && self.intranet_done
+    }
+}
+
+/// 发送 HANG 告警
 ///
 /// - `analysis_summary`：rank 分析结果摘要（可选）
 /// - `event_id`：HANG 事件 ID（用于在 markdown 中加入唯一标识，避免钉钉服务端按相同内容去重）
 /// - `duration_secs`：本次 HANG 已持续的秒数
+/// - `skip_dingtalk`：若为 `true`，本次不再发送钉钉告警（包括 USER_DINGBOT），直接视作已完成
+/// - `skip_intranet`：若为 `true`，本次不再发送内网后台告警，直接视作已完成
 ///
-/// 若环境变量 `USER_DINGBOT` 存在，则同时向该 URL 并行发送同内容的通知。
+/// 内网与钉钉两路并行发送；若环境变量 `USER_DINGBOT` 存在，钉钉路同时向该 URL 并行发送同内容的通知。
 pub async fn send_hang_alert(
     analysis_summary: Option<&str>,
     event_id: Option<u64>,
     duration_secs: Option<u64>,
-) -> bool {
+    skip_dingtalk: bool,
+    skip_intranet: bool,
+) -> HangAlertOutcome {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
     let title = format!("[{}] 训练任务 HANG 告警", job_name);
     let text = build_hang_alert_markdown(&job_name, analysis_summary, event_id, duration_secs);
@@ -50,42 +72,55 @@ pub async fn send_hang_alert(
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("DingTalk: 创建 HTTP client 失败: {}", e);
-            return false;
+            return HangAlertOutcome {
+                dingtalk_done: skip_dingtalk,
+                intranet_done: skip_intranet,
+            };
         }
     };
 
-    // 主通知和 USER_DINGBOT 并行发送，避免主通知超时拖慢用户群通知
-    let user_dingbot = env::var("USER_DINGBOT")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let user_dingbot = if skip_dingtalk {
+        None
+    } else {
+        env::var("USER_DINGBOT")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
 
-    let intranet_body = build_enabled_intranet_alert_body(&text);
+    let intranet_body = if skip_intranet {
+        None
+    } else {
+        build_enabled_intranet_alert_body(&text)
+    };
+    // 调用方未要求跳过、但环境未启用内网告警时，也视作"已完成"——无需在后续轮次再重试。
+    let intranet_skipped_or_disabled = skip_intranet || intranet_body.is_none();
 
-    match (user_dingbot, intranet_body) {
-        (Some(url), Some(intranet_body)) => {
-            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
-            let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT");
-            let intranet_fut = send_intranet_alert_with_retry(&client, &intranet_body);
-            let (main_ok, _user_ok, _intranet_ok) = tokio::join!(main_fut, user_fut, intranet_fut);
-            main_ok
+    let dingtalk_main_fut = async {
+        if skip_dingtalk {
+            true
+        } else {
+            send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知").await
         }
-        (Some(url), None) => {
-            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
-            let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT");
-            let (main_ok, _user_ok) = tokio::join!(main_fut, user_fut);
-            main_ok
+    };
+    let dingtalk_user_fut = async {
+        if let Some(url) = user_dingbot.as_deref() {
+            let _ = send_with_retry(&client, url, &body, "USER_DINGBOT").await;
         }
-        (None, Some(intranet_body)) => {
-            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
-            let intranet_fut = send_intranet_alert_with_retry(&client, &intranet_body);
-            let (main_ok, _intranet_ok) = tokio::join!(main_fut, intranet_fut);
-            main_ok
+    };
+    let intranet_fut = async {
+        match intranet_body.as_ref() {
+            Some(b) => send_intranet_alert_with_retry(&client, b).await,
+            None => true,
         }
-        (None, None) => {
-            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
-            main_fut.await
-        }
+    };
+
+    let (dingtalk_ok, _user_ignored, intranet_ok) =
+        tokio::join!(dingtalk_main_fut, dingtalk_user_fut, intranet_fut);
+
+    HangAlertOutcome {
+        dingtalk_done: dingtalk_ok,
+        intranet_done: intranet_skipped_or_disabled || intranet_ok,
     }
 }
 
@@ -481,6 +516,8 @@ mod tests {
             Some("1. Rank 3（节点: 10.0.0.1，异常分数: 4）"),
             Some(1700000000),
             Some(123),
+            false,
+            false,
         )
         .await;
         println!("消息已发送，请检查钉钉群");
@@ -494,6 +531,8 @@ mod tests {
             Some("1. Rank 3（节点: 10.0.0.1，异常分数: 4）"),
             Some(1700000001),
             Some(456),
+            false,
+            false,
         )
         .await;
         println!("消息已发送，请检查主群和 USER_DINGBOT 群");
