@@ -89,6 +89,12 @@ pub struct HangDetectorState {
     ///
     /// 一旦置 true，本事件内不再重复发送内网告警，即使后续钉钉告警仍在重试。
     pub hang_intranet_notified: bool,
+    /// 当前 HANG 事件首次被检测到的真实墙钟时间（秒，UNIX epoch）
+    ///
+    /// 与 `hang_event_id` 不同：`hang_event_id` 可能因 backdate 而早于实际检测时刻，
+    /// 而 `hang_first_detected_at` 严格记录"首次判定为 HANG 的那一刻"，用于计算
+    /// 内网后台告警的 20 分钟延迟窗口。事件结束（observe_normal 真正恢复）时清空。
+    pub hang_first_detected_at: Option<u64>,
     /// 当前 HANG 事件是否已有钉钉通知发送任务在执行
     pub hang_notify_in_flight: bool,
     /// 连续被判定为 Normal 的轮次数（用于判断是否真正恢复）
@@ -117,6 +123,7 @@ impl Default for HangDetectorState {
             hang_logged: false,
             hang_notified: false,
             hang_intranet_notified: false,
+            hang_first_detected_at: None,
             hang_notify_in_flight: false,
             consecutive_normal_count: 0,
             pending_recovery: None,
@@ -168,6 +175,23 @@ impl HangDetectorState {
         }
     }
 
+    /// 标记钉钉告警已成功（仅钉钉，不动内网状态）
+    ///
+    /// 配合"内网延迟 20 分钟"的语义：钉钉先发，内网晚一拍发，期间应分别记账。
+    pub fn mark_dingtalk_notified_for(&mut self, event_id: u64) {
+        if self.hang_event_id == Some(event_id) {
+            self.hang_notified = true;
+        } else if self.pending_recovery.map(|(id, _)| id) == Some(event_id)
+            && self.recovery_waiting_for_alert
+        {
+            // 事件已结束但仍有等待 alert 完成的恢复通知：唤醒它
+            self.recovery_waiting_for_alert = false;
+            if self.hang_event_id.is_none() {
+                self.hang_notify_in_flight = false;
+            }
+        }
+    }
+
     /// 标记钉钉告警已成功，并处理待发的恢复通知唤醒
     pub fn mark_notified_for(&mut self, event_id: u64) {
         if self.hang_event_id == Some(event_id) {
@@ -216,11 +240,56 @@ impl HangDetectorState {
     }
 
     /// 检查是否需要发送通知（HANG 且任一路尚未成功）
+    ///
+    /// 注意：此方法**不考虑**内网告警的 20 分钟延迟窗口。若需要同时尊重延迟，
+    /// 请使用 [`Self::should_notify_with_intranet_delay`]。
     pub fn should_notify(&self) -> bool {
         self.status == HangStatus::Hang
             && self.hang_event_id.is_some()
             && !self.hang_notify_in_flight
             && !(self.hang_notified && self.hang_intranet_notified)
+    }
+
+    /// 内网后台告警当前是否可以发送
+    ///
+    /// 同时满足下述全部条件才返回 true：
+    /// - 当前处于 HANG 状态且事件存在
+    /// - 本事件内网告警尚未成功
+    /// - 距离"首次检测到 HANG"已经过了至少 `delay_secs` 秒
+    pub fn intranet_alert_ready(&self, delay_secs: u64) -> bool {
+        if self.status != HangStatus::Hang
+            || self.hang_event_id.is_none()
+            || self.hang_intranet_notified
+        {
+            return false;
+        }
+        match self.hang_first_detected_at {
+            Some(start) => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(start);
+                now.saturating_sub(start) >= delay_secs
+            }
+            None => false,
+        }
+    }
+
+    /// 检查本轮是否需要发起告警发送任务（考虑内网延迟）
+    ///
+    /// 返回 true 的条件：处于 HANG，无正在发送的任务，且**钉钉**或**内网**之一可发：
+    /// - 钉钉可发：本事件钉钉尚未成功
+    /// - 内网可发：见 [`Self::intranet_alert_ready`]
+    pub fn should_notify_with_intranet_delay(&self, intranet_delay_secs: u64) -> bool {
+        if self.status != HangStatus::Hang
+            || self.hang_event_id.is_none()
+            || self.hang_notify_in_flight
+        {
+            return false;
+        }
+        let dingtalk_ready = !self.hang_notified;
+        let intranet_ready = self.intranet_alert_ready(intranet_delay_secs);
+        dingtalk_ready || intranet_ready
     }
 
     /// 进入 / 维持 HANG 状态
@@ -245,6 +314,7 @@ impl HangDetectorState {
                 .unwrap_or(0);
             let event_id = now.saturating_sub(backdate_secs);
             self.hang_event_id = Some(event_id);
+            self.hang_first_detected_at = Some(now);
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;
@@ -272,6 +342,7 @@ impl HangDetectorState {
             }
             self.status = HangStatus::Normal;
             self.hang_event_id = None;
+            self.hang_first_detected_at = None;
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;

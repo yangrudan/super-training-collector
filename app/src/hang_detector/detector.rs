@@ -325,6 +325,7 @@ mod tests {
             keep_line_numbers: true,
             recovery_normal_rounds: 2,
             global_min_hang_nodes: 1,
+            intranet_alert_delay_secs: 20 * 60,
         }
     }
 
