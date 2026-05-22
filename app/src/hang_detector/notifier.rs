@@ -187,17 +187,22 @@ fn build_enabled_intranet_alert_body(event_detail: &str) -> Option<serde_json::V
             return None;
         }
     };
-    let instance_uuid = match env::var("VC_MASTER_HOSTS") {
-        Ok(v) if !v.trim().is_empty() => v,
+    let instance_uuid = match env::var("VC_MASTER_HOSTS")
+        .ok()
+        .and_then(|v| extract_instance_uuid_from_host(&v))
+    {
+        Some(v) => v,
         _ => {
-            tracing::warn!("内网后台告警已开启，但 VC_MASTER_HOSTS 环境变量为空，跳过发送");
+            tracing::warn!(
+                "内网后台告警已开启，但 VC_MASTER_HOSTS 环境变量为空或无法解析，跳过发送"
+            );
             return None;
         }
     };
 
     Some(build_intranet_alert_body(
         job_uuid.trim(),
-        instance_uuid.trim(),
+        &instance_uuid,
         &chrono::Utc::now().to_rfc3339(),
         event_detail,
     ))
@@ -212,6 +217,18 @@ fn env_flag_enabled(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn extract_instance_uuid_from_host(hosts: &str) -> Option<String> {
+    let host = hosts
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(str::trim)
+        .find(|s| !s.is_empty())?;
+
+    host.split_once("-master-")
+        .or_else(|| host.split_once("-worker-"))
+        .map(|(instance_uuid, _)| instance_uuid.to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn build_intranet_alert_body(
@@ -406,13 +423,35 @@ mod tests {
         );
 
         assert_eq!(body["event_type"], "作业hang住");
-        assert_eq!(body["cluster_id"], "zj-cluster-v100-test-1");
-        assert_eq!(body["namespace"], "default");
+        assert_eq!(body["cluster_id"], "zj-cluster-mixed-x10000-4");
+        assert_eq!(body["namespace"], "nhss-job");
         assert_eq!(body["status"], "异常");
         assert_eq!(body["job_uuid"], "jb-aitrain-156450823014475840");
         assert_eq!(body["instance_uuid"], "ji-aitrain-156450823388817472");
         assert_eq!(body["event_time"], "2026-05-21T10:00:00Z");
         assert_eq!(body["event_detail"], "### [test-job] 检测到 HANG");
+    }
+
+    #[test]
+    fn extract_instance_uuid_from_master_host() {
+        assert_eq!(
+            extract_instance_uuid_from_host(
+                "ji-aitrain-156896073458669440-master-0.ji-aitrain-156896073458669440"
+            )
+            .as_deref(),
+            Some("ji-aitrain-156896073458669440")
+        );
+    }
+
+    #[test]
+    fn extract_instance_uuid_from_first_host_when_multiple_hosts() {
+        assert_eq!(
+            extract_instance_uuid_from_host(
+                "ji-aitrain-156896073458669440-worker-0.ji-aitrain-156896073458669440,ji-other-worker-0.ji-other"
+            )
+            .as_deref(),
+            Some("ji-aitrain-156896073458669440")
+        );
     }
 
     #[test]
