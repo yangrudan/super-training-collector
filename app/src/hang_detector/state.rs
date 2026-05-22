@@ -323,6 +323,12 @@ impl HangDetectorState {
         // 仍然更新时间戳，但不动 status / event_id / counters
     }
 
+    /// 重置恢复计数器（当检测到仍有节点hang时调用）
+    /// 防止部分节点状态波动导致的误判恢复
+    pub fn reset_normal_counter(&mut self) {
+        self.consecutive_normal_count = 0;
+    }
+
     /// 更新时间戳
     pub fn touch(&mut self) {
         self.last_update = SystemTime::now()

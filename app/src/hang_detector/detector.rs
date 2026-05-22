@@ -245,6 +245,11 @@ impl HangDetector {
             let backdate = (self.config.sample_count as u64)
                 .saturating_mul(self.config.sample_interval_secs());
             state.enter_hang_with_backdate(backdate);
+        } else if hang_count > 0 && state.status == HangStatus::Hang {
+            // 当系统处于 HANG 状态但检测到部分节点不满足 HANG 条件时，
+            // 不应该直接触发恢复。只有当所有有效节点都normal时才开始计数恢复。
+            // 这防止了节点采样不稳定或网络波动导致的误判恢复。
+            state.reset_normal_counter();
         } else {
             state.observe_normal(self.config.recovery_normal_rounds);
         }
