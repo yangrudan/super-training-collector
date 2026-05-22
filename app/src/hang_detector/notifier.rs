@@ -187,10 +187,10 @@ fn build_enabled_intranet_alert_body(event_detail: &str) -> Option<serde_json::V
             return None;
         }
     };
-    let instance_uuid = match env::var("VC_MASTER_HOST") {
+    let instance_uuid = match env::var("VC_MASTER_HOSTS") {
         Ok(v) if !v.trim().is_empty() => v,
         _ => {
-            tracing::warn!("内网后台告警已开启，但 VC_MASTER_HOST 环境变量为空，跳过发送");
+            tracing::warn!("内网后台告警已开启，但 VC_MASTER_HOSTS 环境变量为空，跳过发送");
             return None;
         }
     };
