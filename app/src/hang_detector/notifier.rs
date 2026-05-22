@@ -7,6 +7,10 @@ use std::time::Duration;
 use tracing;
 
 const DINGTALK_WEBHOOK: &str = "https://oapi.dingtalk.com/robot/send?access_token=f573c7f5bcd6085ccce705e839027da213f2d954d68c5ca0eddb29fa2af4789e";
+const INTRANET_ALERT_URL: &str =
+    " http://compute-guard.meta-controller.nhss.zhejianglab.com/api/compute/guard/runtime/alert/events";
+const INTRANET_ALERT_TOKEN: &str = "6w03zfedNsvXyDmWaEOckY7joxrURqPS";
+const INTRANET_ALERT_ENABLED_ENV: &str = "INTRANET_ALERT_ENABLED";
 
 /// 钉钉发送的最大重试次数（不含第一次尝试）
 const MAX_RETRIES: usize = 2;
@@ -56,13 +60,32 @@ pub async fn send_hang_alert(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
-    if let Some(url) = user_dingbot {
-        let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT");
-        let (main_ok, _user_ok) = tokio::join!(main_fut, user_fut);
-        main_ok
-    } else {
-        main_fut.await
+    let intranet_body = build_enabled_intranet_alert_body(&text);
+
+    match (user_dingbot, intranet_body) {
+        (Some(url), Some(intranet_body)) => {
+            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
+            let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT");
+            let intranet_fut = send_intranet_alert_with_retry(&client, &intranet_body);
+            let (main_ok, _user_ok, _intranet_ok) = tokio::join!(main_fut, user_fut, intranet_fut);
+            main_ok
+        }
+        (Some(url), None) => {
+            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
+            let user_fut = send_with_retry(&client, &url, &body, "USER_DINGBOT");
+            let (main_ok, _user_ok) = tokio::join!(main_fut, user_fut);
+            main_ok
+        }
+        (None, Some(intranet_body)) => {
+            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
+            let intranet_fut = send_intranet_alert_with_retry(&client, &intranet_body);
+            let (main_ok, _intranet_ok) = tokio::join!(main_fut, intranet_fut);
+            main_ok
+        }
+        (None, None) => {
+            let main_fut = send_with_retry(&client, DINGTALK_WEBHOOK, &body, "主通知");
+            main_fut.await
+        }
     }
 }
 
@@ -150,6 +173,114 @@ fn build_hang_alert_markdown(
     }
 
     text
+}
+
+fn build_enabled_intranet_alert_body(event_detail: &str) -> Option<serde_json::Value> {
+    if !env_flag_enabled(INTRANET_ALERT_ENABLED_ENV) {
+        return None;
+    }
+
+    let job_uuid = match env::var("JOB_NAME") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => {
+            tracing::warn!("内网后台告警已开启，但 JOB_NAME 环境变量为空，跳过发送");
+            return None;
+        }
+    };
+    let instance_uuid = match env::var("VC_MASTER_HOST") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => {
+            tracing::warn!("内网后台告警已开启，但 VC_MASTER_HOST 环境变量为空，跳过发送");
+            return None;
+        }
+    };
+
+    Some(build_intranet_alert_body(
+        job_uuid.trim(),
+        instance_uuid.trim(),
+        &chrono::Utc::now().to_rfc3339(),
+        event_detail,
+    ))
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn build_intranet_alert_body(
+    job_uuid: &str,
+    instance_uuid: &str,
+    event_time: &str,
+    event_detail: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "event_type": "作业hang住",
+        "cluster_id": "zj-cluster-mixed-x10000-4",
+        "namespace": "nhss-job",
+        "status": "异常",
+        "job_uuid": job_uuid,
+        "instance_uuid": instance_uuid,
+        "event_time": event_time,
+        "event_detail": event_detail
+    })
+}
+
+async fn send_intranet_alert_with_retry(
+    client: &reqwest::Client,
+    body: &serde_json::Value,
+) -> bool {
+    let mut last_err: Option<String> = None;
+    for attempt in 0..=MAX_RETRIES {
+        match client
+            .post(INTRANET_ALERT_URL)
+            .header("X-Token", INTRANET_ALERT_TOKEN)
+            .json(body)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                let body_text = resp.text().await.unwrap_or_default();
+                if status.is_success() {
+                    tracing::info!(
+                        "内网后台告警发送成功: attempt={}, status={}, body={}",
+                        attempt,
+                        status,
+                        body_text
+                    );
+                    return true;
+                }
+                last_err = Some(format!("status={}, body={}", status, body_text));
+                tracing::warn!(
+                    "内网后台告警响应失败: attempt={}, {}",
+                    attempt,
+                    last_err.as_deref().unwrap_or("")
+                );
+            }
+            Err(e) => {
+                last_err = Some(e.to_string());
+                tracing::warn!("内网后台告警发送失败: attempt={}, err={}", attempt, e);
+            }
+        }
+
+        if attempt < MAX_RETRIES {
+            tokio::time::sleep(Duration::from_millis(RETRY_BACKOFFS_MS[attempt])).await;
+        }
+    }
+
+    tracing::error!(
+        "内网后台告警最终失败: retries={}, last_err={}",
+        MAX_RETRIES,
+        last_err.unwrap_or_else(|| "unknown".to_string())
+    );
+    false
 }
 
 /// 发送 HANG 告警**解除**通知
@@ -246,6 +377,42 @@ mod tests {
     fn build_alert_markdown_contains_job_name() {
         let text = build_hang_alert_markdown("my-job", None, None, None);
         assert!(text.contains("my-job"));
+    }
+
+    #[test]
+    fn env_flag_enabled_accepts_common_truthy_values() {
+        env::set_var("TEST_INTRANET_ALERT_ENABLED", "true");
+        assert!(env_flag_enabled("TEST_INTRANET_ALERT_ENABLED"));
+
+        env::set_var("TEST_INTRANET_ALERT_ENABLED", "1");
+        assert!(env_flag_enabled("TEST_INTRANET_ALERT_ENABLED"));
+
+        env::set_var("TEST_INTRANET_ALERT_ENABLED", "on");
+        assert!(env_flag_enabled("TEST_INTRANET_ALERT_ENABLED"));
+
+        env::set_var("TEST_INTRANET_ALERT_ENABLED", "false");
+        assert!(!env_flag_enabled("TEST_INTRANET_ALERT_ENABLED"));
+
+        env::remove_var("TEST_INTRANET_ALERT_ENABLED");
+    }
+
+    #[test]
+    fn build_intranet_alert_body_uses_runtime_job_and_instance_ids() {
+        let body = build_intranet_alert_body(
+            "jb-aitrain-156450823014475840",
+            "ji-aitrain-156450823388817472",
+            "2026-05-21T10:00:00Z",
+            "### [test-job] 检测到 HANG",
+        );
+
+        assert_eq!(body["event_type"], "作业hang住");
+        assert_eq!(body["cluster_id"], "zj-cluster-v100-test-1");
+        assert_eq!(body["namespace"], "default");
+        assert_eq!(body["status"], "异常");
+        assert_eq!(body["job_uuid"], "jb-aitrain-156450823014475840");
+        assert_eq!(body["instance_uuid"], "ji-aitrain-156450823388817472");
+        assert_eq!(body["event_time"], "2026-05-21T10:00:00Z");
+        assert_eq!(body["event_detail"], "### [test-job] 检测到 HANG");
     }
 
     #[test]
