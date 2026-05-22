@@ -273,7 +273,7 @@ fn build_intranet_alert_body(
     event_detail: &str,
 ) -> serde_json::Value {
     serde_json::json!({
-        "event_type": "作业hang住",
+        "event_type": "作业训练hang住",
         "cluster_id": "zj-cluster-mixed-x10000-4",
         "namespace": "nhss-job",
         "status": "异常",
