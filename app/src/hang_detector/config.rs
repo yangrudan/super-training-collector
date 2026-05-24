@@ -21,6 +21,8 @@ pub struct HangConfig {
     pub jaccard_threshold: f64,
     /// 已知长阻塞模式（白名单）
     pub blocking_patterns: Vec<String>,
+    /// 恢复判定黑名单；命中时不累计恢复 Normal 轮次
+    pub recovery_blocking_patterns: Vec<String>,
     /// 是否启用 HANG 日志记录
     pub log_enabled: bool,
     /// HANG 日志保存目录
@@ -51,6 +53,7 @@ impl Default for HangConfig {
             node_count: 4,
             jaccard_threshold: 0.95,
             blocking_patterns: default_blocking_patterns(),
+            recovery_blocking_patterns: default_recovery_blocking_patterns(),
             log_enabled: true,
             log_dir: "hang_logs".to_string(),
             node_rank_quorum: 1.0,
@@ -78,6 +81,14 @@ impl Default for HangConfig {
 /// `ncclAllReduce` / `ProcessGroupNCCL` 等待，把它们放进白名单会直接掩盖事件。
 pub fn default_blocking_patterns() -> Vec<String> {
     Vec::new()
+}
+
+/// 默认恢复判定黑名单
+///
+/// 这些栈通常出现在 Python/MCCL 退出或进程组销毁路径上。训练任务已经处于
+/// HANG 状态时，采样到这些帧不能说明任务恢复正常，因此不累计恢复轮次。
+pub fn default_recovery_blocking_patterns() -> Vec<String> {
+    vec!["Py_FinalizeEx".to_string(), "~ProcessGroupMCCL".to_string()]
 }
 
 impl HangConfig {
@@ -219,6 +230,15 @@ impl HangConfig {
         })
     }
 
+    /// 检查堆栈是否命中恢复判定黑名单
+    pub fn is_recovery_blocking(&self, frames: &[String]) -> bool {
+        frames.iter().any(|frame| {
+            self.recovery_blocking_patterns
+                .iter()
+                .any(|pattern| frame.contains(pattern))
+        })
+    }
+
     /// 采样间隔的"代表值"（区间均值），用于 backdate 等需要确定值的场景
     pub fn sample_interval_secs(&self) -> u64 {
         let min = self.sample_interval_min_secs;
@@ -259,6 +279,10 @@ mod tests {
         assert_eq!(config.jaccard_threshold, 0.95);
         // 默认无白名单：避免 `checkpoint` / `DataLoader` 子串撞名误屏蔽真 HANG
         assert!(config.blocking_patterns.is_empty());
+        assert_eq!(
+            config.recovery_blocking_patterns,
+            vec!["Py_FinalizeEx", "~ProcessGroupMCCL"]
+        );
         assert!(config.log_enabled);
         assert_eq!(config.log_dir, "hang_logs");
         // 默认要求全部 rank 都满足条件才判节点 HANG（误报率优先）

@@ -16,6 +16,8 @@ pub enum NodeObservation {
     NoSignal,
     /// 本节点被判定为 HANG
     Hang,
+    /// 命中恢复判定黑名单，不应累计恢复轮次
+    RecoveryBlocked,
     /// 本节点正常
     Normal,
 }
@@ -88,6 +90,9 @@ impl HangDetector {
         let is_known_blocking = stacks
             .iter()
             .any(|stack| !stack.is_empty() && self.config.is_known_blocking(stack));
+        let is_recovery_blocking = stacks
+            .iter()
+            .any(|stack| !stack.is_empty() && self.config.is_recovery_blocking(stack));
 
         let state = get_hang_state();
         let mut state = state.write().unwrap();
@@ -181,6 +186,8 @@ impl HangDetector {
 
         let observation = if is_hang {
             NodeObservation::Hang
+        } else if is_recovery_blocking {
+            NodeObservation::RecoveryBlocked
         } else {
             NodeObservation::Normal
         };
@@ -245,8 +252,14 @@ impl HangDetector {
             let backdate = (self.config.sample_count as u64)
                 .saturating_mul(self.config.sample_interval_secs());
             state.enter_hang_with_backdate(backdate);
-        } else if hang_count > 0 && state.status == HangStatus::Hang {
-            // 当系统处于 HANG 状态但检测到部分节点不满足 HANG 条件时，
+        } else if state.status == HangStatus::Hang
+            && (hang_count > 0
+                || valid
+                    .iter()
+                    .any(|obs| **obs == NodeObservation::RecoveryBlocked))
+        {
+            // 当系统处于 HANG 状态但检测到部分节点仍满足 HANG 条件，
+            // 或命中恢复黑名单时，
             // 不应该直接触发恢复。只有当所有有效节点都normal时才开始计数恢复。
             // 这防止了节点采样不稳定或网络波动导致的误判恢复。
             state.reset_normal_counter();
@@ -326,6 +339,10 @@ mod tests {
             recovery_normal_rounds: 2,
             global_min_hang_nodes: 1,
             intranet_alert_delay_secs: 20 * 60,
+            recovery_blocking_patterns: vec![
+                "Py_FinalizeEx".to_string(),
+                "~ProcessGroupMCCL".to_string(),
+            ],
         }
     }
 
@@ -465,6 +482,51 @@ mod tests {
         let s = HANG_STATE.read().unwrap();
         assert!(s.hang_event_id.is_none());
         assert!(!s.hang_notified);
+    }
+
+    /// 命中恢复黑名单时，不应累计恢复 Normal 轮次
+    #[test]
+    fn test_recovery_blocking_patterns_prevent_recovery_counting() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let detector = HangDetector::new(test_config());
+
+        {
+            let state = HANG_STATE.clone();
+            let mut s = state.write().unwrap();
+            s.enter_hang();
+            s.mark_notified();
+        }
+
+        // 先累计 1 轮 Normal，确认后续黑名单会重置恢复计数。
+        let status = detector.update_global_status(&[(
+            "n".to_string(),
+            NodeObservation::Normal,
+            0.5,
+        )]);
+        assert_eq!(status, HangStatus::Hang);
+        assert_eq!(HANG_STATE.read().unwrap().consecutive_normal_count, 1);
+
+        let history_stack = vec!["training_loop (train.py:10)".to_string()];
+        let stacks: Vec<Vec<String>> = (0..4).map(|_| history_stack.clone()).collect();
+        assert_eq!(
+            detector.process_node_stacks("blocked-node", stacks).0,
+            NodeObservation::NoSignal
+        );
+
+        let blocked_stack = vec![
+            "Py_FinalizeEx (:0)".to_string(),
+            "c10d::ProcessGroupMCCL::~ProcessGroupMCCL() (:0)".to_string(),
+        ];
+        let stacks: Vec<Vec<String>> = (0..4).map(|_| blocked_stack.clone()).collect();
+        let (obs, sim) = detector.process_node_stacks("blocked-node", stacks);
+        assert_eq!(obs, NodeObservation::RecoveryBlocked);
+
+        let status = detector.update_global_status(&[("blocked-node".to_string(), obs, sim)]);
+        assert_eq!(status, HangStatus::Hang);
+        let s = HANG_STATE.read().unwrap();
+        assert!(s.hang_event_id.is_some());
+        assert_eq!(s.consecutive_normal_count, 0);
     }
 
     /// 某 rank 持续采集失败（如 kill -STOP 后 py-spy attach 卡死）应当被识别为 HANG

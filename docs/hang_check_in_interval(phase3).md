@@ -59,6 +59,7 @@ app/src/hang_detector/
 | `HANG_NODE_RANK_QUORUM` | `1.0` | 节点判 HANG 所需的"hang rank 比例"。**默认 1.0** = 必须**全部 rank** 同时满足条件，优先压制误报；代价是"部分 rank 卡死、其他 rank 仍在跑"这类异常会被判 Normal。如需更敏感可调低（如 0.5 表示半数 rank 即触发），范围 `[0.1, 1.0]`。 |
 | `HANG_GLOBAL_MIN_HANG_NODES` | `2` | 全局判 HANG 所需的"最少 hang 节点绝对数"，与 ≥50% 票数共同生效。默认 2 防止 2 节点小集群里"1 节点孤鸣 = 50%"的误报；单节点集群会自动夹紧到 1。 |
 | `HANG_RECOVERY_NORMAL_ROUNDS` | `10` | 连续多少轮 Normal 后才认为当前采样未满足 HANG 条件并发送保守的恢复提示。 |
+| 恢复黑名单 | `Py_FinalizeEx`, `~ProcessGroupMCCL` | 当前处于 HANG 时，若采样堆栈命中这些退出/进程组销毁帧，不累计恢复轮次。 |
 | `HANG_BLOCKING_PATTERNS` | *(空)* | 白名单模式（逗号分隔）。**默认为空**：`checkpoint` / `DataLoader` 等子串会与 Megatron activation checkpointing、PyTorch 训练栈中无处不在的 DataLoader 帧撞名，反而掩盖真 HANG。如需启用请显式配置高特异性函数名（如 `save_checkpoint_to_disk`）。 |
 | `HANG_LOG_ENABLED` | `true` | 是否启用 HANG 日志记录（需 HANG_CHECK_ENABLED=true） |
 | `OUTPUT_DIR` | - | 输出目录（hang日志存储在 `$OUTPUT_DIR/hang_logs`） |
