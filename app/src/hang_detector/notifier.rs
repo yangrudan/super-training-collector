@@ -344,7 +344,7 @@ pub async fn send_hang_recovery_alert(
     hang_duration_secs: Option<u64>,
 ) -> bool {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
-    let title = format!("[{}] HANG 告警解除", job_name);
+    let title = format!("[{}] 当前采样未满足hang条件", job_name);
     let text = build_hang_recovery_markdown(&job_name, event_id, hang_duration_secs);
 
     let body = serde_json::json!({
@@ -386,8 +386,8 @@ fn build_hang_recovery_markdown(
     event_id: Option<u64>,
     hang_duration_secs: Option<u64>,
 ) -> String {
-    let mut text = format!("### [{}] HANG 告警解除", job_name);
-    text.push_str("\n\n训练已恢复正常。");
+    let mut text = format!("### [{}] 当前采样未满足hang条件", job_name);
+    text.push_str("\n\n当前采样未满足hang条件。");
 
     if let Some(id) = event_id {
         text.push_str(&format!("\n\n**关联事件 ID**: `{}`", id));
@@ -457,7 +457,7 @@ mod tests {
             "### [test-job] 检测到 HANG",
         );
 
-        assert_eq!(body["event_type"], "作业hang住");
+        assert_eq!(body["event_type"], "作业训练hang住");
         assert_eq!(body["cluster_id"], "zj-cluster-mixed-x10000-4");
         assert_eq!(body["namespace"], "nhss-job");
         assert_eq!(body["status"], "异常");
@@ -492,18 +492,18 @@ mod tests {
     #[test]
     fn build_recovery_markdown_contains_title_and_event() {
         let text = build_hang_recovery_markdown("my-job", Some(1700000000), Some(240));
-        assert!(text.contains("HANG 告警解除"));
+        assert!(text.contains("当前采样未满足hang条件"));
         assert!(text.contains("my-job"));
         assert!(text.contains("**关联事件 ID**: `1700000000`"));
         assert!(text.contains("**HANG 总持续**: 240s"));
-        assert!(text.contains("训练已恢复正常"));
+        assert!(text.contains("当前采样未满足hang条件"));
     }
 
     #[test]
     fn build_recovery_markdown_without_optional_fields() {
         let text = build_hang_recovery_markdown("job-x", None, None);
-        assert!(text.contains("### [job-x] HANG 告警解除"));
-        assert!(text.contains("训练已恢复正常"));
+        assert!(text.contains("### [job-x] 当前采样未满足hang条件"));
+        assert!(text.contains("当前采样未满足hang条件"));
         assert!(!text.contains("**关联事件 ID**"));
         assert!(!text.contains("**HANG 总持续**"));
     }

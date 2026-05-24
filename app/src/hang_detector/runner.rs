@@ -114,7 +114,10 @@ pub async fn start_hang_detector_scheduler() {
         match &status {
             HangStatus::Hang => {
                 // 检测到 HANG，尝试记录日志并采集全局火焰图（事件期内只记一次）
-                if let Some(log_path) = logger.log_hang_event(round_stacks.clone()).await {
+                if let Some(log_path) = logger
+                    .log_hang_event(round_stacks.clone(), &results)
+                    .await
+                {
                     tracing::warn!("HANG detected! Log saved to: {}", log_path);
                 }
 
@@ -233,7 +236,7 @@ pub async fn start_hang_detector_scheduler() {
             }
             _ => {
                 // 非 HANG：state 的 observe_normal 已经管理了事件清理。
-                // 若刚刚从 HANG 转为 Normal 且之前已发过告警，发送"告警解除"通知。
+                // 若刚刚从 HANG 转为 Normal 且之前已发过告警，发送保守提示通知。
                 let pending = {
                     use super::state::get_hang_state;
                     let state = get_hang_state();

@@ -61,8 +61,8 @@ impl NodeStackHistory {
     }
 }
 
-/// 连续 Normal 多少轮才视为真正"恢复"
-pub const RECOVERY_NORMAL_ROUNDS: u8 = 2;
+/// 连续 Normal 多少轮才视为当前采样未满足 HANG 条件
+pub const RECOVERY_NORMAL_ROUNDS: u8 = 10;
 
 /// HANG 检测器全局状态
 #[derive(Debug)]
@@ -93,20 +93,20 @@ pub struct HangDetectorState {
     ///
     /// 与 `hang_event_id` 不同：`hang_event_id` 可能因 backdate 而早于实际检测时刻，
     /// 而 `hang_first_detected_at` 严格记录"首次判定为 HANG 的那一刻"，用于计算
-    /// 内网后台告警的 20 分钟延迟窗口。事件结束（observe_normal 真正恢复）时清空。
+    /// 内网后台告警的 20 分钟延迟窗口。事件结束（observe_normal 达到阈值）时清空。
     pub hang_first_detected_at: Option<u64>,
     /// 当前 HANG 事件是否已有钉钉通知发送任务在执行
     pub hang_notify_in_flight: bool,
-    /// 连续被判定为 Normal 的轮次数（用于判断是否真正恢复）
+    /// 连续被判定为 Normal 的轮次数（用于判断当前采样未满足 HANG 条件）
     pub consecutive_normal_count: u8,
     /// 待发送的"HANG 解除"通知（仅当上一次 HANG 已经发过告警时才会被设置）
     ///
     /// Some((event_id, hang_duration_secs)) 表示从 HANG 转为 Normal 的瞬间需要发恢复通知。
     /// 发送完成后由 [`Self::mark_recovery_notified`] 清空。
     pub pending_recovery: Option<(u64, u64)>,
-    /// 当前是否已有 HANG 解除通知发送任务在执行
+    /// 当前是否已有保守提示通知发送任务在执行
     pub recovery_notify_in_flight: bool,
-    /// HANG 解除通知是否需要等待原 HANG 告警先发送成功
+    /// 保守提示通知是否需要等待原 HANG 告警先发送成功
     pub recovery_waiting_for_alert: bool,
 }
 
@@ -324,17 +324,17 @@ impl HangDetectorState {
         was_new
     }
 
-    /// 进入 Normal 状态（仅在连续达到阈值后才真正清空事件）
+    /// 进入 Normal 状态（仅在连续达到阈值后才清空当前 HANG 事件）
     ///
-    /// 返回是否本次刚刚"真正恢复"（即从 HANG 转为 Normal 的瞬间）。
-    /// 若上一次 HANG 已发过钉钉通知，则同步设置 `pending_recovery`，由 runner 触发解除通知。
+    /// 返回是否本次刚刚从 HANG 转为 Normal。
+    /// 若上一次 HANG 已发过钉钉通知，则同步设置 `pending_recovery`，由 runner 触发保守提示通知。
     pub fn observe_normal(&mut self, recovery_threshold: u8) -> bool {
         self.consecutive_normal_count = self.consecutive_normal_count.saturating_add(1);
         if self.consecutive_normal_count >= recovery_threshold {
             let was_in_hang = self.hang_event_id.is_some();
             let any_channel_done = self.hang_notified || self.hang_intranet_notified;
             if was_in_hang && (any_channel_done || self.hang_notify_in_flight) {
-                // 上一次 HANG 已发过通知（任一路成功，或仍在发送中）→ 排队"告警解除"通知
+                // 上一次 HANG 已发过通知（任一路成功，或仍在发送中）→ 排队"当前采样未满足 HANG 条件"通知
                 let event_id = self.hang_event_id.unwrap_or(0);
                 let duration = self.hang_duration_secs().unwrap_or(0);
                 self.pending_recovery = Some((event_id, duration));
@@ -513,7 +513,7 @@ mod tests {
         assert!(!state.should_notify());
         assert!(!state.should_log());
 
-        // 一次 Normal 还不足以恢复（默认阈值 2）
+        // 一次 Normal 还不足以恢复
         let recovered = state.observe_normal(RECOVERY_NORMAL_ROUNDS);
         assert!(!recovered);
         assert_eq!(state.status, HangStatus::Hang);
@@ -521,16 +521,22 @@ mod tests {
         // 标志仍然保留，避免在抖动中重复通知
         assert!(!state.should_notify());
 
-        // 第二次 Normal -> 真正恢复
-        let recovered = state.observe_normal(RECOVERY_NORMAL_ROUNDS);
+        for _ in 1..RECOVERY_NORMAL_ROUNDS {
+            let recovered = state.observe_normal(RECOVERY_NORMAL_ROUNDS);
+            if state.consecutive_normal_count < RECOVERY_NORMAL_ROUNDS {
+                assert!(!recovered);
+            }
+        }
+        // 达到阈值 -> 清空当前 HANG 事件
+        let recovered = state.status == HangStatus::Normal;
         assert!(recovered);
         assert_eq!(state.status, HangStatus::Normal);
         assert!(state.hang_event_id.is_none());
         assert!(!state.hang_notified);
         assert!(!state.hang_logged);
-        // 恢复瞬间应当排队一条"告警解除"通知
+        // 状态转为 Normal 时应当排队一条保守提示通知
         let recovery = state.take_pending_recovery();
-        assert!(recovery.is_some(), "已发过告警的事件恢复时应当排队解除通知");
+        assert!(recovery.is_some(), "已发过告警的事件应当排队保守提示通知");
         // 取出后应当被清空
         assert!(state.take_pending_recovery().is_none());
 

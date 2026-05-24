@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(status, HangStatus::Hang);
         assert!(HANG_STATE.read().unwrap().hang_event_id.is_some());
 
-        // 第二次 Normal -> 真正恢复
+        // 第二次 Normal -> 达到测试配置的恢复阈值
         let status = detector.update_global_status(&[(
             "n".to_string(),
             NodeObservation::Normal,

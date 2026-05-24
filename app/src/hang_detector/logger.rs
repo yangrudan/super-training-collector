@@ -12,7 +12,8 @@ use serde::Serialize;
 use tracing;
 
 use super::config::HangConfig;
-use super::state::{get_hang_state, HangStatus};
+use super::detector::NodeObservation;
+use super::state::get_hang_state;
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{collect_and_generate_flamegraph, get_config_path, load_collector_config};
 
@@ -31,6 +32,39 @@ pub struct HangLogEntry {
     pub consecutive_high_similarity: u8,
     /// 采样配置
     pub config: HangLogConfig,
+    /// 触发日志时的检测状态快照
+    pub detection_state: HangDetectionStateLog,
+    /// 本轮各节点观测结果
+    pub node_observations: Vec<HangNodeObservationLog>,
+}
+
+/// 日志中的检测状态快照
+#[derive(Debug, Serialize)]
+pub struct HangDetectionStateLog {
+    pub event_id: Option<u64>,
+    pub hang_first_detected_at: Option<u64>,
+    pub selected_nodes: Vec<String>,
+    pub sample_round: u8,
+    pub consecutive_normal_count: u8,
+    pub hang_notified: bool,
+    pub hang_intranet_notified: bool,
+    pub hang_notify_in_flight: bool,
+    pub pending_recovery: Option<HangPendingRecoveryLog>,
+}
+
+/// 日志中的待发送恢复通知信息
+#[derive(Debug, Serialize)]
+pub struct HangPendingRecoveryLog {
+    pub event_id: u64,
+    pub hang_duration_secs: u64,
+}
+
+/// 日志中的单节点观测结果
+#[derive(Debug, Serialize)]
+pub struct HangNodeObservationLog {
+    pub node_ip: String,
+    pub observation: String,
+    pub similarity: f64,
 }
 
 /// 日志中的配置信息
@@ -92,6 +126,7 @@ impl HangLogger {
     pub async fn log_hang_event(
         &self,
         node_stacks: HashMap<String, Vec<Vec<String>>>,
+        node_results: &[(String, NodeObservation, f64)],
     ) -> Option<String> {
         if !self.is_enabled() {
             tracing::debug!("HANG logging is disabled");
@@ -111,15 +146,42 @@ impl HangLogger {
         }
 
         // 获取状态详情（在锁外复制）
-        let (hang_nodes, node_similarities, consecutive_high_similarity) = {
+        let (hang_nodes, node_similarities, consecutive_high_similarity, detection_state) = {
             let state = get_hang_state();
             let state = state.read().unwrap();
+            let pending_recovery = state
+                .pending_recovery
+                .map(|(event_id, hang_duration_secs)| HangPendingRecoveryLog {
+                    event_id,
+                    hang_duration_secs,
+                });
             (
                 state.details.hang_nodes.clone(),
                 state.details.node_similarities.clone(),
                 state.details.consecutive_high_similarity,
+                HangDetectionStateLog {
+                    event_id: state.hang_event_id,
+                    hang_first_detected_at: state.hang_first_detected_at,
+                    selected_nodes: state.selected_nodes.clone(),
+                    sample_round: state.sample_round,
+                    consecutive_normal_count: state.consecutive_normal_count,
+                    hang_notified: state.hang_notified,
+                    hang_intranet_notified: state.hang_intranet_notified,
+                    hang_notify_in_flight: state.hang_notify_in_flight,
+                    pending_recovery,
+                },
             )
         };
+        let node_observations = node_results
+            .iter()
+            .map(
+                |(node_ip, observation, similarity)| HangNodeObservationLog {
+                    node_ip: node_ip.clone(),
+                    observation: format!("{:?}", observation),
+                    similarity: *similarity,
+                },
+            )
+            .collect();
 
         // 构建日志条目
         let entry = HangLogEntry {
@@ -129,6 +191,8 @@ impl HangLogger {
             node_stacks,
             consecutive_high_similarity,
             config: HangLogConfig::from(&self.config),
+            detection_state,
+            node_observations,
         };
 
         // 确保目录存在
@@ -311,6 +375,22 @@ mod tests {
                 node_count: 4,
                 jaccard_threshold: 0.95,
             },
+            detection_state: HangDetectionStateLog {
+                event_id: Some(1700000000),
+                hang_first_detected_at: Some(1700000001),
+                selected_nodes: vec!["192.168.1.1".to_string()],
+                sample_round: 3,
+                consecutive_normal_count: 0,
+                hang_notified: false,
+                hang_intranet_notified: false,
+                hang_notify_in_flight: false,
+                pending_recovery: None,
+            },
+            node_observations: vec![HangNodeObservationLog {
+                node_ip: "192.168.1.1".to_string(),
+                observation: "Hang".to_string(),
+                similarity: 0.98,
+            }],
         };
 
         let result = write_log_file(&filepath, &entry);
@@ -320,5 +400,7 @@ mod tests {
         let content = fs::read_to_string(&filepath).unwrap();
         assert!(content.contains("192.168.1.1"));
         assert!(content.contains("0.98"));
+        assert!(content.contains("detection_state"));
+        assert!(content.contains("node_observations"));
     }
 }

@@ -29,7 +29,7 @@ pub struct HangConfig {
     pub node_rank_quorum: f64,
     /// 是否在 Jaccard 时保留行号（更敏感于函数内代码推进）
     pub keep_line_numbers: bool,
-    /// 连续多少轮 Normal 才视为真正恢复（去抖动）
+    /// 连续多少轮 Normal 才视为当前采样未满足 HANG 条件（去抖动）
     pub recovery_normal_rounds: u8,
     /// 全局判 HANG 所需的"最少 hang 节点绝对数"（与 50% 票数共同生效）
     /// 默认 2：避免 2 节点小集群里"1 个节点孤鸣 = 50%"的误报。
@@ -55,7 +55,7 @@ impl Default for HangConfig {
             log_dir: "hang_logs".to_string(),
             node_rank_quorum: 1.0,
             keep_line_numbers: true,
-            recovery_normal_rounds: 2,
+            recovery_normal_rounds: 10,
             global_min_hang_nodes: 2,
             intranet_alert_delay_secs: 20 * 60,
         }
@@ -264,7 +264,7 @@ mod tests {
         // 默认要求全部 rank 都满足条件才判节点 HANG（误报率优先）
         assert_eq!(config.node_rank_quorum, 1.0);
         assert!(config.keep_line_numbers);
-        assert_eq!(config.recovery_normal_rounds, 2);
+        assert_eq!(config.recovery_normal_rounds, 10);
         // 默认要求至少 2 个节点同时 hang 才判全局 HANG，避免 2 节点小集群单点孤鸣误报
         assert_eq!(config.global_min_hang_nodes, 2);
     }
