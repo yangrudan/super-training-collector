@@ -344,7 +344,7 @@ pub async fn send_hang_recovery_alert(
     hang_duration_secs: Option<u64>,
 ) -> bool {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
-    let title = format!("[{}] 当前采样未满足hang条件", job_name);
+    let title = format!("[{}] 告警提示: 当前采样未满足hang条件", job_name);
     let text = build_hang_recovery_markdown(&job_name, event_id, hang_duration_secs);
 
     let body = serde_json::json!({

@@ -449,6 +449,25 @@ mod tests {
         assert!(s.hang_logged);
     }
 
+    /// 启用检测后，普通 Normal 观测应立即把初始 Disabled 状态切到 Normal
+    #[test]
+    fn test_initial_normal_observation_sets_status_normal() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let detector = HangDetector::new(test_config());
+
+        let status = detector.update_global_status(&[(
+            "n".to_string(),
+            NodeObservation::Normal,
+            0.5,
+        )]);
+
+        assert_eq!(status, HangStatus::Normal);
+        let s = HANG_STATE.read().unwrap();
+        assert!(s.hang_event_id.is_none());
+        assert_eq!(s.consecutive_normal_count, 0);
+    }
+
     /// 连续 N 次 Normal 才视为恢复
     #[test]
     fn test_recovery_requires_consecutive_normals() {

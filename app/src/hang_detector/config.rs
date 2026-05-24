@@ -58,7 +58,7 @@ impl Default for HangConfig {
             log_dir: "hang_logs".to_string(),
             node_rank_quorum: 1.0,
             keep_line_numbers: true,
-            recovery_normal_rounds: 10,
+            recovery_normal_rounds: 3,
             global_min_hang_nodes: 2,
             intranet_alert_delay_secs: 20 * 60,
         }
@@ -165,7 +165,7 @@ impl HangConfig {
         // HANG_RECOVERY_NORMAL_ROUNDS: 恢复阈值
         if let Ok(val) = env::var("HANG_RECOVERY_NORMAL_ROUNDS") {
             if let Ok(r) = val.parse::<u8>() {
-                config.recovery_normal_rounds = r.max(1).min(10);
+                config.recovery_normal_rounds = r.max(1).min(3);
             }
         }
 
@@ -288,7 +288,7 @@ mod tests {
         // 默认要求全部 rank 都满足条件才判节点 HANG（误报率优先）
         assert_eq!(config.node_rank_quorum, 1.0);
         assert!(config.keep_line_numbers);
-        assert_eq!(config.recovery_normal_rounds, 10);
+        assert_eq!(config.recovery_normal_rounds, 3);
         // 默认要求至少 2 个节点同时 hang 才判全局 HANG，避免 2 节点小集群单点孤鸣误报
         assert_eq!(config.global_min_hang_nodes, 2);
     }

@@ -62,7 +62,7 @@ impl NodeStackHistory {
 }
 
 /// 连续 Normal 多少轮才视为当前采样未满足 HANG 条件
-pub const RECOVERY_NORMAL_ROUNDS: u8 = 10;
+pub const RECOVERY_NORMAL_ROUNDS: u8 = 3;
 
 /// HANG 检测器全局状态
 #[derive(Debug)]
@@ -329,6 +329,12 @@ impl HangDetectorState {
     /// 返回是否本次刚刚从 HANG 转为 Normal。
     /// 若上一次 HANG 已发过钉钉通知，则同步设置 `pending_recovery`，由 runner 触发保守提示通知。
     pub fn observe_normal(&mut self, recovery_threshold: u8) -> bool {
+        if self.status != HangStatus::Hang && self.hang_event_id.is_none() {
+            self.status = HangStatus::Normal;
+            self.consecutive_normal_count = 0;
+            return false;
+        }
+
         self.consecutive_normal_count = self.consecutive_normal_count.saturating_add(1);
         if self.consecutive_normal_count >= recovery_threshold {
             let was_in_hang = self.hang_event_id.is_some();
@@ -544,6 +550,19 @@ mod tests {
         state.enter_hang();
         assert!(state.should_notify());
         assert!(state.should_log());
+    }
+
+    #[test]
+    fn test_observe_normal_enters_normal_immediately_when_not_recovering_from_hang() {
+        let mut state = HangDetectorState::new();
+
+        let recovered = state.observe_normal(RECOVERY_NORMAL_ROUNDS);
+
+        assert!(!recovered);
+        assert_eq!(state.status, HangStatus::Normal);
+        assert_eq!(state.consecutive_normal_count, 0);
+        assert!(state.hang_event_id.is_none());
+        assert!(state.pending_recovery.is_none());
     }
 
     /// 未发过告警的 HANG 事件恢复时**不**应当排队恢复通知（避免误发）
