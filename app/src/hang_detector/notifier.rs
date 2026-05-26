@@ -231,33 +231,6 @@ fn build_hang_alert_markdown(
         ));
     }
 
-    if stats.selected_node_count > 0 {
-        text.push_str(&format!(
-            "\n\n**节点判定**: HANG {}/{}，有效 {}/{}",
-            stats.hang_node_count,
-            stats.valid_node_count,
-            stats.valid_node_count,
-            stats.selected_node_count
-        ));
-    }
-    if stats.total_rank_count > 0 {
-        text.push_str(&format!(
-            "\n\n**Rank 判定**: HANG {}/{}",
-            stats.hang_rank_count, stats.total_rank_count
-        ));
-    }
-    if stats.avg_similarity.is_some() || stats.max_similarity.is_some() {
-        let avg = stats
-            .avg_similarity
-            .map(|v| format!("{:.1}%", v * 100.0))
-            .unwrap_or_else(|| "-".to_string());
-        let max = stats
-            .max_similarity
-            .map(|v| format!("{:.1}%", v * 100.0))
-            .unwrap_or_else(|| "-".to_string());
-        text.push_str(&format!("\n\n**相似度**: 平均 {}，最高 {}", avg, max));
-    }
-
     if let Some(summary) = analysis_summary.map(str::trim).filter(|s| !s.is_empty()) {
         text.push_str("\n\n**分析结果可能是：**\n");
         text.push_str(summary);
@@ -505,9 +478,9 @@ mod tests {
         assert!(text.contains("**事件 ID**: `1700000000`"));
         assert!(text.contains("**HANG 已持续**: 3m"));
         assert!(text.contains("**HANG 前正常观测时长**: 2h 3m 5s"));
-        assert!(text.contains("**节点判定**: HANG 2/3，有效 3/4"));
-        assert!(text.contains("**Rank 判定**: HANG 18/24"));
-        assert!(text.contains("**相似度**: 平均 96.3%，最高 99.1%"));
+        assert!(!text.contains("节点判定"));
+        assert!(!text.contains("Rank 判定"));
+        assert!(!text.contains("相似度"));
         assert!(text.contains("**分析结果可能是：**"));
         assert!(text.contains("Rank 3"));
     }
