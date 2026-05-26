@@ -30,6 +30,29 @@ pub struct HangAlertOutcome {
     pub intranet_done: bool,
 }
 
+/// HANG 告警展示用统计信息
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HangAlertStats {
+    /// 本次 HANG 已持续秒数
+    pub hang_duration_secs: Option<u64>,
+    /// HANG 前连续 Normal 观测秒数
+    pub normal_observed_duration_before_hang_secs: Option<u64>,
+    /// 本轮选中节点数
+    pub selected_node_count: usize,
+    /// 本轮有效参与判定节点数
+    pub valid_node_count: usize,
+    /// 本轮 HANG 节点数
+    pub hang_node_count: usize,
+    /// 本轮有 HANG 证据的 rank 数
+    pub hang_rank_count: usize,
+    /// 本轮有效节点的 rank 总数
+    pub total_rank_count: usize,
+    /// 本轮有效节点平均相似度
+    pub avg_similarity: Option<f64>,
+    /// 本轮有效节点最高相似度
+    pub max_similarity: Option<f64>,
+}
+
 impl HangAlertOutcome {
     /// 两路均已完成
     pub fn all_done(&self) -> bool {
@@ -41,7 +64,7 @@ impl HangAlertOutcome {
 ///
 /// - `analysis_summary`：rank 分析结果摘要（可选）
 /// - `event_id`：HANG 事件 ID（用于在 markdown 中加入唯一标识，避免钉钉服务端按相同内容去重）
-/// - `duration_secs`：本次 HANG 已持续的秒数
+/// - `stats`：本次告警展示用统计信息
 /// - `skip_dingtalk`：若为 `true`，本次不再发送钉钉告警（包括 USER_DINGBOT），直接视作已完成
 /// - `skip_intranet`：若为 `true`，本次不再发送内网后台告警，直接视作已完成
 ///
@@ -49,13 +72,13 @@ impl HangAlertOutcome {
 pub async fn send_hang_alert(
     analysis_summary: Option<&str>,
     event_id: Option<u64>,
-    duration_secs: Option<u64>,
+    stats: HangAlertStats,
     skip_dingtalk: bool,
     skip_intranet: bool,
 ) -> HangAlertOutcome {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
     let title = format!("[{}] 训练任务 HANG 告警", job_name);
-    let text = build_hang_alert_markdown(&job_name, analysis_summary, event_id, duration_secs);
+    let text = build_hang_alert_markdown(&job_name, analysis_summary, event_id, &stats);
 
     let body = serde_json::json!({
         "msgtype": "markdown",
@@ -191,15 +214,48 @@ fn build_hang_alert_markdown(
     job_name: &str,
     analysis_summary: Option<&str>,
     event_id: Option<u64>,
-    duration_secs: Option<u64>,
+    stats: &HangAlertStats,
 ) -> String {
     let mut text = format!("### [{}] 检测到 HANG", job_name);
 
     if let Some(id) = event_id {
         text.push_str(&format!("\n\n**事件 ID**: `{}`", id));
     }
-    if let Some(secs) = duration_secs {
-        text.push_str(&format!("\n\n**已持续**: {}s", secs));
+    if let Some(secs) = stats.hang_duration_secs {
+        text.push_str(&format!("\n\n**HANG 已持续**: {}", format_duration(secs)));
+    }
+    if let Some(secs) = stats.normal_observed_duration_before_hang_secs {
+        text.push_str(&format!(
+            "\n\n**HANG 前正常观测时长**: {}",
+            format_duration(secs)
+        ));
+    }
+
+    if stats.selected_node_count > 0 {
+        text.push_str(&format!(
+            "\n\n**节点判定**: HANG {}/{}，有效 {}/{}",
+            stats.hang_node_count,
+            stats.valid_node_count,
+            stats.valid_node_count,
+            stats.selected_node_count
+        ));
+    }
+    if stats.total_rank_count > 0 {
+        text.push_str(&format!(
+            "\n\n**Rank 判定**: HANG {}/{}",
+            stats.hang_rank_count, stats.total_rank_count
+        ));
+    }
+    if stats.avg_similarity.is_some() || stats.max_similarity.is_some() {
+        let avg = stats
+            .avg_similarity
+            .map(|v| format!("{:.1}%", v * 100.0))
+            .unwrap_or_else(|| "-".to_string());
+        let max = stats
+            .max_similarity
+            .map(|v| format!("{:.1}%", v * 100.0))
+            .unwrap_or_else(|| "-".to_string());
+        text.push_str(&format!("\n\n**相似度**: 平均 {}，最高 {}", avg, max));
     }
 
     if let Some(summary) = analysis_summary.map(str::trim).filter(|s| !s.is_empty()) {
@@ -208,6 +264,28 @@ fn build_hang_alert_markdown(
     }
 
     text
+}
+
+fn format_duration(secs: u64) -> String {
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let minutes = (secs % 3_600) / 60;
+    let seconds = secs % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{}d", days));
+    }
+    if hours > 0 {
+        parts.push(format!("{}h", hours));
+    }
+    if minutes > 0 {
+        parts.push(format!("{}m", minutes));
+    }
+    if seconds > 0 || parts.is_empty() {
+        parts.push(format!("{}s", seconds));
+    }
+    parts.join(" ")
 }
 
 fn build_enabled_intranet_alert_body(event_detail: &str) -> Option<serde_json::Value> {
@@ -405,30 +483,54 @@ mod tests {
 
     #[test]
     fn build_alert_markdown_includes_event_id_and_duration() {
+        let stats = HangAlertStats {
+            hang_duration_secs: Some(180),
+            normal_observed_duration_before_hang_secs: Some(7_385),
+            selected_node_count: 4,
+            valid_node_count: 3,
+            hang_node_count: 2,
+            hang_rank_count: 18,
+            total_rank_count: 24,
+            avg_similarity: Some(0.963),
+            max_similarity: Some(0.991),
+        };
         let text = build_hang_alert_markdown(
             "test-job",
             Some("1. Rank 3（节点: 10.0.0.1，异常分数: 4）"),
             Some(1700000000),
-            Some(180),
+            &stats,
         );
 
         assert!(text.contains("### [test-job] 检测到 HANG"));
         assert!(text.contains("**事件 ID**: `1700000000`"));
-        assert!(text.contains("**已持续**: 180s"));
+        assert!(text.contains("**HANG 已持续**: 3m"));
+        assert!(text.contains("**HANG 前正常观测时长**: 2h 3m 5s"));
+        assert!(text.contains("**节点判定**: HANG 2/3，有效 3/4"));
+        assert!(text.contains("**Rank 判定**: HANG 18/24"));
+        assert!(text.contains("**相似度**: 平均 96.3%，最高 99.1%"));
         assert!(text.contains("**分析结果可能是：**"));
         assert!(text.contains("Rank 3"));
     }
 
     #[test]
     fn build_alert_markdown_without_optional_fields() {
-        let text = build_hang_alert_markdown("test-job", None, None, None);
+        let text = build_hang_alert_markdown("test-job", None, None, &HangAlertStats::default());
         assert_eq!(text, "### [test-job] 检测到 HANG");
     }
 
     #[test]
     fn build_alert_markdown_contains_job_name() {
-        let text = build_hang_alert_markdown("my-job", None, None, None);
+        let text = build_hang_alert_markdown("my-job", None, None, &HangAlertStats::default());
         assert!(text.contains("my-job"));
+    }
+
+    #[test]
+    fn format_duration_uses_compact_units() {
+        assert_eq!(format_duration(0), "0s");
+        assert_eq!(format_duration(59), "59s");
+        assert_eq!(format_duration(60), "1m");
+        assert_eq!(format_duration(3_661), "1h 1m 1s");
+        assert_eq!(format_duration(90_061), "1d 1h 1m 1s");
     }
 
     #[test]
@@ -515,7 +617,10 @@ mod tests {
         send_hang_alert(
             Some("1. Rank 3（节点: 10.0.0.1，异常分数: 4）"),
             Some(1700000000),
-            Some(123),
+            HangAlertStats {
+                hang_duration_secs: Some(123),
+                ..HangAlertStats::default()
+            },
             false,
             false,
         )
@@ -530,7 +635,10 @@ mod tests {
         send_hang_alert(
             Some("1. Rank 3（节点: 10.0.0.1，异常分数: 4）"),
             Some(1700000001),
-            Some(456),
+            HangAlertStats {
+                hang_duration_secs: Some(456),
+                ..HangAlertStats::default()
+            },
             false,
             false,
         )

@@ -5,7 +5,7 @@
 use super::config::HangConfig;
 use super::detector::{HangDetector, NodeObservation};
 use super::logger::HangLogger;
-use super::notifier::{send_hang_alert, send_hang_recovery_alert};
+use super::notifier::{send_hang_alert, send_hang_recovery_alert, HangAlertStats};
 use super::state::HangStatus;
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{build_callstack_url, build_callstack_urls, load_collector_config};
@@ -31,11 +31,12 @@ pub async fn start_hang_detector_scheduler() {
 
     tracing::info!(
         "Starting HANG detection scheduler with interval: {}~{}s (random per tick), \
-         node_rank_quorum={}, global_min_hang_nodes={}",
+         node_rank_quorum={}, global_min_hang_nodes={}, global_min_hang_ranks={}",
         config.sample_interval_min_secs,
         config.sample_interval_max_secs,
         config.node_rank_quorum,
-        config.global_min_hang_nodes
+        config.global_min_hang_nodes,
+        config.global_min_hang_ranks
     );
 
     let detector = HangDetector::new(config.clone());
@@ -114,9 +115,7 @@ pub async fn start_hang_detector_scheduler() {
         match &status {
             HangStatus::Hang => {
                 // 检测到 HANG，尝试记录日志并采集全局火焰图（事件期内只记一次）
-                if let Some(log_path) = logger
-                    .log_hang_event(round_stacks.clone(), &results)
-                    .await
+                if let Some(log_path) = logger.log_hang_event(round_stacks.clone(), &results).await
                 {
                     tracing::warn!("HANG detected! Log saved to: {}", log_path);
                 }
@@ -154,12 +153,26 @@ pub async fn start_hang_detector_scheduler() {
                         "问题 Rank 分析未启用".to_string()
                     };
 
-                    // 拿到事件元数据（event_id + 持续时长）
-                    let (event_id, duration_secs) = {
+                    // 拿到事件元数据与展示统计
+                    let (event_id, stats) = {
                         use super::state::get_hang_state;
                         let state = get_hang_state();
                         let state = state.read().unwrap();
-                        (state.hang_event_id, state.hang_duration_secs())
+                        (
+                            state.hang_event_id,
+                            HangAlertStats {
+                                hang_duration_secs: state.hang_duration_secs(),
+                                normal_observed_duration_before_hang_secs: state
+                                    .normal_observed_duration_before_hang_secs(),
+                                selected_node_count: state.details.selected_node_count,
+                                valid_node_count: state.details.valid_node_count,
+                                hang_node_count: state.details.hang_node_count,
+                                hang_rank_count: state.details.hang_rank_count,
+                                total_rank_count: state.details.total_rank_count,
+                                avg_similarity: state.details.avg_similarity,
+                                max_similarity: state.details.max_similarity,
+                            },
+                        )
                     };
 
                     tracing::warn!("Sending HANG alert (event_id={:?})", event_id);
@@ -180,12 +193,7 @@ pub async fn start_hang_detector_scheduler() {
                                 let intranet_ready =
                                     state.intranet_alert_ready(intranet_delay_secs);
                                 state.mark_notify_in_flight();
-                                (
-                                    true,
-                                    state.hang_notified,
-                                    !intranet_ready,
-                                    intranet_ready,
-                                )
+                                (true, state.hang_notified, !intranet_ready, intranet_ready)
                             } else {
                                 (false, false, false, false)
                             }
@@ -196,7 +204,7 @@ pub async fn start_hang_detector_scheduler() {
                                 let outcome = send_hang_alert(
                                     Some(&analysis_summary),
                                     Some(event_id),
-                                    duration_secs,
+                                    stats,
                                     skip_dingtalk,
                                     skip_intranet,
                                 )

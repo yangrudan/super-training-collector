@@ -15,7 +15,7 @@ pub struct HangConfig {
     pub sample_interval_max_secs: u64,
     /// 连续采样次数，默认 3
     pub sample_count: usize,
-    /// 采样节点数，默认 4
+    /// 采样节点数，默认 8
     pub node_count: usize,
     /// Jaccard 判定阈值，默认 0.95
     pub jaccard_threshold: f64,
@@ -34,8 +34,12 @@ pub struct HangConfig {
     /// 连续多少轮 Normal 才视为当前采样未满足 HANG 条件（去抖动）
     pub recovery_normal_rounds: u8,
     /// 全局判 HANG 所需的"最少 hang 节点绝对数"（与 50% 票数共同生效）
-    /// 默认 2：避免 2 节点小集群里"1 个节点孤鸣 = 50%"的误报。
+    /// 默认 6：8 节点采样时至少 6 个节点 HANG 才判全局 HANG。
     pub global_min_hang_nodes: usize,
+    /// 全局判 HANG 所需的"最少 hang rank 绝对数"
+    ///
+    /// 默认 60：8 节点、每节点 8 rank 时，64 个 rank 中至少 60 个 rank 有 HANG 证据。
+    pub global_min_hang_ranks: usize,
     /// 首次检测到 HANG 后，延迟多少秒再发送内网后台告警。
     ///
     /// 钉钉告警仍然立即发送，仅内网告警等待此延迟。延迟结束后再次确认仍处于
@@ -47,19 +51,20 @@ impl Default for HangConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            sample_interval_min_secs: 50,
-            sample_interval_max_secs: 60,
+            sample_interval_min_secs: 40,
+            sample_interval_max_secs: 70,
             sample_count: 3,
-            node_count: 4,
+            node_count: 8,
             jaccard_threshold: 0.95,
             blocking_patterns: default_blocking_patterns(),
             recovery_blocking_patterns: default_recovery_blocking_patterns(),
             log_enabled: true,
             log_dir: "hang_logs".to_string(),
-            node_rank_quorum: 1.0,
+            node_rank_quorum: 0.75,
             keep_line_numbers: true,
             recovery_normal_rounds: 3,
-            global_min_hang_nodes: 2,
+            global_min_hang_nodes: 6,
+            global_min_hang_ranks: 60,
             intranet_alert_delay_secs: 20 * 60,
         }
     }
@@ -170,10 +175,17 @@ impl HangConfig {
         }
 
         // HANG_GLOBAL_MIN_HANG_NODES: 全局判 HANG 所需的"最少 hang 节点绝对数"
-        // 与 50% 票数共同生效；默认 2，避免单节点孤鸣误报
+        // 与 50% 票数共同生效；默认 6，避免少数节点孤鸣误报
         if let Ok(val) = env::var("HANG_GLOBAL_MIN_HANG_NODES") {
             if let Ok(n) = val.parse::<usize>() {
                 config.global_min_hang_nodes = n.max(1);
+            }
+        }
+
+        // HANG_GLOBAL_MIN_HANG_RANKS: 全局判 HANG 所需的"最少 hang rank 绝对数"
+        if let Ok(val) = env::var("HANG_GLOBAL_MIN_HANG_RANKS") {
+            if let Ok(n) = val.parse::<usize>() {
+                config.global_min_hang_ranks = n.max(1);
             }
         }
 
@@ -271,11 +283,11 @@ mod tests {
         let config = HangConfig::default();
 
         assert!(!config.enabled);
-        assert_eq!(config.sample_interval_min_secs, 50);
-        assert_eq!(config.sample_interval_max_secs, 60);
+        assert_eq!(config.sample_interval_min_secs, 40);
+        assert_eq!(config.sample_interval_max_secs, 70);
         assert_eq!(config.sample_interval_secs(), 55);
         assert_eq!(config.sample_count, 3);
-        assert_eq!(config.node_count, 4);
+        assert_eq!(config.node_count, 8);
         assert_eq!(config.jaccard_threshold, 0.95);
         // 默认无白名单：避免 `checkpoint` / `DataLoader` 子串撞名误屏蔽真 HANG
         assert!(config.blocking_patterns.is_empty());
@@ -285,12 +297,13 @@ mod tests {
         );
         assert!(config.log_enabled);
         assert_eq!(config.log_dir, "hang_logs");
-        // 默认要求全部 rank 都满足条件才判节点 HANG（误报率优先）
-        assert_eq!(config.node_rank_quorum, 1.0);
+        // 默认节点内 75% rank 满足条件才判节点 HANG
+        assert_eq!(config.node_rank_quorum, 0.75);
         assert!(config.keep_line_numbers);
         assert_eq!(config.recovery_normal_rounds, 3);
-        // 默认要求至少 2 个节点同时 hang 才判全局 HANG，避免 2 节点小集群单点孤鸣误报
-        assert_eq!(config.global_min_hang_nodes, 2);
+        // 默认要求至少 6 个节点、60 个 rank 同时 hang 才判全局 HANG
+        assert_eq!(config.global_min_hang_nodes, 6);
+        assert_eq!(config.global_min_hang_ranks, 60);
     }
 
     #[test]
@@ -336,10 +349,7 @@ mod tests {
         let mut config_with_pattern = HangConfig::default();
         config_with_pattern.blocking_patterns = vec!["save_checkpoint_to_disk".to_string()];
 
-        let frames_hit = vec![
-            "main".to_string(),
-            "save_checkpoint_to_disk".to_string(),
-        ];
+        let frames_hit = vec!["main".to_string(), "save_checkpoint_to_disk".to_string()];
         assert!(config_with_pattern.is_known_blocking(&frames_hit));
 
         let normal_frames = vec![
@@ -369,6 +379,7 @@ mod tests {
         env::set_var("HANG_CHECK_ENABLED", "true");
         env::set_var("HANG_SAMPLE_INTERVAL", "60");
         env::set_var("HANG_JACCARD_THRESHOLD", "0.98");
+        env::set_var("HANG_GLOBAL_MIN_HANG_RANKS", "4");
 
         let config = HangConfig::from_env();
 
@@ -378,11 +389,13 @@ mod tests {
         assert_eq!(config.sample_interval_max_secs, 60);
         assert_eq!(config.sample_interval_secs(), 60);
         assert_eq!(config.jaccard_threshold, 0.98);
+        assert_eq!(config.global_min_hang_ranks, 4);
 
         // 清理环境变量
         env::remove_var("HANG_CHECK_ENABLED");
         env::remove_var("HANG_SAMPLE_INTERVAL");
         env::remove_var("HANG_JACCARD_THRESHOLD");
+        env::remove_var("HANG_GLOBAL_MIN_HANG_RANKS");
     }
 
     #[test]

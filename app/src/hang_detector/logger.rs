@@ -30,6 +30,24 @@ pub struct HangLogEntry {
     pub node_stacks: HashMap<String, Vec<Vec<String>>>,
     /// 连续高相似度次数
     pub consecutive_high_similarity: u8,
+    /// 本次 HANG 已持续秒数
+    pub hang_duration_secs: Option<u64>,
+    /// 本次 HANG 前连续 Normal 观测秒数
+    pub normal_observed_duration_before_hang_secs: Option<u64>,
+    /// 本轮选中节点数
+    pub selected_node_count: usize,
+    /// 本轮有效参与判定节点数
+    pub valid_node_count: usize,
+    /// 本轮 HANG 节点数
+    pub hang_node_count: usize,
+    /// 本轮有 HANG 证据的 rank 数
+    pub hang_rank_count: usize,
+    /// 本轮有效节点的 rank 总数
+    pub total_rank_count: usize,
+    /// 本轮有效节点平均相似度
+    pub avg_similarity: Option<f64>,
+    /// 本轮有效节点最高相似度
+    pub max_similarity: Option<f64>,
     /// 采样配置
     pub config: HangLogConfig,
     /// 触发日志时的检测状态快照
@@ -43,6 +61,9 @@ pub struct HangLogEntry {
 pub struct HangDetectionStateLog {
     pub event_id: Option<u64>,
     pub hang_first_detected_at: Option<u64>,
+    pub normal_observed_since: Option<u64>,
+    pub normal_observed_duration_before_hang_secs: Option<u64>,
+    pub hang_duration_secs: Option<u64>,
     pub selected_nodes: Vec<String>,
     pub sample_round: u8,
     pub consecutive_normal_count: u8,
@@ -78,6 +99,9 @@ pub struct HangLogConfig {
     pub sample_interval_max_secs: u64,
     pub sample_count: usize,
     pub node_count: usize,
+    pub node_rank_quorum: f64,
+    pub global_min_hang_nodes: usize,
+    pub global_min_hang_ranks: usize,
     pub jaccard_threshold: f64,
 }
 
@@ -89,6 +113,9 @@ impl From<&HangConfig> for HangLogConfig {
             sample_interval_max_secs: config.sample_interval_max_secs,
             sample_count: config.sample_count,
             node_count: config.node_count,
+            node_rank_quorum: config.node_rank_quorum,
+            global_min_hang_nodes: config.global_min_hang_nodes,
+            global_min_hang_ranks: config.global_min_hang_ranks,
             jaccard_threshold: config.jaccard_threshold,
         }
     }
@@ -146,7 +173,21 @@ impl HangLogger {
         }
 
         // 获取状态详情（在锁外复制）
-        let (hang_nodes, node_similarities, consecutive_high_similarity, detection_state) = {
+        let (
+            hang_nodes,
+            node_similarities,
+            consecutive_high_similarity,
+            hang_duration_secs,
+            normal_observed_duration_before_hang_secs,
+            selected_node_count,
+            valid_node_count,
+            hang_node_count,
+            hang_rank_count,
+            total_rank_count,
+            avg_similarity,
+            max_similarity,
+            detection_state,
+        ) = {
             let state = get_hang_state();
             let state = state.read().unwrap();
             let pending_recovery = state
@@ -159,9 +200,22 @@ impl HangLogger {
                 state.details.hang_nodes.clone(),
                 state.details.node_similarities.clone(),
                 state.details.consecutive_high_similarity,
+                state.hang_duration_secs(),
+                state.normal_observed_duration_before_hang_secs(),
+                state.details.selected_node_count,
+                state.details.valid_node_count,
+                state.details.hang_node_count,
+                state.details.hang_rank_count,
+                state.details.total_rank_count,
+                state.details.avg_similarity,
+                state.details.max_similarity,
                 HangDetectionStateLog {
                     event_id: state.hang_event_id,
                     hang_first_detected_at: state.hang_first_detected_at,
+                    normal_observed_since: state.normal_observed_since,
+                    normal_observed_duration_before_hang_secs: state
+                        .normal_observed_duration_before_hang_secs(),
+                    hang_duration_secs: state.hang_duration_secs(),
                     selected_nodes: state.selected_nodes.clone(),
                     sample_round: state.sample_round,
                     consecutive_normal_count: state.consecutive_normal_count,
@@ -190,6 +244,15 @@ impl HangLogger {
             node_similarities,
             node_stacks,
             consecutive_high_similarity,
+            hang_duration_secs,
+            normal_observed_duration_before_hang_secs,
+            selected_node_count,
+            valid_node_count,
+            hang_node_count,
+            hang_rank_count,
+            total_rank_count,
+            avg_similarity,
+            max_similarity,
             config: HangLogConfig::from(&self.config),
             detection_state,
             node_observations,
@@ -344,6 +407,15 @@ mod tests {
         assert_eq!(log_config.sample_interval_max_secs, 30);
         assert_eq!(log_config.sample_count, 3);
         assert_eq!(log_config.node_count, 4);
+        assert_eq!(log_config.node_rank_quorum, config.node_rank_quorum);
+        assert_eq!(
+            log_config.global_min_hang_nodes,
+            config.global_min_hang_nodes
+        );
+        assert_eq!(
+            log_config.global_min_hang_ranks,
+            config.global_min_hang_ranks
+        );
         assert_eq!(log_config.jaccard_threshold, 0.95);
     }
 
@@ -367,17 +439,32 @@ mod tests {
             node_similarities: HashMap::from([("192.168.1.1".to_string(), 0.98)]),
             node_stacks: HashMap::new(),
             consecutive_high_similarity: 3,
+            hang_duration_secs: Some(180),
+            normal_observed_duration_before_hang_secs: Some(3_600),
+            selected_node_count: 1,
+            valid_node_count: 1,
+            hang_node_count: 1,
+            hang_rank_count: 1,
+            total_rank_count: 1,
+            avg_similarity: Some(0.98),
+            max_similarity: Some(0.98),
             config: HangLogConfig {
                 sample_interval_secs: 30,
                 sample_interval_min_secs: 30,
                 sample_interval_max_secs: 30,
                 sample_count: 3,
                 node_count: 4,
+                node_rank_quorum: 0.75,
+                global_min_hang_nodes: 6,
+                global_min_hang_ranks: 60,
                 jaccard_threshold: 0.95,
             },
             detection_state: HangDetectionStateLog {
                 event_id: Some(1700000000),
                 hang_first_detected_at: Some(1700000001),
+                normal_observed_since: Some(1699996401),
+                normal_observed_duration_before_hang_secs: Some(3_600),
+                hang_duration_secs: Some(180),
                 selected_nodes: vec!["192.168.1.1".to_string()],
                 sample_round: 3,
                 consecutive_normal_count: 0,

@@ -28,6 +28,24 @@ pub struct HangDetails {
     pub consecutive_high_similarity: u8,
     /// 最后一次检测时间
     pub last_check_time: u64,
+    /// 本次 HANG 已持续秒数（进入 HANG 后才有值）
+    pub hang_duration_secs: Option<u64>,
+    /// 本次 HANG 前，检测器连续观测到 Normal 的秒数
+    pub normal_observed_duration_before_hang_secs: Option<u64>,
+    /// 本轮选中的节点数
+    pub selected_node_count: usize,
+    /// 本轮有效参与判定的节点数（排除 NoSignal）
+    pub valid_node_count: usize,
+    /// 本轮被判定为 HANG 的节点数
+    pub hang_node_count: usize,
+    /// 本轮有 HANG 证据的 rank 数
+    pub hang_rank_count: usize,
+    /// 本轮有效节点的 rank 总数
+    pub total_rank_count: usize,
+    /// 本轮有效节点的平均相似度
+    pub avg_similarity: Option<f64>,
+    /// 本轮有效节点的最高相似度
+    pub max_similarity: Option<f64>,
 }
 
 /// HANG 状态快照（用于 API 响应）
