@@ -29,6 +29,14 @@ pub struct HangAlertOutcome {
     pub dingtalk_done: bool,
     /// 内网后台告警是否完成（成功 或 本次跳过/未启用）
     pub intranet_done: bool,
+    /// "内网后台告警动作"钉钉通知是否完成（成功 / 本次跳过 / 未启用 intranet）
+    ///
+    /// 该通知依赖"内网告警本体已成功"才会真正发送：
+    /// - 若 `skip_intranet_action=true` → 本次跳过，视作完成
+    /// - 若 intranet 未启用 → 没有动作通知，视作完成
+    /// - 若本轮内网本体失败 → 动作通知未发送，视作未完成（下一轮跟随内网一起重试）
+    /// - 若内网已成功（之前或本轮）→ 动作通知真实发送，按结果记账
+    pub intranet_action_done: bool,
 }
 
 /// HANG 告警展示用统计信息
@@ -55,9 +63,9 @@ pub struct HangAlertStats {
 }
 
 impl HangAlertOutcome {
-    /// 两路均已完成
+    /// 三路均已完成
     pub fn all_done(&self) -> bool {
-        self.dingtalk_done && self.intranet_done
+        self.dingtalk_done && self.intranet_done && self.intranet_action_done
     }
 }
 
@@ -77,6 +85,7 @@ pub async fn send_hang_alert(
     stats: HangAlertStats,
     skip_dingtalk: bool,
     skip_intranet: bool,
+    skip_intranet_action: bool,
 ) -> HangAlertOutcome {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
     let title = format!("[{}] 训练任务 HANG 告警", job_name);
@@ -100,6 +109,7 @@ pub async fn send_hang_alert(
             return HangAlertOutcome {
                 dingtalk_done: skip_dingtalk,
                 intranet_done: skip_intranet,
+                intranet_action_done: skip_intranet || skip_intranet_action,
             };
         }
     };
@@ -109,13 +119,13 @@ pub async fn send_hang_alert(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let intranet_body = if skip_intranet {
-        None
-    } else {
-        build_enabled_intranet_alert_body(&text)
-    };
+    // 无条件构造 intranet_body：即便本轮 skip_intranet（内网本体已成功），
+    // 仍可能需要单独重试"内网后台告警动作"钉钉通知，那时需要 body 内容生成动作 markdown。
+    let intranet_body = build_enabled_intranet_alert_body(&text);
     // 调用方未要求跳过、但环境未启用内网告警时，也视作"已完成"——无需在后续轮次再重试。
     let intranet_skipped_or_disabled = skip_intranet || intranet_body.is_none();
+    // 动作通知在以下情况视作"已完成（无需再发）"：调用方明确跳过、或未启用 intranet。
+    let action_skipped_or_disabled = skip_intranet_action || intranet_body.is_none();
 
     let dingtalk_main_fut = async {
         if skip_dingtalk {
@@ -131,46 +141,66 @@ pub async fn send_hang_alert(
             }
         }
     };
-    let intranet_fut = async {
-        match intranet_body.as_ref() {
+    // 串行：intranet 本体 → 动作通知。两者独立记账，便于跨轮重试。
+    let intranet_and_action_fut = async {
+        let intranet_ok = match intranet_body.as_ref() {
+            None => true, // 未启用：视作完成
             Some(b) => {
-                let intranet_ok = send_intranet_alert_with_retry(&client, b).await;
-                if intranet_ok {
-                    let action_body =
-                        build_intranet_alert_action_dingtalk_body(&job_name, event_id, b);
-                    send_intranet_alert_action_to_dingtalk(
-                        &client,
-                        &action_body,
-                        user_dingbot.as_deref(),
-                    )
-                    .await;
+                if skip_intranet {
+                    // 之前轮次已成功，本轮无需重发
+                    true
+                } else {
+                    send_intranet_alert_with_retry(&client, b).await
                 }
-                intranet_ok
             }
-            None => true,
-        }
+        };
+
+        // 动作通知前置条件：intranet 已成功（之前或本轮）+ 启用了 intranet + 调用方未跳过
+        let action_ok = if action_skipped_or_disabled {
+            true
+        } else if !intranet_ok {
+            // 本轮内网本体失败 → 动作通知不能发，等下一轮内网先成功
+            false
+        } else if let Some(b) = intranet_body.as_ref() {
+            let action_body = build_intranet_alert_action_dingtalk_body(&job_name, event_id, b);
+            send_intranet_alert_action_to_dingtalk(
+                &client,
+                &action_body,
+                user_dingbot.as_deref(),
+            )
+            .await
+        } else {
+            true
+        };
+
+        (intranet_ok, action_ok)
     };
 
-    let (dingtalk_ok, _user_ignored, intranet_ok) =
-        tokio::join!(dingtalk_main_fut, dingtalk_user_fut, intranet_fut);
+    let (dingtalk_ok, _user_ignored, (intranet_ok, action_ok)) =
+        tokio::join!(dingtalk_main_fut, dingtalk_user_fut, intranet_and_action_fut);
 
     HangAlertOutcome {
         dingtalk_done: dingtalk_ok,
         intranet_done: intranet_skipped_or_disabled || intranet_ok,
+        intranet_action_done: action_skipped_or_disabled || action_ok,
     }
 }
 
+/// 向主钉钉机器人和 USER_DINGBOT（若设置）推送"内网后台告警动作"通知
+///
+/// 返回值：主钉钉机器人是否发送成功（USER_DINGBOT 失败不影响主结果，仅记录日志）。
 async fn send_intranet_alert_action_to_dingtalk(
     client: &reqwest::Client,
     body: &serde_json::Value,
     user_dingbot: Option<&str>,
-) {
+) -> bool {
     let main_fut = send_with_retry(client, DINGTALK_WEBHOOK, body, "内网后台告警动作");
     if let Some(url) = user_dingbot {
         let user_fut = send_with_retry(client, url, body, "USER_DINGBOT/内网后台告警动作");
-        let _ = tokio::join!(main_fut, user_fut);
+        let (main_ok, _user_ok) = tokio::join!(main_fut, user_fut);
+        main_ok
     } else {
-        let _ = main_fut.await;
+        main_fut.await
     }
 }
 
@@ -701,6 +731,7 @@ mod tests {
             },
             false,
             false,
+            false,
         )
         .await;
         println!("消息已发送，请检查钉钉群");
@@ -717,6 +748,7 @@ mod tests {
                 hang_duration_secs: Some(456),
                 ..HangAlertStats::default()
             },
+            false,
             false,
             false,
         )

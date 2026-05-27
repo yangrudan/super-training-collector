@@ -183,7 +183,14 @@ pub async fn start_hang_detector_scheduler() {
                         // `attempted_intranet` 表示"本轮是否会真正尝试发送内网告警"。
                         // 若内网延迟尚未到达（或本事件内网已发过），则 attempted_intranet=false，
                         // skip_intranet=true，本轮跳过内网，等待下一轮再次检测 HANG 状态后重试。
-                        let (should_spawn, skip_dingtalk, skip_intranet, attempted_intranet) = {
+                        let (
+                            should_spawn,
+                            skip_dingtalk,
+                            skip_intranet,
+                            skip_intranet_action,
+                            attempted_intranet,
+                            attempted_action,
+                        ) = {
                             use super::state::get_hang_state;
                             let state = get_hang_state();
                             let mut state = state.write().unwrap();
@@ -192,10 +199,19 @@ pub async fn start_hang_detector_scheduler() {
                             {
                                 let intranet_ready =
                                     state.intranet_alert_ready(intranet_delay_secs);
+                                let action_ready =
+                                    state.intranet_action_ready(intranet_delay_secs);
                                 state.mark_notify_in_flight();
-                                (true, state.hang_notified, !intranet_ready, intranet_ready)
+                                (
+                                    true,
+                                    state.hang_notified,
+                                    !intranet_ready,
+                                    !action_ready,
+                                    intranet_ready,
+                                    action_ready,
+                                )
                             } else {
-                                (false, false, false, false)
+                                (false, false, false, false, false, false)
                             }
                         };
 
@@ -207,6 +223,7 @@ pub async fn start_hang_detector_scheduler() {
                                     stats,
                                     skip_dingtalk,
                                     skip_intranet,
+                                    skip_intranet_action,
                                 )
                                 .await;
                                 use super::state::get_hang_state;
@@ -224,6 +241,13 @@ pub async fn start_hang_detector_scheduler() {
                                 if attempted_intranet && outcome.intranet_done {
                                     state.mark_intranet_notified_for(event_id);
                                 }
+                                // "内网后台告警动作"：同样只有"本轮真正尝试"才记账。
+                                // 注意 notifier 内部要求 intranet 本体已成功才会真正发送动作通知，
+                                // 因此当本轮内网失败时 outcome.intranet_action_done=false，
+                                // 下一轮 intranet_action_ready 仍为 true，跟随 intranet 重试。
+                                if attempted_action && outcome.intranet_action_done {
+                                    state.mark_intranet_action_notified_for(event_id);
+                                }
                                 if !skip_dingtalk && !outcome.dingtalk_done {
                                     tracing::warn!(
                                         "DingTalk HANG alert failed, will retry on next eligible round (event_id={})",
@@ -233,6 +257,12 @@ pub async fn start_hang_detector_scheduler() {
                                 if attempted_intranet && !outcome.intranet_done {
                                     tracing::warn!(
                                         "Intranet HANG alert failed, will retry on next eligible round (event_id={})",
+                                        event_id
+                                    );
+                                }
+                                if attempted_action && !outcome.intranet_action_done {
+                                    tracing::warn!(
+                                        "Intranet-alert-action DingTalk notify failed, will retry on next eligible round (event_id={})",
                                         event_id
                                     );
                                 }

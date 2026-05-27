@@ -10,6 +10,7 @@ use super::jaccard::{jaccard_similarity, stack_to_set_with_options};
 use super::state::{
     current_epoch_secs, get_hang_state, HangStatus, NodeStackHistory, RankStackHistory,
 };
+use tracing;
 
 /// 单节点本轮检测结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +285,30 @@ impl HangDetector {
         let majority_ok = hang_count * 2 >= total_count;
         let absolute_ok = hang_count >= effective_min;
         let ranks_ok = state.details.hang_rank_count >= effective_min_ranks;
+
+        tracing::debug!(
+            "HANG global judgement: hang_count={}/{} (majority_ok={}), \
+             effective_min_nodes={} (cfg={}, absolute_ok={}), \
+             hang_rank_count={}/{} effective_min_ranks={} (cfg={}, ranks_ok={}), \
+             current_status={:?}, observations=[{}]",
+            hang_count,
+            total_count,
+            majority_ok,
+            effective_min,
+            self.config.global_min_hang_nodes,
+            absolute_ok,
+            state.details.hang_rank_count,
+            state.details.total_rank_count,
+            effective_min_ranks,
+            self.config.global_min_hang_ranks,
+            ranks_ok,
+            state.status,
+            node_results
+                .iter()
+                .map(|(ip, obs, sim)| format!("{}={:?}@{:.3}", ip, obs, sim))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
         if majority_ok && absolute_ok && ranks_ok {
             state.details.consecutive_high_similarity = self.config.sample_count as u8;
