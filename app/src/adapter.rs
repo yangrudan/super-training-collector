@@ -568,10 +568,8 @@ fn apply_hang_state_to_metrics(ranks: &mut Vec<RankMetrics>, nodes: &mut Vec<Nod
 
     // 重新计算节点级别的健康计数与整体状态
     for node in nodes.iter_mut() {
-        let node_ranks: Vec<&RankMetrics> = ranks
-            .iter()
-            .filter(|r| r.node_ip == node.node_ip)
-            .collect();
+        let node_ranks: Vec<&RankMetrics> =
+            ranks.iter().filter(|r| r.node_ip == node.node_ip).collect();
 
         if node_ranks.is_empty() {
             continue;
@@ -795,10 +793,7 @@ pub async fn get_global_step_metrics() -> Result<GlobalStepMetrics, BoxError> {
     let response = query_step_metrics(&url, 3).await?;
 
     let current_step = response.records.first().map(|r| r.step).unwrap_or(0);
-    let latest_duration_ms = response
-        .records
-        .first()
-        .and_then(|r| r.duration_ms);
+    let latest_duration_ms = response.records.first().and_then(|r| r.duration_ms);
 
     // debug!(
     //     "[Global Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",
@@ -841,10 +836,7 @@ pub async fn get_rank_step_metrics(
     let response = query_step_metrics(&url, 3).await?;
 
     let current_step = response.records.first().map(|r| r.step).unwrap_or(0);
-    let latest_duration_ms = response
-        .records
-        .first()
-        .and_then(|r| r.duration_ms);
+    let latest_duration_ms = response.records.first().and_then(|r| r.duration_ms);
 
     // debug!(
     //     "[Rank Step] Result: step={}, duration_ms={:?}, allocated_gb={:?}",

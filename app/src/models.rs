@@ -6,7 +6,11 @@ use serde::{Deserialize, Serialize};
 pub mod nan_f64 {
     use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
-        if v.is_nan() { s.serialize_none() } else { s.serialize_f64(*v) }
+        if v.is_nan() {
+            s.serialize_none()
+        } else {
+            s.serialize_f64(*v)
+        }
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
         Ok(Option::<f64>::deserialize(d)?.unwrap_or(f64::NAN))
@@ -15,7 +19,11 @@ pub mod nan_f64 {
 pub mod nan_f32 {
     use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &f32, s: S) -> Result<S::Ok, S::Error> {
-        if v.is_nan() { s.serialize_none() } else { s.serialize_f32(*v) }
+        if v.is_nan() {
+            s.serialize_none()
+        } else {
+            s.serialize_f32(*v)
+        }
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
         Ok(Option::<f32>::deserialize(d)?.unwrap_or(f32::NAN))
@@ -59,19 +67,19 @@ pub struct RankMetrics {
 
     // 核心指标
     #[serde(with = "nan_f64")]
-    pub step_time_ms: f64,        // 当前 step 耗时 (毫秒)
+    pub step_time_ms: f64, // 当前 step 耗时 (毫秒)
     #[serde(with = "nan_f64")]
-    pub step_time_ratio: f64,     // 相对全局 P50 的倍数
+    pub step_time_ratio: f64, // 相对全局 P50 的倍数
     #[serde(with = "nan_f32")]
-    pub gpu_utilization: f32,     // GPU 利用率 (0-100%)
+    pub gpu_utilization: f32, // GPU 利用率 (0-100%)
     #[serde(with = "nan_f32")]
-    pub gpu_memory_used_gb: f32,  // GPU 显存占用 (GB)
+    pub gpu_memory_used_gb: f32, // GPU 显存占用 (GB)
     #[serde(with = "nan_f32")]
     pub gpu_memory_total_gb: f32, // GPU 显存总量 (GB)
 
     // 通信指标
     #[serde(with = "nan_f64")]
-    pub nccl_latency_ms: f64,     // NCCL 通信延迟 (毫秒)
+    pub nccl_latency_ms: f64, // NCCL 通信延迟 (毫秒)
     #[serde(with = "nan_f32")]
     pub nccl_bandwidth_gbps: f32, // NCCL 带宽 (Gbps)
 
@@ -97,13 +105,13 @@ pub struct NodeMetrics {
 
     // 性能聚合
     #[serde(with = "nan_f32")]
-    pub slow_ratio: f32,          // 慢 rank 占比 (0.0-1.0)
+    pub slow_ratio: f32, // 慢 rank 占比 (0.0-1.0)
     #[serde(with = "nan_f64")]
-    pub avg_step_time_ms: f64,    // 平均 step 耗时
+    pub avg_step_time_ms: f64, // 平均 step 耗时
     #[serde(with = "nan_f64")]
-    pub p50_step_time_ms: f64,    // P50 step 耗时
+    pub p50_step_time_ms: f64, // P50 step 耗时
     #[serde(with = "nan_f64")]
-    pub p99_step_time_ms: f64,    // P99 step 耗时
+    pub p99_step_time_ms: f64, // P99 step 耗时
     #[serde(with = "nan_f32")]
     pub avg_gpu_utilization: f32, // 平均 GPU 利用率
     #[serde(with = "nan_f64")]
@@ -373,7 +381,7 @@ impl StepQueryRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StepRecord {
     pub step: u64,
-    pub timestamp: Option<u64>, // 时间戳（微秒）
+    pub timestamp: Option<u64>,   // 时间戳（微秒）
     pub duration_ms: Option<f64>, // 耗时（毫秒）
 }
 

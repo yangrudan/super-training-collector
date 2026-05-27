@@ -3,6 +3,7 @@
 //! 当检测到 HANG 时，并行通过内网后台和钉钉 Webhook 发送告警。
 //! 内网与钉钉两路相互独立，调用方可分别指定本次是否跳过其中一路，
 //! 以便实现"已成功的一路不再重发，只重试失败的一路"的语义。
+//! 内网后台告警发送成功后，会额外向钉钉机器人推送一条动作通知。
 
 use std::env;
 use std::time::Duration;
@@ -69,6 +70,7 @@ impl HangAlertOutcome {
 /// - `skip_intranet`：若为 `true`，本次不再发送内网后台告警，直接视作已完成
 ///
 /// 内网与钉钉两路并行发送；若环境变量 `USER_DINGBOT` 存在，钉钉路同时向该 URL 并行发送同内容的通知。
+/// 当内网后台告警发送成功时，会再向主钉钉机器人和 `USER_DINGBOT` 推送一条动作通知。
 pub async fn send_hang_alert(
     analysis_summary: Option<&str>,
     event_id: Option<u64>,
@@ -102,14 +104,10 @@ pub async fn send_hang_alert(
         }
     };
 
-    let user_dingbot = if skip_dingtalk {
-        None
-    } else {
-        env::var("USER_DINGBOT")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    };
+    let user_dingbot = env::var("USER_DINGBOT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     let intranet_body = if skip_intranet {
         None
@@ -127,13 +125,28 @@ pub async fn send_hang_alert(
         }
     };
     let dingtalk_user_fut = async {
-        if let Some(url) = user_dingbot.as_deref() {
-            let _ = send_with_retry(&client, url, &body, "USER_DINGBOT").await;
+        if !skip_dingtalk {
+            if let Some(url) = user_dingbot.as_deref() {
+                let _ = send_with_retry(&client, url, &body, "USER_DINGBOT").await;
+            }
         }
     };
     let intranet_fut = async {
         match intranet_body.as_ref() {
-            Some(b) => send_intranet_alert_with_retry(&client, b).await,
+            Some(b) => {
+                let intranet_ok = send_intranet_alert_with_retry(&client, b).await;
+                if intranet_ok {
+                    let action_body =
+                        build_intranet_alert_action_dingtalk_body(&job_name, event_id, b);
+                    send_intranet_alert_action_to_dingtalk(
+                        &client,
+                        &action_body,
+                        user_dingbot.as_deref(),
+                    )
+                    .await;
+                }
+                intranet_ok
+            }
             None => true,
         }
     };
@@ -145,6 +158,63 @@ pub async fn send_hang_alert(
         dingtalk_done: dingtalk_ok,
         intranet_done: intranet_skipped_or_disabled || intranet_ok,
     }
+}
+
+async fn send_intranet_alert_action_to_dingtalk(
+    client: &reqwest::Client,
+    body: &serde_json::Value,
+    user_dingbot: Option<&str>,
+) {
+    let main_fut = send_with_retry(client, DINGTALK_WEBHOOK, body, "内网后台告警动作");
+    if let Some(url) = user_dingbot {
+        let user_fut = send_with_retry(client, url, body, "USER_DINGBOT/内网后台告警动作");
+        let _ = tokio::join!(main_fut, user_fut);
+    } else {
+        let _ = main_fut.await;
+    }
+}
+
+fn build_intranet_alert_action_dingtalk_body(
+    job_name: &str,
+    event_id: Option<u64>,
+    intranet_body: &serde_json::Value,
+) -> serde_json::Value {
+    let title = format!("[{}] 内网后台告警已发送", job_name);
+    let text = build_intranet_alert_action_markdown(job_name, event_id, intranet_body);
+
+    serde_json::json!({
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": text
+        }
+    })
+}
+
+fn build_intranet_alert_action_markdown(
+    job_name: &str,
+    event_id: Option<u64>,
+    intranet_body: &serde_json::Value,
+) -> String {
+    let mut text = format!("### [{}] 已发送内网后台告警", job_name);
+
+    if let Some(id) = event_id {
+        text.push_str(&format!("\n\n**关联 HANG 事件 ID**: `{}`", id));
+    }
+    if let Some(event_type) = intranet_body.get("event_type").and_then(|v| v.as_str()) {
+        text.push_str(&format!("\n\n**内网事件类型**: {}", event_type));
+    }
+    if let Some(job_uuid) = intranet_body.get("job_uuid").and_then(|v| v.as_str()) {
+        text.push_str(&format!("\n\n**作业 UUID**: `{}`", job_uuid));
+    }
+    if let Some(instance_uuid) = intranet_body.get("instance_uuid").and_then(|v| v.as_str()) {
+        text.push_str(&format!("\n\n**实例 UUID**: `{}`", instance_uuid));
+    }
+    if let Some(event_time) = intranet_body.get("event_time").and_then(|v| v.as_str()) {
+        text.push_str(&format!("\n\n**发送时间**: {}", event_time));
+    }
+
+    text
 }
 
 /// 向指定 Webhook URL 发送钉钉消息，失败时按退避策略重试
@@ -540,6 +610,41 @@ mod tests {
         assert_eq!(body["instance_uuid"], "ji-aitrain-156450823388817472");
         assert_eq!(body["event_time"], "2026-05-21T10:00:00Z");
         assert_eq!(body["event_detail"], "### [test-job] 检测到 HANG");
+    }
+
+    #[test]
+    fn build_intranet_alert_action_markdown_includes_action_context() {
+        let intranet_body = build_intranet_alert_body(
+            "jb-aitrain-156450823014475840",
+            "ji-aitrain-156450823388817472",
+            "2026-05-21T10:00:00Z",
+            "### [test-job] 检测到 HANG",
+        );
+
+        let text =
+            build_intranet_alert_action_markdown("test-job", Some(1700000000), &intranet_body);
+
+        assert!(text.contains("### [test-job] 已发送内网后台告警"));
+        assert!(text.contains("**关联 HANG 事件 ID**: `1700000000`"));
+        assert!(text.contains("**内网事件类型**: 作业训练hang住"));
+        assert!(text.contains("**作业 UUID**: `jb-aitrain-156450823014475840`"));
+        assert!(text.contains("**实例 UUID**: `ji-aitrain-156450823388817472`"));
+        assert!(text.contains("**发送时间**: 2026-05-21T10:00:00Z"));
+    }
+
+    #[test]
+    fn build_intranet_alert_action_dingtalk_body_uses_markdown_message() {
+        let intranet_body =
+            build_intranet_alert_body("job-1", "instance-1", "2026-05-21T10:00:00Z", "detail");
+
+        let body = build_intranet_alert_action_dingtalk_body("test-job", None, &intranet_body);
+
+        assert_eq!(body["msgtype"], "markdown");
+        assert_eq!(body["markdown"]["title"], "[test-job] 内网后台告警已发送");
+        assert!(body["markdown"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("### [test-job] 已发送内网后台告警"));
     }
 
     #[test]
