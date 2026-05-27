@@ -97,7 +97,7 @@ pub struct HangDetectorState {
     ///
     /// 与 `hang_event_id` 不同：`hang_event_id` 可能因 backdate 而早于实际检测时刻，
     /// 而 `hang_first_detected_at` 严格记录"首次判定为 HANG 的那一刻"，用于计算
-    /// 内网后台告警的 20 分钟延迟窗口。事件结束（observe_normal 达到阈值）时清空。
+    /// 内网后台告警的 15 分钟延迟窗口。事件结束（observe_normal 达到阈值）时清空。
     pub hang_first_detected_at: Option<u64>,
     /// 最近一段连续 Normal 观测的起始时间（秒，UNIX epoch）
     pub normal_observed_since: Option<u64>,
@@ -187,7 +187,7 @@ impl HangDetectorState {
 
     /// 标记钉钉告警已成功（仅钉钉，不动内网状态）
     ///
-    /// 配合"内网延迟 20 分钟"的语义：钉钉先发，内网晚一拍发，期间应分别记账。
+    /// 配合"内网延迟 15 分钟"的语义：钉钉先发，内网晚一拍发，期间应分别记账。
     pub fn mark_dingtalk_notified_for(&mut self, event_id: u64) {
         if self.hang_event_id == Some(event_id) {
             self.hang_notified = true;
@@ -251,7 +251,7 @@ impl HangDetectorState {
 
     /// 检查是否需要发送通知（HANG 且任一路尚未成功）
     ///
-    /// 注意：此方法**不考虑**内网告警的 20 分钟延迟窗口。若需要同时尊重延迟，
+    /// 注意：此方法**不考虑**内网告警的 15 分钟延迟窗口。若需要同时尊重延迟，
     /// 请使用 [`Self::should_notify_with_intranet_delay`]。
     pub fn should_notify(&self) -> bool {
         self.status == HangStatus::Hang

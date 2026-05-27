@@ -76,7 +76,7 @@ app/src/hang_detector/
 | `HANG_RECOVERY_NORMAL_ROUNDS` | `3` | 连续多少轮 Normal 后才认为当前采样未满足 HANG 条件并发送保守的恢复提示。 |
 | 恢复黑名单 | `Py_FinalizeEx`, `~ProcessGroupMCCL` | 当前处于 HANG 时，若采样堆栈命中这些退出/进程组销毁帧，不累计恢复轮次。 |
 | `HANG_BLOCKING_PATTERNS` | *(空)* | 白名单模式（逗号分隔）。**默认为空**：`checkpoint` / `DataLoader` 等子串会与 Megatron activation checkpointing、PyTorch 训练栈中无处不在的 DataLoader 帧撞名，反而掩盖真 HANG。如需启用请显式配置高特异性函数名（如 `save_checkpoint_to_disk`）。 |
-| `HANG_INTRANET_ALERT_DELAY_SECS` | `1200` | 首次检测到 HANG 后，延迟多少秒再发送内网后台告警。钉钉告警不受此延迟影响。 |
+| `HANG_INTRANET_ALERT_DELAY_SECS` | `900` | 首次检测到 HANG 后，延迟多少秒再发送内网后台告警。钉钉告警不受此延迟影响。 |
 | `INTRANET_ALERT_ENABLED` | `false` | 是否启用内网后台告警；未启用时只发钉钉告警。 |
 | `USER_DINGBOT` | *(空)* | 可选用户自定义钉钉机器人 Webhook；设置后与主通知并行发送。 |
 | `HANG_LOG_ENABLED` | `true` | 是否启用 HANG 日志记录（需 HANG_CHECK_ENABLED=true） |

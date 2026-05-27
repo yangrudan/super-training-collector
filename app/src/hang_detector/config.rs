@@ -43,7 +43,7 @@ pub struct HangConfig {
     /// 首次检测到 HANG 后，延迟多少秒再发送内网后台告警。
     ///
     /// 钉钉告警仍然立即发送，仅内网告警等待此延迟。延迟结束后再次确认仍处于
-    /// HANG 状态时，才会真正发出内网告警，从而过滤掉短暂抖动。默认 20 分钟。
+    /// HANG 状态时，才会真正发出内网告警，从而过滤掉短暂抖动。默认 15 分钟。
     pub intranet_alert_delay_secs: u64,
 }
 
@@ -65,7 +65,7 @@ impl Default for HangConfig {
             recovery_normal_rounds: 3,
             global_min_hang_nodes: 6,
             global_min_hang_ranks: 60,
-            intranet_alert_delay_secs: 20 * 60,
+            intranet_alert_delay_secs: 15 * 60,
         }
     }
 }
@@ -190,7 +190,7 @@ impl HangConfig {
         }
 
         // HANG_INTRANET_ALERT_DELAY_SECS: 首次检测 HANG 到发送内网告警之间的延迟（秒）
-        // 钉钉告警不受此参数影响，依然立即发送。默认 1200 秒（20 分钟）。
+        // 钉钉告警不受此参数影响，依然立即发送。默认 900 秒（15 分钟）。
         if let Ok(val) = env::var("HANG_INTRANET_ALERT_DELAY_SECS") {
             if let Ok(secs) = val.parse::<u64>() {
                 config.intranet_alert_delay_secs = secs;
