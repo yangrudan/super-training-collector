@@ -179,7 +179,7 @@ fn build_intranet_alert_action_dingtalk_body(
     event_id: Option<u64>,
     intranet_body: &serde_json::Value,
 ) -> serde_json::Value {
-    let title = format!("[{}] 内网后台告警已发送", job_name);
+    let title = format!("[{}] 内网重启告警已发送", job_name);
     let text = build_intranet_alert_action_markdown(job_name, event_id, intranet_body);
 
     serde_json::json!({
@@ -196,7 +196,7 @@ fn build_intranet_alert_action_markdown(
     event_id: Option<u64>,
     intranet_body: &serde_json::Value,
 ) -> String {
-    let mut text = format!("### [{}] 已发送内网后台告警", job_name);
+    let mut text = format!("### [{}] 已发送内网重启告警", job_name);
 
     if let Some(id) = event_id {
         text.push_str(&format!("\n\n**关联 HANG 事件 ID**: `{}`", id));
@@ -292,11 +292,11 @@ fn build_hang_alert_markdown(
         text.push_str(&format!("\n\n**事件 ID**: `{}`", id));
     }
     if let Some(secs) = stats.hang_duration_secs {
-        text.push_str(&format!("\n\n**HANG 已持续**: {}", format_duration(secs)));
+        text.push_str(&format!("\n\n**已持续**: {}", format_duration(secs)));
     }
     if let Some(secs) = stats.normal_observed_duration_before_hang_secs {
         text.push_str(&format!(
-            "\n\n**HANG 前正常观测时长**: {}",
+            "\n\n**此次任务已守护时长**: {}",
             format_duration(secs)
         ));
     }
