@@ -179,7 +179,7 @@ fn build_intranet_alert_action_dingtalk_body(
     event_id: Option<u64>,
     intranet_body: &serde_json::Value,
 ) -> serde_json::Value {
-    let title = format!("[{}] 内网重启告警已发送", job_name);
+    let title = format!("[{}] 重启告警已发送", job_name);
     let text = build_intranet_alert_action_markdown(job_name, event_id, intranet_body);
 
     serde_json::json!({
@@ -196,23 +196,23 @@ fn build_intranet_alert_action_markdown(
     event_id: Option<u64>,
     intranet_body: &serde_json::Value,
 ) -> String {
-    let mut text = format!("### [{}] 已发送内网重启告警", job_name);
+    let mut text = format!("### [{}] 已完成内部服务重启通知下发", job_name);
 
-    if let Some(id) = event_id {
-        text.push_str(&format!("\n\n**关联 HANG 事件 ID**: `{}`", id));
-    }
-    if let Some(event_type) = intranet_body.get("event_type").and_then(|v| v.as_str()) {
-        text.push_str(&format!("\n\n**内网事件类型**: {}", event_type));
-    }
-    if let Some(job_uuid) = intranet_body.get("job_uuid").and_then(|v| v.as_str()) {
-        text.push_str(&format!("\n\n**作业 UUID**: `{}`", job_uuid));
-    }
-    if let Some(instance_uuid) = intranet_body.get("instance_uuid").and_then(|v| v.as_str()) {
-        text.push_str(&format!("\n\n**实例 UUID**: `{}`", instance_uuid));
-    }
-    if let Some(event_time) = intranet_body.get("event_time").and_then(|v| v.as_str()) {
-        text.push_str(&format!("\n\n**发送时间**: {}", event_time));
-    }
+    // if let Some(id) = event_id {
+    //     text.push_str(&format!("\n\n**关联 HANG 事件 ID**: `{}`", id));
+    // }
+    // if let Some(event_type) = intranet_body.get("event_type").and_then(|v| v.as_str()) {
+    //     text.push_str(&format!("\n\n**内网事件类型**: {}", event_type));
+    // }
+    // if let Some(job_uuid) = intranet_body.get("job_uuid").and_then(|v| v.as_str()) {
+    //     text.push_str(&format!("\n\n**作业 UUID**: `{}`", job_uuid));
+    // }
+    // if let Some(instance_uuid) = intranet_body.get("instance_uuid").and_then(|v| v.as_str()) {
+    //     text.push_str(&format!("\n\n**实例 UUID**: `{}`", instance_uuid));
+    // }
+    // if let Some(event_time) = intranet_body.get("event_time").and_then(|v| v.as_str()) {
+    //     text.push_str(&format!("\n\n**发送时间**: {}", event_time));
+    // }
 
     text
 }
