@@ -50,6 +50,10 @@ pub struct NodeStackHistory {
     pub ranks: Vec<RankStackHistory>,
     /// 最近一次本节点的代表性相似度（rank 中位数，仅用于 UI）
     pub last_similarity: f64,
+    /// 最近一次本节点有 HANG 证据的 rank 数
+    pub last_hang_rank_count: usize,
+    /// 最近一次本节点有效采样的 rank 总数
+    pub last_rank_count: usize,
 }
 
 impl NodeStackHistory {
@@ -89,12 +93,22 @@ pub struct HangDetectorState {
     ///
     /// 一旦置 true，本事件内不再重复发送内网告警，即使后续钉钉告警仍在重试。
     pub hang_intranet_notified: bool,
+    /// 当前 HANG 事件内网后台告警请求真正成功的时间。
+    pub hang_intranet_success_time: Option<String>,
+    /// 当前 HANG 事件"内网后台告警动作"钉钉通知是否已发送成功或本事件无需发送（按事件去重，粘性）
+    ///
+    /// 该通知是在"内网告警本体成功后"额外向钉钉机器人推送的动作提醒。
+    /// 之前其失败结果未被记录，导致一次钉钉网络抖动就会让动作通知永久丢失；
+    /// 现在按事件粘性跟踪，未成功时由 runner 在后续轮次跨轮重试。
+    pub hang_intranet_action_notified: bool,
     /// 当前 HANG 事件首次被检测到的真实墙钟时间（秒，UNIX epoch）
     ///
     /// 与 `hang_event_id` 不同：`hang_event_id` 可能因 backdate 而早于实际检测时刻，
     /// 而 `hang_first_detected_at` 严格记录"首次判定为 HANG 的那一刻"，用于计算
-    /// 内网后台告警的 20 分钟延迟窗口。事件结束（observe_normal 达到阈值）时清空。
+    /// 内网后台告警的 15 分钟延迟窗口。事件结束（observe_normal 达到阈值）时清空。
     pub hang_first_detected_at: Option<u64>,
+    /// 最近一段连续 Normal 观测的起始时间（秒，UNIX epoch）
+    pub normal_observed_since: Option<u64>,
     /// 当前 HANG 事件是否已有钉钉通知发送任务在执行
     pub hang_notify_in_flight: bool,
     /// 连续被判定为 Normal 的轮次数（用于判断当前采样未满足 HANG 条件）
@@ -123,7 +137,10 @@ impl Default for HangDetectorState {
             hang_logged: false,
             hang_notified: false,
             hang_intranet_notified: false,
+            hang_intranet_success_time: None,
+            hang_intranet_action_notified: false,
             hang_first_detected_at: None,
+            normal_observed_since: None,
             hang_notify_in_flight: false,
             consecutive_normal_count: 0,
             pending_recovery: None,
@@ -160,6 +177,7 @@ impl HangDetectorState {
     pub fn mark_notified(&mut self) {
         self.hang_notified = true;
         self.hang_intranet_notified = true;
+        self.hang_intranet_action_notified = true;
         self.hang_notify_in_flight = false;
     }
 
@@ -169,15 +187,25 @@ impl HangDetectorState {
     }
 
     /// 标记内网后台告警已成功或本事件不需要再发送内网告警
-    pub fn mark_intranet_notified_for(&mut self, event_id: u64) {
+    pub fn mark_intranet_notified_for(&mut self, event_id: u64, success_time: Option<String>) {
         if self.hang_event_id == Some(event_id) {
             self.hang_intranet_notified = true;
+            if let Some(success_time) = success_time {
+                self.hang_intranet_success_time = Some(success_time);
+            }
+        }
+    }
+
+    /// 标记"内网后台告警动作"钉钉通知已成功或本事件不需要再发送
+    pub fn mark_intranet_action_notified_for(&mut self, event_id: u64) {
+        if self.hang_event_id == Some(event_id) {
+            self.hang_intranet_action_notified = true;
         }
     }
 
     /// 标记钉钉告警已成功（仅钉钉，不动内网状态）
     ///
-    /// 配合"内网延迟 20 分钟"的语义：钉钉先发，内网晚一拍发，期间应分别记账。
+    /// 配合"内网延迟 15 分钟"的语义：钉钉先发，内网晚一拍发，期间应分别记账。
     pub fn mark_dingtalk_notified_for(&mut self, event_id: u64) {
         if self.hang_event_id == Some(event_id) {
             self.hang_notified = true;
@@ -197,6 +225,7 @@ impl HangDetectorState {
         if self.hang_event_id == Some(event_id) {
             self.hang_notified = true;
             self.hang_intranet_notified = true;
+            self.hang_intranet_action_notified = true;
             self.hang_notify_in_flight = false;
         } else if self.pending_recovery.map(|(id, _)| id) == Some(event_id)
             && self.recovery_waiting_for_alert
@@ -241,7 +270,7 @@ impl HangDetectorState {
 
     /// 检查是否需要发送通知（HANG 且任一路尚未成功）
     ///
-    /// 注意：此方法**不考虑**内网告警的 20 分钟延迟窗口。若需要同时尊重延迟，
+    /// 注意：此方法**不考虑**内网告警的 15 分钟延迟窗口。若需要同时尊重延迟，
     /// 请使用 [`Self::should_notify_with_intranet_delay`]。
     pub fn should_notify(&self) -> bool {
         self.status == HangStatus::Hang
@@ -275,11 +304,40 @@ impl HangDetectorState {
         }
     }
 
+    /// "内网后台告警动作"钉钉通知当前是否可以发送
+    ///
+    /// 满足下述全部条件才返回 true：
+    /// - 当前处于 HANG 状态且事件存在
+    /// - 本事件 action 钉钉尚未成功
+    /// - 距离"首次检测到 HANG"已经过了至少 `delay_secs` 秒（与内网告警共用同一延迟窗口）
+    ///
+    /// 注意：动作通知在 notifier 内部仅在"内网告警本体已成功（之前或本轮）"时才会真正发送，
+    /// 此处只判定"是否到了允许尝试的时间"。
+    pub fn intranet_action_ready(&self, delay_secs: u64) -> bool {
+        if self.status != HangStatus::Hang
+            || self.hang_event_id.is_none()
+            || self.hang_intranet_action_notified
+        {
+            return false;
+        }
+        match self.hang_first_detected_at {
+            Some(start) => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(start);
+                now.saturating_sub(start) >= delay_secs
+            }
+            None => false,
+        }
+    }
+
     /// 检查本轮是否需要发起告警发送任务（考虑内网延迟）
     ///
-    /// 返回 true 的条件：处于 HANG，无正在发送的任务，且**钉钉**或**内网**之一可发：
+    /// 返回 true 的条件：处于 HANG，无正在发送的任务，且**钉钉**、**内网**、**内网告警动作**之一可发：
     /// - 钉钉可发：本事件钉钉尚未成功
     /// - 内网可发：见 [`Self::intranet_alert_ready`]
+    /// - 内网告警动作可发：见 [`Self::intranet_action_ready`]
     pub fn should_notify_with_intranet_delay(&self, intranet_delay_secs: u64) -> bool {
         if self.status != HangStatus::Hang
             || self.hang_event_id.is_none()
@@ -289,7 +347,8 @@ impl HangDetectorState {
         }
         let dingtalk_ready = !self.hang_notified;
         let intranet_ready = self.intranet_alert_ready(intranet_delay_secs);
-        dingtalk_ready || intranet_ready
+        let action_ready = self.intranet_action_ready(intranet_delay_secs);
+        dingtalk_ready || intranet_ready || action_ready
     }
 
     /// 进入 / 维持 HANG 状态
@@ -308,16 +367,15 @@ impl HangDetectorState {
         self.consecutive_normal_count = 0;
         let was_new = self.hang_event_id.is_none();
         if was_new {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+            let now = current_epoch_secs();
             let event_id = now.saturating_sub(backdate_secs);
             self.hang_event_id = Some(event_id);
             self.hang_first_detected_at = Some(now);
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;
+            self.hang_intranet_success_time = None;
+            self.hang_intranet_action_notified = false;
             self.hang_notify_in_flight = false;
         }
         self.status = HangStatus::Hang;
@@ -332,6 +390,9 @@ impl HangDetectorState {
         if self.status != HangStatus::Hang && self.hang_event_id.is_none() {
             self.status = HangStatus::Normal;
             self.consecutive_normal_count = 0;
+            if self.normal_observed_since.is_none() {
+                self.normal_observed_since = Some(current_epoch_secs());
+            }
             return false;
         }
 
@@ -349,9 +410,12 @@ impl HangDetectorState {
             self.status = HangStatus::Normal;
             self.hang_event_id = None;
             self.hang_first_detected_at = None;
+            self.normal_observed_since = Some(current_epoch_secs());
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;
+            self.hang_intranet_success_time = None;
+            self.hang_intranet_action_notified = false;
             was_in_hang
         } else {
             false
@@ -416,23 +480,28 @@ impl HangDetectorState {
 
     /// 获取当前状态的快照（用于 API 响应）
     pub fn snapshot(&self) -> HangStatusSnapshot {
+        let mut details = self.details.clone();
+        details.hang_duration_secs = self.hang_duration_secs();
+        details.stc_uptime_secs = stc_uptime_secs();
         HangStatusSnapshot {
             status: self.status.clone(),
-            details: self.details.clone(),
+            details,
             timestamp: self.last_update,
         }
     }
 
     /// 当前 HANG 事件已持续多少秒
     pub fn hang_duration_secs(&self) -> Option<u64> {
-        self.hang_event_id.map(|start| {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(start);
-            now.saturating_sub(start)
-        })
+        self.hang_event_id
+            .map(|start| current_epoch_secs().saturating_sub(start))
     }
+}
+
+pub(crate) fn current_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// 全局状态单例
@@ -442,6 +511,21 @@ pub static HANG_STATE: Lazy<Arc<RwLock<HangDetectorState>>> =
 /// 获取全局状态的只读引用
 pub fn get_hang_state() -> Arc<RwLock<HangDetectorState>> {
     HANG_STATE.clone()
+}
+
+/// STC 进程启动时刻（UNIX epoch 秒），由 HANG scheduler 启动时强制初始化。
+pub static STC_START_TIME: Lazy<u64> = Lazy::new(current_epoch_secs);
+
+/// 初始化 STC 启动时刻。
+///
+/// 必须在调度器启动时调用，避免第一次写日志/发告警时才开始计算守护时长。
+pub fn init_stc_start_time() {
+    Lazy::force(&STC_START_TIME);
+}
+
+/// 返回 STC 从启动到现在的运行时长（秒）
+pub fn stc_uptime_secs() -> u64 {
+    current_epoch_secs().saturating_sub(*STC_START_TIME)
 }
 
 #[cfg(test)]
@@ -483,6 +567,7 @@ mod tests {
         assert!(!state.hang_logged);
         assert!(!state.hang_notified);
         assert!(!state.hang_notify_in_flight);
+        assert!(state.normal_observed_since.is_none());
         assert_eq!(state.consecutive_normal_count, 0);
         assert!(state.pending_recovery.is_none());
         assert!(!state.recovery_notify_in_flight);
@@ -560,9 +645,36 @@ mod tests {
 
         assert!(!recovered);
         assert_eq!(state.status, HangStatus::Normal);
+        assert!(state.normal_observed_since.is_some());
         assert_eq!(state.consecutive_normal_count, 0);
         assert!(state.hang_event_id.is_none());
         assert!(state.pending_recovery.is_none());
+    }
+
+    #[test]
+    fn test_snapshot_records_stc_uptime() {
+        let mut state = HangDetectorState::new();
+
+        state.enter_hang();
+        let snapshot = state.snapshot();
+
+        assert!(snapshot.details.stc_uptime_secs <= stc_uptime_secs());
+    }
+
+    #[test]
+    fn test_recovery_resets_normal_observed_since_for_next_event() {
+        let mut state = HangDetectorState::new();
+        let now = current_epoch_secs();
+        state.status = HangStatus::Normal;
+        state.normal_observed_since = Some(now.saturating_sub(120));
+        state.enter_hang();
+        state.mark_notified();
+
+        for _ in 0..RECOVERY_NORMAL_ROUNDS {
+            state.observe_normal(RECOVERY_NORMAL_ROUNDS);
+        }
+        assert_eq!(state.status, HangStatus::Normal);
+        assert!(state.normal_observed_since.is_some());
     }
 
     /// 未发过告警的 HANG 事件恢复时**不**应当排队恢复通知（避免误发）
@@ -674,5 +786,9 @@ mod tests {
 
         assert_eq!(snapshot.status, HangStatus::Hang);
         assert!(snapshot.timestamp > 0);
+        assert_eq!(
+            snapshot.details.hang_duration_secs,
+            state.hang_duration_secs()
+        );
     }
 }

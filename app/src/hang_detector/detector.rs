@@ -7,7 +7,10 @@ use rand::thread_rng;
 
 use super::config::HangConfig;
 use super::jaccard::{jaccard_similarity, stack_to_set_with_options};
-use super::state::{get_hang_state, HangStatus, NodeStackHistory, RankStackHistory};
+use super::state::{
+    current_epoch_secs, get_hang_state, HangStatus, NodeStackHistory, RankStackHistory,
+};
+use tracing;
 
 /// 单节点本轮检测结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,8 +132,7 @@ impl HangDetector {
             // 成功采集：清零失败计数
             rank_history.consecutive_failure_count = 0;
 
-            let current_set =
-                stack_to_set_with_options(stack, self.config.keep_line_numbers);
+            let current_set = stack_to_set_with_options(stack, self.config.keep_line_numbers);
             if current_set.is_empty() {
                 continue;
             }
@@ -168,6 +170,8 @@ impl HangDetector {
             similarities.iter().copied().sum::<f64>() / similarities.len() as f64
         };
         history.last_similarity = representative;
+        history.last_hang_rank_count = high_sim_rank_count;
+        history.last_rank_count = stacks.len();
 
         // 若本轮没有任何 rank 可比（既无相似度可算、也无失败可计） → 无信号
         if had_history_count == 0 {
@@ -180,8 +184,8 @@ impl HangDetector {
         }
 
         // 节点级 quorum：至少多少比例的 rank 表现出 hang 证据（高相似 或 持续采集失败）
-        let quorum_threshold =
-            ((stacks.len().max(1)) as f64 * self.config.node_rank_quorum).ceil() as usize;
+        let rank_count = stacks.len().max(1);
+        let quorum_threshold = (rank_count as f64 * self.config.node_rank_quorum).ceil() as usize;
         let is_hang = high_sim_rank_count >= quorum_threshold.max(1);
 
         let observation = if is_hang {
@@ -222,6 +226,37 @@ impl HangDetector {
             .map(|(_, obs, _)| obs)
             .filter(|obs| **obs != NodeObservation::NoSignal)
             .collect();
+        let valid_similarities: Vec<f64> = node_results
+            .iter()
+            .filter(|(_, obs, _)| *obs != NodeObservation::NoSignal)
+            .map(|(_, _, sim)| *sim)
+            .collect();
+        state.details.selected_node_count = node_results.len();
+        state.details.valid_node_count = valid.len();
+        state.details.hang_node_count = state.details.hang_nodes.len();
+        state.details.hang_rank_count = node_results
+            .iter()
+            .filter(|(_, obs, _)| *obs != NodeObservation::NoSignal)
+            .filter_map(|(ip, _, _)| state.node_history.get(ip))
+            .map(|h| h.last_hang_rank_count)
+            .sum();
+        state.details.total_rank_count = node_results
+            .iter()
+            .filter(|(_, obs, _)| *obs != NodeObservation::NoSignal)
+            .filter_map(|(ip, _, _)| state.node_history.get(ip))
+            .map(|h| h.last_rank_count)
+            .sum();
+        state.details.avg_similarity = if valid_similarities.is_empty() {
+            None
+        } else {
+            Some(valid_similarities.iter().copied().sum::<f64>() / valid_similarities.len() as f64)
+        };
+        state.details.max_similarity =
+            valid_similarities
+                .iter()
+                .copied()
+                .reduce(|a, b| if a >= b { a } else { b });
+        state.details.last_check_time = current_epoch_secs();
 
         if valid.is_empty() {
             // 全无信号，保持原状态（避免节点重选导致的伪 Normal 抖动）
@@ -238,14 +273,44 @@ impl HangDetector {
 
         // 全局判定：必须同时满足
         //   (1) hang 节点占比 >= 50%（多数票）
-        //   (2) hang 节点绝对数 >= global_min_hang_nodes（避免小集群单点孤鸣）
+        //   (2) hang 节点绝对数 >= global_min_hang_nodes
+        //   (3) hang rank 绝对数 >= global_min_hang_ranks
         // 当集群只有 1 个节点时，使 effective_min = min(配置, total_count)，
         // 否则单节点集群将永远无法触发 HANG。
         let effective_min = self.config.global_min_hang_nodes.min(total_count.max(1));
+        let effective_min_ranks = self
+            .config
+            .global_min_hang_ranks
+            .min(state.details.total_rank_count.max(1));
         let majority_ok = hang_count * 2 >= total_count;
         let absolute_ok = hang_count >= effective_min;
+        let ranks_ok = state.details.hang_rank_count >= effective_min_ranks;
 
-        if majority_ok && absolute_ok {
+        tracing::debug!(
+            "HANG global judgement: hang_count={}/{} (majority_ok={}), \
+             effective_min_nodes={} (cfg={}, absolute_ok={}), \
+             hang_rank_count={}/{} effective_min_ranks={} (cfg={}, ranks_ok={}), \
+             current_status={:?}, observations=[{}]",
+            hang_count,
+            total_count,
+            majority_ok,
+            effective_min,
+            self.config.global_min_hang_nodes,
+            absolute_ok,
+            state.details.hang_rank_count,
+            state.details.total_rank_count,
+            effective_min_ranks,
+            self.config.global_min_hang_ranks,
+            ranks_ok,
+            state.status,
+            node_results
+                .iter()
+                .map(|(ip, obs, sim)| format!("{}={:?}@{:.3}", ip, obs, sim))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        if majority_ok && absolute_ok && ranks_ok {
             state.details.consecutive_high_similarity = self.config.sample_count as u8;
             // 回溯：判 HANG 那一刻起堆栈已经"卡了 sample_count 个采样窗口"
             // 间隔随机化时取区间均值作为代表，保持与告警里"已持续"贴近真实值
@@ -338,6 +403,7 @@ mod tests {
             keep_line_numbers: true,
             recovery_normal_rounds: 2,
             global_min_hang_nodes: 1,
+            global_min_hang_ranks: 1,
             intranet_alert_delay_secs: 20 * 60,
             recovery_blocking_patterns: vec![
                 "Py_FinalizeEx".to_string(),
@@ -350,6 +416,21 @@ mod tests {
         let state = HANG_STATE.clone();
         let mut s = state.write().unwrap();
         *s = super::super::state::HangDetectorState::new();
+    }
+
+    fn set_rank_counts(counts: &[(&str, usize, usize)]) {
+        let state = HANG_STATE.clone();
+        let mut s = state.write().unwrap();
+        for (node, hang_rank_count, rank_count) in counts {
+            s.node_history.insert(
+                (*node).to_string(),
+                NodeStackHistory {
+                    last_hang_rank_count: *hang_rank_count,
+                    last_rank_count: *rank_count,
+                    ..NodeStackHistory::default()
+                },
+            );
+        }
     }
 
     #[test]
@@ -433,11 +514,8 @@ mod tests {
 
         // 模拟新一轮节点重选：reset_round + 第一个 tick NoSignal
         detector.reset_round();
-        let status = detector.update_global_status(&[(
-            "n".to_string(),
-            NodeObservation::NoSignal,
-            0.0,
-        )]);
+        let status =
+            detector.update_global_status(&[("n".to_string(), NodeObservation::NoSignal, 0.0)]);
         assert_eq!(status, HangStatus::Hang);
 
         let event_id_after = HANG_STATE.read().unwrap().hang_event_id;
@@ -456,11 +534,8 @@ mod tests {
         reset_state();
         let detector = HangDetector::new(test_config());
 
-        let status = detector.update_global_status(&[(
-            "n".to_string(),
-            NodeObservation::Normal,
-            0.5,
-        )]);
+        let status =
+            detector.update_global_status(&[("n".to_string(), NodeObservation::Normal, 0.5)]);
 
         assert_eq!(status, HangStatus::Normal);
         let s = HANG_STATE.read().unwrap();
@@ -483,20 +558,14 @@ mod tests {
         }
 
         // 第一次 Normal -> 仍保持 Hang，避免抖动
-        let status = detector.update_global_status(&[(
-            "n".to_string(),
-            NodeObservation::Normal,
-            0.5,
-        )]);
+        let status =
+            detector.update_global_status(&[("n".to_string(), NodeObservation::Normal, 0.5)]);
         assert_eq!(status, HangStatus::Hang);
         assert!(HANG_STATE.read().unwrap().hang_event_id.is_some());
 
         // 第二次 Normal -> 达到测试配置的恢复阈值
-        let status = detector.update_global_status(&[(
-            "n".to_string(),
-            NodeObservation::Normal,
-            0.5,
-        )]);
+        let status =
+            detector.update_global_status(&[("n".to_string(), NodeObservation::Normal, 0.5)]);
         assert_eq!(status, HangStatus::Normal);
         let s = HANG_STATE.read().unwrap();
         assert!(s.hang_event_id.is_none());
@@ -518,11 +587,8 @@ mod tests {
         }
 
         // 先累计 1 轮 Normal，确认后续黑名单会重置恢复计数。
-        let status = detector.update_global_status(&[(
-            "n".to_string(),
-            NodeObservation::Normal,
-            0.5,
-        )]);
+        let status =
+            detector.update_global_status(&[("n".to_string(), NodeObservation::Normal, 0.5)]);
         assert_eq!(status, HangStatus::Hang);
         assert_eq!(HANG_STATE.read().unwrap().consecutive_normal_count, 1);
 
@@ -626,8 +692,7 @@ mod tests {
 
         // 第 2、3 轮：rank 0~2 完全冻结（高相似），rank 3 持续变化
         for round in 1..=2 {
-            let mut stacks: Vec<Vec<String>> =
-                (0..3).map(|_| frozen.clone()).collect();
+            let mut stacks: Vec<Vec<String>> = (0..3).map(|_| frozen.clone()).collect();
             stacks.push(make_changing(round, 3));
             let (obs, _) = detector.process_node_stacks("nodeA", stacks);
             // quorum=1.0 → 哪怕 3/4 hang，仍然 Normal
@@ -666,7 +731,9 @@ mod tests {
         reset_state();
         let mut cfg = test_config();
         cfg.global_min_hang_nodes = 2;
+        cfg.global_min_hang_ranks = 1;
         let detector = HangDetector::new(cfg);
+        set_rank_counts(&[("n1", 1, 1), ("n2", 0, 1)]);
 
         // 2 节点：1 个 hang + 1 个 normal —— 50% 占比但绝对数 < 2，不应判 HANG
         let status = detector.update_global_status(&[
@@ -679,7 +746,9 @@ mod tests {
         reset_state();
         let mut cfg = test_config();
         cfg.global_min_hang_nodes = 2;
+        cfg.global_min_hang_ranks = 1;
         let detector = HangDetector::new(cfg);
+        set_rank_counts(&[("n1", 1, 1), ("n2", 1, 1)]);
         let status = detector.update_global_status(&[
             ("n1".to_string(), NodeObservation::Hang, 1.0),
             ("n2".to_string(), NodeObservation::Hang, 1.0),
@@ -690,12 +759,69 @@ mod tests {
         reset_state();
         let mut cfg = test_config();
         cfg.global_min_hang_nodes = 2;
+        cfg.global_min_hang_ranks = 1;
         let detector = HangDetector::new(cfg);
-        let status = detector.update_global_status(&[(
-            "only".to_string(),
-            NodeObservation::Hang,
-            1.0,
-        )]);
+        set_rank_counts(&[("only", 1, 1)]);
+        let status =
+            detector.update_global_status(&[("only".to_string(), NodeObservation::Hang, 1.0)]);
         assert_eq!(status, HangStatus::Hang, "1 节点集群应允许触发");
+    }
+
+    #[test]
+    fn test_global_min_hang_ranks_blocks_until_rank_threshold() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_state();
+        let mut cfg = test_config();
+        cfg.global_min_hang_nodes = 6;
+        cfg.global_min_hang_ranks = 60;
+        let detector = HangDetector::new(cfg);
+        set_rank_counts(&[
+            ("n1", 8, 8),
+            ("n2", 8, 8),
+            ("n3", 8, 8),
+            ("n4", 8, 8),
+            ("n5", 8, 8),
+            ("n6", 8, 8),
+            ("n7", 8, 8),
+            ("n8", 0, 8),
+        ]);
+        let status = detector.update_global_status(&[
+            ("n1".to_string(), NodeObservation::Hang, 1.0),
+            ("n2".to_string(), NodeObservation::Hang, 1.0),
+            ("n3".to_string(), NodeObservation::Hang, 1.0),
+            ("n4".to_string(), NodeObservation::Hang, 1.0),
+            ("n5".to_string(), NodeObservation::Hang, 1.0),
+            ("n6".to_string(), NodeObservation::Hang, 1.0),
+            ("n7".to_string(), NodeObservation::Hang, 1.0),
+            ("n8".to_string(), NodeObservation::Normal, 0.2),
+        ]);
+        assert_ne!(status, HangStatus::Hang, "56/64 hang ranks 不应触发");
+
+        reset_state();
+        let mut cfg = test_config();
+        cfg.global_min_hang_nodes = 6;
+        cfg.global_min_hang_ranks = 60;
+        let detector = HangDetector::new(cfg);
+        set_rank_counts(&[
+            ("n1", 8, 8),
+            ("n2", 8, 8),
+            ("n3", 8, 8),
+            ("n4", 8, 8),
+            ("n5", 8, 8),
+            ("n6", 8, 8),
+            ("n7", 8, 8),
+            ("n8", 4, 8),
+        ]);
+        let status = detector.update_global_status(&[
+            ("n1".to_string(), NodeObservation::Hang, 1.0),
+            ("n2".to_string(), NodeObservation::Hang, 1.0),
+            ("n3".to_string(), NodeObservation::Hang, 1.0),
+            ("n4".to_string(), NodeObservation::Hang, 1.0),
+            ("n5".to_string(), NodeObservation::Hang, 1.0),
+            ("n6".to_string(), NodeObservation::Hang, 1.0),
+            ("n7".to_string(), NodeObservation::Hang, 1.0),
+            ("n8".to_string(), NodeObservation::Hang, 1.0),
+        ]);
+        assert_eq!(status, HangStatus::Hang, "60/64 hang ranks 应触发");
     }
 }

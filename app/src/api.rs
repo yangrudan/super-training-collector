@@ -446,8 +446,8 @@ pub async fn analyze_problematic_ranks(
     {
         use crate::hang_detector::runner::run_rank_analysis_with_trigger;
         use crate::hang_detector::state::get_hang_state;
-        use crate::rank_analyzer::{set_last_analysis, AnalysisTrigger, RankAnalysisConfig};
         use crate::hang_types::HangStatus;
+        use crate::rank_analyzer::{set_last_analysis, AnalysisTrigger, RankAnalysisConfig};
 
         let state = get_hang_state();
         let snapshot = state
@@ -458,9 +458,7 @@ pub async fn analyze_problematic_ranks(
         match snapshot.status {
             HangStatus::Hang => {}
             HangStatus::Normal => {
-                return Err(ServerFnError::new(
-                    "当前未检测到 HANG，跳过问题 Rank 分析",
-                ));
+                return Err(ServerFnError::new("当前未检测到 HANG，跳过问题 Rank 分析"));
             }
             HangStatus::Disabled => {
                 return Err(ServerFnError::new(

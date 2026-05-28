@@ -1,8 +1,27 @@
 use app::*;
 use axum::Router;
+use chrono::{FixedOffset, Utc};
 use leptos::logging::log;
 use leptos::prelude::*;
 use leptos_axum::{generate_route_list, LeptosRoutes};
+use std::fmt;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::time::FormatTime;
+
+struct ShanghaiTimer;
+
+impl FormatTime for ShanghaiTimer {
+    fn format_time(&self, w: &mut Writer<'_>) -> fmt::Result {
+        let shanghai = FixedOffset::east_opt(8 * 3_600).expect("valid Shanghai UTC offset");
+        write!(
+            w,
+            "{}",
+            Utc::now()
+                .with_timezone(&shanghai)
+                .format("%Y-%m-%d %H:%M:%S%.6f")
+        )
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -15,6 +34,7 @@ async fn main() {
     // 初始化日志，从 RUST_LOG 环境变量读取级别，默认为 warn
     // 例如：RUST_LOG=warn 或 RUST_LOG=super_trainning_collector=debug
     tracing_subscriber::fmt()
+        .with_timer(ShanghaiTimer)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),

@@ -5,6 +5,28 @@
 use crate::hang_types::HangStatus;
 use leptos::prelude::*;
 
+fn format_duration(secs: u64) -> String {
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let minutes = (secs % 3_600) / 60;
+    let seconds = secs % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{}d", days));
+    }
+    if hours > 0 {
+        parts.push(format!("{}h", hours));
+    }
+    if minutes > 0 {
+        parts.push(format!("{}m", minutes));
+    }
+    if seconds > 0 || parts.is_empty() {
+        parts.push(format!("{}s", seconds));
+    }
+    parts.join(" ")
+}
+
 /// HANG 状态指示灯组件
 #[component]
 pub fn HangIndicator() -> impl IntoView {
@@ -49,15 +71,42 @@ pub fn HangIndicator() -> impl IntoView {
                                     HangStatus::Disabled => ("⚪", "未启用", "hang-disabled"),
                                 };
 
-                                let details_text = if !snapshot.details.hang_nodes.is_empty() {
-                                    format!("HANG 节点: {}", snapshot.details.hang_nodes.join(", "))
+                                let mut details = Vec::new();
+                                if !snapshot.details.hang_nodes.is_empty() {
+                                    details.push(format!(
+                                        "HANG 节点: {}",
+                                        snapshot.details.hang_nodes.join(", ")
+                                    ));
+                                } else if let Some(avg_sim) = snapshot.details.avg_similarity {
+                                    details.push(format!("平均相似度: {:.1}%", avg_sim * 100.0));
                                 } else if !snapshot.details.node_similarities.is_empty() {
                                     let avg_sim: f64 = snapshot.details.node_similarities.values().sum::<f64>()
                                         / snapshot.details.node_similarities.len() as f64;
-                                    format!("平均相似度: {:.1}%", avg_sim * 100.0)
-                                } else {
-                                    String::new()
-                                };
+                                    details.push(format!("平均相似度: {:.1}%", avg_sim * 100.0));
+                                }
+                                if snapshot.details.selected_node_count > 0 {
+                                    details.push(format!(
+                                        "HANG {}/{}，有效 {}/{}",
+                                        snapshot.details.hang_node_count,
+                                        snapshot.details.valid_node_count,
+                                        snapshot.details.valid_node_count,
+                                        snapshot.details.selected_node_count
+                                    ));
+                                }
+                                if snapshot.details.total_rank_count > 0 {
+                                    details.push(format!(
+                                        "HANG Rank: {}/{}",
+                                        snapshot.details.hang_rank_count,
+                                        snapshot.details.total_rank_count
+                                    ));
+                                }
+                                if let Some(secs) = snapshot.details.hang_duration_secs {
+                                    details.push(format!("HANG 已持续: {}", format_duration(secs)));
+                                }
+                                if snapshot.details.stc_uptime_secs > 0 {
+                                    details.push(format!("此次任务已守护: {}", format_duration(snapshot.details.stc_uptime_secs)));
+                                }
+                                let details_text = details.join("；");
 
                                 let details_clone = details_text.clone();
                                 let has_details = !details_text.is_empty();
@@ -136,8 +185,35 @@ pub fn HangIndicatorCompact() -> impl IntoView {
                                 HangStatus::Disabled => ("⚪", "检测未启用"),
                             };
 
+                            let mut current = format!("当前: {}", status_text);
+                            if let Some(secs) = snapshot.details.hang_duration_secs {
+                                current.push_str(&format!("\nHANG 已持续: {}", format_duration(secs)));
+                            }
+                            if snapshot.details.stc_uptime_secs > 0 {
+                                current.push_str(&format!(
+                                    "\n此次任务已守护: {}",
+                                    format_duration(snapshot.details.stc_uptime_secs)
+                                ));
+                            }
+                            if snapshot.details.selected_node_count > 0 {
+                                current.push_str(&format!(
+                                    "\n节点判定: HANG {}/{}，有效 {}/{}",
+                                    snapshot.details.hang_node_count,
+                                    snapshot.details.valid_node_count,
+                                    snapshot.details.valid_node_count,
+                                    snapshot.details.selected_node_count
+                                ));
+                            }
+                            if snapshot.details.total_rank_count > 0 {
+                                current.push_str(&format!(
+                                    "\nRank 判定: HANG {}/{}",
+                                    snapshot.details.hang_rank_count,
+                                    snapshot.details.total_rank_count
+                                ));
+                            }
+
                             // 组合当前状态和颜色说明
-                            let tooltip = format!("当前: {}\n\n{}", status_text, color_legend);
+                            let tooltip = format!("{}\n\n{}", current, color_legend);
 
                             view! { <span class="hang-dot" title=tooltip>{icon}</span> }.into_any()
                         }

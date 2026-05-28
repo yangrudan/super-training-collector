@@ -5,8 +5,8 @@
 use super::config::HangConfig;
 use super::detector::{HangDetector, NodeObservation};
 use super::logger::HangLogger;
-use super::notifier::{send_hang_alert, send_hang_recovery_alert};
-use super::state::HangStatus;
+use super::notifier::{send_hang_alert, send_hang_recovery_alert, HangAlertStats};
+use super::state::{init_stc_start_time, HangStatus};
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{build_callstack_url, build_callstack_urls, load_collector_config};
 use crate::rank_analyzer::{
@@ -22,6 +22,8 @@ use tracing;
 ///
 /// 这个函数应该在服务启动时被调用，使用 tokio::spawn 运行
 pub async fn start_hang_detector_scheduler() {
+    init_stc_start_time();
+
     let config = HangConfig::from_env();
 
     if !config.enabled {
@@ -31,11 +33,12 @@ pub async fn start_hang_detector_scheduler() {
 
     tracing::info!(
         "Starting HANG detection scheduler with interval: {}~{}s (random per tick), \
-         node_rank_quorum={}, global_min_hang_nodes={}",
+         node_rank_quorum={}, global_min_hang_nodes={}, global_min_hang_ranks={}",
         config.sample_interval_min_secs,
         config.sample_interval_max_secs,
         config.node_rank_quorum,
-        config.global_min_hang_nodes
+        config.global_min_hang_nodes,
+        config.global_min_hang_ranks
     );
 
     let detector = HangDetector::new(config.clone());
@@ -90,6 +93,20 @@ pub async fn start_hang_detector_scheduler() {
                     // 保存堆栈数据用于日志记录
                     round_stacks.insert(node_ip.clone(), stacks.clone());
 
+                    // 将本轮采样到的堆栈以 TRACE 级别输出，便于在需要时排查
+                    // 通过 `RUST_LOG=app::hang_detector::runner=trace` 打开
+                    if tracing::enabled!(tracing::Level::TRACE) {
+                        for (rank_idx, stack) in stacks.iter().enumerate() {
+                            tracing::trace!(
+                                node = %node_ip,
+                                rank = rank_idx,
+                                depth = stack.len(),
+                                "sampled stack: {}",
+                                stack.join(" | ")
+                            );
+                        }
+                    }
+
                     let (observation, similarity) = detector.process_node_stacks(&node_ip, stacks);
                     results.push((node_ip.clone(), observation, similarity));
                     tracing::debug!(
@@ -114,9 +131,7 @@ pub async fn start_hang_detector_scheduler() {
         match &status {
             HangStatus::Hang => {
                 // 检测到 HANG，尝试记录日志并采集全局火焰图（事件期内只记一次）
-                if let Some(log_path) = logger
-                    .log_hang_event(round_stacks.clone(), &results)
-                    .await
+                if let Some(log_path) = logger.log_hang_event(round_stacks.clone(), &results).await
                 {
                     tracing::warn!("HANG detected! Log saved to: {}", log_path);
                 }
@@ -154,12 +169,24 @@ pub async fn start_hang_detector_scheduler() {
                         "问题 Rank 分析未启用".to_string()
                     };
 
-                    // 拿到事件元数据（event_id + 持续时长）
-                    let (event_id, duration_secs) = {
+                    // 拿到事件元数据与展示统计
+                    let (event_id, stats) = {
                         use super::state::get_hang_state;
                         let state = get_hang_state();
                         let state = state.read().unwrap();
-                        (state.hang_event_id, state.hang_duration_secs())
+                        (
+                            state.hang_event_id,
+                            HangAlertStats {
+                                hang_duration_secs: state.hang_duration_secs(),
+                                selected_node_count: state.details.selected_node_count,
+                                valid_node_count: state.details.valid_node_count,
+                                hang_node_count: state.details.hang_node_count,
+                                hang_rank_count: state.details.hang_rank_count,
+                                total_rank_count: state.details.total_rank_count,
+                                avg_similarity: state.details.avg_similarity,
+                                max_similarity: state.details.max_similarity,
+                            },
+                        )
                     };
 
                     tracing::warn!("Sending HANG alert (event_id={:?})", event_id);
@@ -170,7 +197,15 @@ pub async fn start_hang_detector_scheduler() {
                         // `attempted_intranet` 表示"本轮是否会真正尝试发送内网告警"。
                         // 若内网延迟尚未到达（或本事件内网已发过），则 attempted_intranet=false，
                         // skip_intranet=true，本轮跳过内网，等待下一轮再次检测 HANG 状态后重试。
-                        let (should_spawn, skip_dingtalk, skip_intranet, attempted_intranet) = {
+                        let (
+                            should_spawn,
+                            skip_dingtalk,
+                            skip_intranet,
+                            skip_intranet_action,
+                            attempted_intranet,
+                            attempted_action,
+                            intranet_success_time,
+                        ) = {
                             use super::state::get_hang_state;
                             let state = get_hang_state();
                             let mut state = state.write().unwrap();
@@ -179,15 +214,19 @@ pub async fn start_hang_detector_scheduler() {
                             {
                                 let intranet_ready =
                                     state.intranet_alert_ready(intranet_delay_secs);
+                                let action_ready = state.intranet_action_ready(intranet_delay_secs);
                                 state.mark_notify_in_flight();
                                 (
                                     true,
                                     state.hang_notified,
                                     !intranet_ready,
+                                    !action_ready,
                                     intranet_ready,
+                                    action_ready,
+                                    state.hang_intranet_success_time.clone(),
                                 )
                             } else {
-                                (false, false, false, false)
+                                (false, false, false, false, false, false, None)
                             }
                         };
 
@@ -196,9 +235,11 @@ pub async fn start_hang_detector_scheduler() {
                                 let outcome = send_hang_alert(
                                     Some(&analysis_summary),
                                     Some(event_id),
-                                    duration_secs,
+                                    stats,
                                     skip_dingtalk,
                                     skip_intranet,
+                                    skip_intranet_action,
+                                    intranet_success_time,
                                 )
                                 .await;
                                 use super::state::get_hang_state;
@@ -214,7 +255,17 @@ pub async fn start_hang_detector_scheduler() {
                                 // 在 notifier 中被设为 skip→true，但语义是"本轮跳过"，
                                 // **不能**视为发送成功，否则会永远不再尝试。
                                 if attempted_intranet && outcome.intranet_done {
-                                    state.mark_intranet_notified_for(event_id);
+                                    state.mark_intranet_notified_for(
+                                        event_id,
+                                        outcome.intranet_success_time.clone(),
+                                    );
+                                }
+                                // "内网后台告警动作"：同样只有"本轮真正尝试"才记账。
+                                // 注意 notifier 内部要求 intranet 本体已成功才会真正发送动作通知，
+                                // 因此当本轮内网失败时 outcome.intranet_action_done=false，
+                                // 下一轮 intranet_action_ready 仍为 true，跟随 intranet 重试。
+                                if attempted_action && outcome.intranet_action_done {
+                                    state.mark_intranet_action_notified_for(event_id);
                                 }
                                 if !skip_dingtalk && !outcome.dingtalk_done {
                                     tracing::warn!(
@@ -225,6 +276,12 @@ pub async fn start_hang_detector_scheduler() {
                                 if attempted_intranet && !outcome.intranet_done {
                                     tracing::warn!(
                                         "Intranet HANG alert failed, will retry on next eligible round (event_id={})",
+                                        event_id
+                                    );
+                                }
+                                if attempted_action && !outcome.intranet_action_done {
+                                    tracing::warn!(
+                                        "Intranet-alert-action DingTalk notify failed, will retry on next eligible round (event_id={})",
                                         event_id
                                     );
                                 }

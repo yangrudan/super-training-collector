@@ -7,13 +7,13 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-use chrono::Local;
+use chrono::{DateTime, FixedOffset, Utc};
 use serde::Serialize;
 use tracing;
 
 use super::config::HangConfig;
 use super::detector::NodeObservation;
-use super::state::get_hang_state;
+use super::state::{get_hang_state, stc_uptime_secs};
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{collect_and_generate_flamegraph, get_config_path, load_collector_config};
 
@@ -30,6 +30,24 @@ pub struct HangLogEntry {
     pub node_stacks: HashMap<String, Vec<Vec<String>>>,
     /// 连续高相似度次数
     pub consecutive_high_similarity: u8,
+    /// 本次 HANG 已持续秒数
+    pub hang_duration_secs: Option<u64>,
+    /// STC 从启动到现在的守护时长（秒）
+    pub stc_uptime_secs: u64,
+    /// 本轮选中节点数
+    pub selected_node_count: usize,
+    /// 本轮有效参与判定节点数
+    pub valid_node_count: usize,
+    /// 本轮 HANG 节点数
+    pub hang_node_count: usize,
+    /// 本轮有 HANG 证据的 rank 数
+    pub hang_rank_count: usize,
+    /// 本轮有效节点的 rank 总数
+    pub total_rank_count: usize,
+    /// 本轮有效节点平均相似度
+    pub avg_similarity: Option<f64>,
+    /// 本轮有效节点最高相似度
+    pub max_similarity: Option<f64>,
     /// 采样配置
     pub config: HangLogConfig,
     /// 触发日志时的检测状态快照
@@ -43,6 +61,9 @@ pub struct HangLogEntry {
 pub struct HangDetectionStateLog {
     pub event_id: Option<u64>,
     pub hang_first_detected_at: Option<u64>,
+    pub normal_observed_since: Option<u64>,
+    pub stc_uptime_secs: u64,
+    pub hang_duration_secs: Option<u64>,
     pub selected_nodes: Vec<String>,
     pub sample_round: u8,
     pub consecutive_normal_count: u8,
@@ -78,6 +99,9 @@ pub struct HangLogConfig {
     pub sample_interval_max_secs: u64,
     pub sample_count: usize,
     pub node_count: usize,
+    pub node_rank_quorum: f64,
+    pub global_min_hang_nodes: usize,
+    pub global_min_hang_ranks: usize,
     pub jaccard_threshold: f64,
 }
 
@@ -89,6 +113,9 @@ impl From<&HangConfig> for HangLogConfig {
             sample_interval_max_secs: config.sample_interval_max_secs,
             sample_count: config.sample_count,
             node_count: config.node_count,
+            node_rank_quorum: config.node_rank_quorum,
+            global_min_hang_nodes: config.global_min_hang_nodes,
+            global_min_hang_ranks: config.global_min_hang_ranks,
             jaccard_threshold: config.jaccard_threshold,
         }
     }
@@ -146,9 +173,24 @@ impl HangLogger {
         }
 
         // 获取状态详情（在锁外复制）
-        let (hang_nodes, node_similarities, consecutive_high_similarity, detection_state) = {
+        let (
+            hang_nodes,
+            node_similarities,
+            consecutive_high_similarity,
+            hang_duration_secs,
+            stc_uptime_secs_value,
+            selected_node_count,
+            valid_node_count,
+            hang_node_count,
+            hang_rank_count,
+            total_rank_count,
+            avg_similarity,
+            max_similarity,
+            detection_state,
+        ) = {
             let state = get_hang_state();
             let state = state.read().unwrap();
+            let uptime = stc_uptime_secs();
             let pending_recovery = state
                 .pending_recovery
                 .map(|(event_id, hang_duration_secs)| HangPendingRecoveryLog {
@@ -159,9 +201,21 @@ impl HangLogger {
                 state.details.hang_nodes.clone(),
                 state.details.node_similarities.clone(),
                 state.details.consecutive_high_similarity,
+                state.hang_duration_secs(),
+                uptime,
+                state.details.selected_node_count,
+                state.details.valid_node_count,
+                state.details.hang_node_count,
+                state.details.hang_rank_count,
+                state.details.total_rank_count,
+                state.details.avg_similarity,
+                state.details.max_similarity,
                 HangDetectionStateLog {
                     event_id: state.hang_event_id,
                     hang_first_detected_at: state.hang_first_detected_at,
+                    normal_observed_since: state.normal_observed_since,
+                    stc_uptime_secs: uptime,
+                    hang_duration_secs: state.hang_duration_secs(),
                     selected_nodes: state.selected_nodes.clone(),
                     sample_round: state.sample_round,
                     consecutive_normal_count: state.consecutive_normal_count,
@@ -184,12 +238,22 @@ impl HangLogger {
             .collect();
 
         // 构建日志条目
+        let now = shanghai_now();
         let entry = HangLogEntry {
-            timestamp: Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%z").to_string(),
+            timestamp: format_shanghai_log_timestamp(now),
             hang_nodes,
             node_similarities,
             node_stacks,
             consecutive_high_similarity,
+            hang_duration_secs,
+            stc_uptime_secs: stc_uptime_secs_value,
+            selected_node_count,
+            valid_node_count,
+            hang_node_count,
+            hang_rank_count,
+            total_rank_count,
+            avg_similarity,
+            max_similarity,
             config: HangLogConfig::from(&self.config),
             detection_state,
             node_observations,
@@ -203,7 +267,7 @@ impl HangLogger {
         }
 
         // 生成文件名时间戳
-        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let timestamp = format_shanghai_filename_timestamp(now);
 
         // 写入 JSON 日志文件
         let json_filename = format!("hang_{}.json", timestamp);
@@ -265,6 +329,22 @@ fn write_svg_file(filepath: &Path, content: &str) -> std::io::Result<()> {
     file.write_all(content.as_bytes())?;
     file.sync_all()?;
     Ok(())
+}
+
+fn shanghai_now() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&shanghai_offset())
+}
+
+fn shanghai_offset() -> FixedOffset {
+    FixedOffset::east_opt(8 * 3_600).expect("valid Shanghai UTC offset")
+}
+
+fn format_shanghai_log_timestamp(time: DateTime<FixedOffset>) -> String {
+    time.format("%Y-%m-%dT%H:%M:%S%.3f%z").to_string()
+}
+
+fn format_shanghai_filename_timestamp(time: DateTime<FixedOffset>) -> String {
+    time.format("%Y%m%d_%H%M%S").to_string()
 }
 
 /// 采集全局火焰图（所有节点的所有 rank）
@@ -344,6 +424,15 @@ mod tests {
         assert_eq!(log_config.sample_interval_max_secs, 30);
         assert_eq!(log_config.sample_count, 3);
         assert_eq!(log_config.node_count, 4);
+        assert_eq!(log_config.node_rank_quorum, config.node_rank_quorum);
+        assert_eq!(
+            log_config.global_min_hang_nodes,
+            config.global_min_hang_nodes
+        );
+        assert_eq!(
+            log_config.global_min_hang_ranks,
+            config.global_min_hang_ranks
+        );
         assert_eq!(log_config.jaccard_threshold, 0.95);
     }
 
@@ -357,6 +446,23 @@ mod tests {
     }
 
     #[test]
+    fn test_shanghai_time_format_uses_utc_plus_8() {
+        let utc = chrono::DateTime::parse_from_rfc3339("2026-05-28T01:23:45.678Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let shanghai = utc.with_timezone(&shanghai_offset());
+
+        assert_eq!(
+            format_shanghai_log_timestamp(shanghai),
+            "2026-05-28T09:23:45.678+0800"
+        );
+        assert_eq!(
+            format_shanghai_filename_timestamp(shanghai),
+            "20260528_092345"
+        );
+    }
+
+    #[test]
     fn test_write_log_file() {
         let dir = tempdir().unwrap();
         let filepath = dir.path().join("test_hang.json");
@@ -367,17 +473,32 @@ mod tests {
             node_similarities: HashMap::from([("192.168.1.1".to_string(), 0.98)]),
             node_stacks: HashMap::new(),
             consecutive_high_similarity: 3,
+            hang_duration_secs: Some(180),
+            stc_uptime_secs: 3_600,
+            selected_node_count: 1,
+            valid_node_count: 1,
+            hang_node_count: 1,
+            hang_rank_count: 1,
+            total_rank_count: 1,
+            avg_similarity: Some(0.98),
+            max_similarity: Some(0.98),
             config: HangLogConfig {
                 sample_interval_secs: 30,
                 sample_interval_min_secs: 30,
                 sample_interval_max_secs: 30,
                 sample_count: 3,
                 node_count: 4,
+                node_rank_quorum: 0.75,
+                global_min_hang_nodes: 6,
+                global_min_hang_ranks: 60,
                 jaccard_threshold: 0.95,
             },
             detection_state: HangDetectionStateLog {
                 event_id: Some(1700000000),
                 hang_first_detected_at: Some(1700000001),
+                normal_observed_since: Some(1699996401),
+                stc_uptime_secs: 3_600,
+                hang_duration_secs: Some(180),
                 selected_nodes: vec!["192.168.1.1".to_string()],
                 sample_round: 3,
                 consecutive_normal_count: 0,
