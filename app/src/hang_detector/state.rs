@@ -513,8 +513,15 @@ pub fn get_hang_state() -> Arc<RwLock<HangDetectorState>> {
     HANG_STATE.clone()
 }
 
-/// STC 进程启动时刻（UNIX epoch 秒），首次访问时初始化
+/// STC 进程启动时刻（UNIX epoch 秒），由 HANG scheduler 启动时强制初始化。
 pub static STC_START_TIME: Lazy<u64> = Lazy::new(current_epoch_secs);
+
+/// 初始化 STC 启动时刻。
+///
+/// 必须在调度器启动时调用，避免第一次写日志/发告警时才开始计算守护时长。
+pub fn init_stc_start_time() {
+    Lazy::force(&STC_START_TIME);
+}
 
 /// 返回 STC 从启动到现在的运行时长（秒）
 pub fn stc_uptime_secs() -> u64 {

@@ -6,7 +6,7 @@ use super::config::HangConfig;
 use super::detector::{HangDetector, NodeObservation};
 use super::logger::HangLogger;
 use super::notifier::{send_hang_alert, send_hang_recovery_alert, HangAlertStats};
-use super::state::HangStatus;
+use super::state::{init_stc_start_time, HangStatus};
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{build_callstack_url, build_callstack_urls, load_collector_config};
 use crate::rank_analyzer::{
@@ -22,6 +22,8 @@ use tracing;
 ///
 /// 这个函数应该在服务启动时被调用，使用 tokio::spawn 运行
 pub async fn start_hang_detector_scheduler() {
+    init_stc_start_time();
+
     let config = HangConfig::from_env();
 
     if !config.enabled {
