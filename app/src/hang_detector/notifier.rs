@@ -7,6 +7,8 @@
 
 use std::env;
 use std::time::Duration;
+
+use chrono::{DateTime, FixedOffset, Utc};
 use tracing;
 
 const DINGTALK_WEBHOOK: &str = "https://oapi.dingtalk.com/robot/send?access_token=f573c7f5bcd6085ccce705e839027da213f2d954d68c5ca0eddb29fa2af4789e";
@@ -410,7 +412,7 @@ fn build_enabled_intranet_alert_body(event_detail: &str) -> Option<serde_json::V
     Some(build_intranet_alert_body(
         job_uuid.trim(),
         &instance_uuid,
-        &chrono::Utc::now().to_rfc3339(),
+        &shanghai_now_rfc3339(),
         event_detail,
     ))
 }
@@ -473,7 +475,7 @@ async fn send_intranet_alert_with_retry(
                 let status = resp.status();
                 let body_text = resp.text().await.unwrap_or_default();
                 if status.is_success() {
-                    let success_time = chrono::Utc::now().to_rfc3339();
+                    let success_time = shanghai_now_rfc3339();
                     tracing::info!(
                         "内网后台告警发送成功: attempt={}, success_time={}, status={}, body={}",
                         attempt,
@@ -507,6 +509,18 @@ async fn send_intranet_alert_with_retry(
         last_err.unwrap_or_else(|| "unknown".to_string())
     );
     None
+}
+
+fn shanghai_now_rfc3339() -> String {
+    shanghai_now().to_rfc3339()
+}
+
+fn shanghai_now() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&shanghai_offset())
+}
+
+fn shanghai_offset() -> FixedOffset {
+    FixedOffset::east_opt(8 * 3_600).expect("valid Shanghai UTC offset")
 }
 
 /// 发送 HANG 告警**解除**通知
@@ -663,6 +677,11 @@ mod tests {
         assert_eq!(body["instance_uuid"], "ji-aitrain-156450823388817472");
         assert_eq!(body["event_time"], "2026-05-21T10:00:00Z");
         assert_eq!(body["event_detail"], "### [test-job] 检测到 HANG");
+    }
+
+    #[test]
+    fn shanghai_now_rfc3339_uses_utc_plus_8_offset() {
+        assert!(shanghai_now_rfc3339().ends_with("+08:00"));
     }
 
     #[test]

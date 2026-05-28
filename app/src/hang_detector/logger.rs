@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-use chrono::Local;
+use chrono::{DateTime, FixedOffset, Utc};
 use serde::Serialize;
 use tracing;
 
@@ -238,8 +238,9 @@ impl HangLogger {
             .collect();
 
         // 构建日志条目
+        let now = shanghai_now();
         let entry = HangLogEntry {
-            timestamp: Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%z").to_string(),
+            timestamp: format_shanghai_log_timestamp(now),
             hang_nodes,
             node_similarities,
             node_stacks,
@@ -266,7 +267,7 @@ impl HangLogger {
         }
 
         // 生成文件名时间戳
-        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let timestamp = format_shanghai_filename_timestamp(now);
 
         // 写入 JSON 日志文件
         let json_filename = format!("hang_{}.json", timestamp);
@@ -328,6 +329,22 @@ fn write_svg_file(filepath: &Path, content: &str) -> std::io::Result<()> {
     file.write_all(content.as_bytes())?;
     file.sync_all()?;
     Ok(())
+}
+
+fn shanghai_now() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&shanghai_offset())
+}
+
+fn shanghai_offset() -> FixedOffset {
+    FixedOffset::east_opt(8 * 3_600).expect("valid Shanghai UTC offset")
+}
+
+fn format_shanghai_log_timestamp(time: DateTime<FixedOffset>) -> String {
+    time.format("%Y-%m-%dT%H:%M:%S%.3f%z").to_string()
+}
+
+fn format_shanghai_filename_timestamp(time: DateTime<FixedOffset>) -> String {
+    time.format("%Y%m%d_%H%M%S").to_string()
 }
 
 /// 采集全局火焰图（所有节点的所有 rank）
@@ -426,6 +443,23 @@ mod tests {
 
         let logger = HangLogger::new(config);
         assert!(!logger.is_enabled());
+    }
+
+    #[test]
+    fn test_shanghai_time_format_uses_utc_plus_8() {
+        let utc = chrono::DateTime::parse_from_rfc3339("2026-05-28T01:23:45.678Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let shanghai = utc.with_timezone(&shanghai_offset());
+
+        assert_eq!(
+            format_shanghai_log_timestamp(shanghai),
+            "2026-05-28T09:23:45.678+0800"
+        );
+        assert_eq!(
+            format_shanghai_filename_timestamp(shanghai),
+            "20260528_092345"
+        );
     }
 
     #[test]
