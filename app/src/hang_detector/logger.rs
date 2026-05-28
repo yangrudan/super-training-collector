@@ -13,7 +13,7 @@ use tracing;
 
 use super::config::HangConfig;
 use super::detector::NodeObservation;
-use super::state::get_hang_state;
+use super::state::{get_hang_state, stc_uptime_secs};
 use crate::adapter::get_real_training_data;
 use crate::flamegraph::{collect_and_generate_flamegraph, get_config_path, load_collector_config};
 
@@ -32,8 +32,8 @@ pub struct HangLogEntry {
     pub consecutive_high_similarity: u8,
     /// 本次 HANG 已持续秒数
     pub hang_duration_secs: Option<u64>,
-    /// 本次 HANG 前连续 Normal 观测秒数
-    pub normal_observed_duration_before_hang_secs: Option<u64>,
+    /// STC 从启动到现在的守护时长（秒）
+    pub stc_uptime_secs: u64,
     /// 本轮选中节点数
     pub selected_node_count: usize,
     /// 本轮有效参与判定节点数
@@ -62,7 +62,7 @@ pub struct HangDetectionStateLog {
     pub event_id: Option<u64>,
     pub hang_first_detected_at: Option<u64>,
     pub normal_observed_since: Option<u64>,
-    pub normal_observed_duration_before_hang_secs: Option<u64>,
+    pub stc_uptime_secs: u64,
     pub hang_duration_secs: Option<u64>,
     pub selected_nodes: Vec<String>,
     pub sample_round: u8,
@@ -178,7 +178,7 @@ impl HangLogger {
             node_similarities,
             consecutive_high_similarity,
             hang_duration_secs,
-            normal_observed_duration_before_hang_secs,
+            stc_uptime_secs_value,
             selected_node_count,
             valid_node_count,
             hang_node_count,
@@ -190,6 +190,7 @@ impl HangLogger {
         ) = {
             let state = get_hang_state();
             let state = state.read().unwrap();
+            let uptime = stc_uptime_secs();
             let pending_recovery = state
                 .pending_recovery
                 .map(|(event_id, hang_duration_secs)| HangPendingRecoveryLog {
@@ -201,7 +202,7 @@ impl HangLogger {
                 state.details.node_similarities.clone(),
                 state.details.consecutive_high_similarity,
                 state.hang_duration_secs(),
-                state.normal_observed_duration_before_hang_secs(),
+                uptime,
                 state.details.selected_node_count,
                 state.details.valid_node_count,
                 state.details.hang_node_count,
@@ -213,8 +214,7 @@ impl HangLogger {
                     event_id: state.hang_event_id,
                     hang_first_detected_at: state.hang_first_detected_at,
                     normal_observed_since: state.normal_observed_since,
-                    normal_observed_duration_before_hang_secs: state
-                        .normal_observed_duration_before_hang_secs(),
+                    stc_uptime_secs: uptime,
                     hang_duration_secs: state.hang_duration_secs(),
                     selected_nodes: state.selected_nodes.clone(),
                     sample_round: state.sample_round,
@@ -245,7 +245,7 @@ impl HangLogger {
             node_stacks,
             consecutive_high_similarity,
             hang_duration_secs,
-            normal_observed_duration_before_hang_secs,
+            stc_uptime_secs: stc_uptime_secs_value,
             selected_node_count,
             valid_node_count,
             hang_node_count,
@@ -440,7 +440,7 @@ mod tests {
             node_stacks: HashMap::new(),
             consecutive_high_similarity: 3,
             hang_duration_secs: Some(180),
-            normal_observed_duration_before_hang_secs: Some(3_600),
+            stc_uptime_secs: 3_600,
             selected_node_count: 1,
             valid_node_count: 1,
             hang_node_count: 1,
@@ -463,7 +463,7 @@ mod tests {
                 event_id: Some(1700000000),
                 hang_first_detected_at: Some(1700000001),
                 normal_observed_since: Some(1699996401),
-                normal_observed_duration_before_hang_secs: Some(3_600),
+                stc_uptime_secs: 3_600,
                 hang_duration_secs: Some(180),
                 selected_nodes: vec!["192.168.1.1".to_string()],
                 sample_round: 3,

@@ -108,7 +108,7 @@ app/src/hang_detector/
   },
   "consecutive_high_similarity": 3,
   "hang_duration_secs": 180,
-  "normal_observed_duration_before_hang_secs": 7385,
+  "stc_uptime_secs": 7385,
   "selected_node_count": 8,
   "valid_node_count": 8,
   "hang_node_count": 6,
@@ -131,7 +131,7 @@ app/src/hang_detector/
     "event_id": 1716445200,
     "hang_first_detected_at": 1716445365,
     "normal_observed_since": 1716437980,
-    "normal_observed_duration_before_hang_secs": 7385,
+    "stc_uptime_secs": 7385,
     "hang_duration_secs": 180,
     "selected_nodes": ["192.168.1.1", "192.168.1.2"],
     "sample_round": 3,
@@ -171,7 +171,7 @@ app/src/hang_detector/
 `/api/hang_status` 的 `details` 会额外返回便于展示的运行统计：
 
 - `hang_duration_secs`: 当前 HANG 事件估算已持续时长。进入 HANG 时会按采样窗口回溯，因此首次告警不会接近 0。
-- `normal_observed_duration_before_hang_secs`: 本次 HANG 前，检测器连续观测到 Normal 的时长。该值表示检测器观测窗口内的正常运行时长，不等同于作业真实启动后的总运行时长。
+- `stc_uptime_secs`: STC 从启动到现在的守护时长。
 - `selected_node_count` / `valid_node_count` / `hang_node_count`: 本轮节点覆盖面与 HANG 节点数量。
 - `hang_rank_count` / `total_rank_count`: 本轮有 HANG 证据的 rank 数和有效 rank 总数。
 - `avg_similarity` / `max_similarity`: 本轮有效节点的平均/最高 Jaccard 相似度。
@@ -181,7 +181,7 @@ app/src/hang_detector/
 HANG 告警会同时展示两类时长：
 
 - **HANG 已持续**: 当前 HANG 事件估算持续时长，用于判断卡住多久。
-- **HANG 前正常观测时长**: 从检测器首次确认 Normal 到本次 HANG 上报前的连续正常观测时长，用于判断训练在触发 HANG 前大致正常运行了多久。
+- **此次任务已守护时长**: STC 从启动到当前的守护时长，用于判断本轮任务已经被检测器覆盖多久。
 
 告警还会展示节点判定覆盖面（例如 `HANG 6/8，有效 8/8`）、Rank 判定覆盖面（例如 `HANG 60/64`）、平均/最高相似度，以及自动问题 Rank 分析摘要。
 

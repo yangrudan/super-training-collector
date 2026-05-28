@@ -30,8 +30,8 @@ pub struct HangDetails {
     pub last_check_time: u64,
     /// 本次 HANG 已持续秒数（进入 HANG 后才有值）
     pub hang_duration_secs: Option<u64>,
-    /// 本次 HANG 前，检测器连续观测到 Normal 的秒数
-    pub normal_observed_duration_before_hang_secs: Option<u64>,
+    /// STC 从启动到现在的守护时长（秒）
+    pub stc_uptime_secs: u64,
     /// 本轮选中的节点数
     pub selected_node_count: usize,
     /// 本轮有效参与判定的节点数（排除 NoSignal）

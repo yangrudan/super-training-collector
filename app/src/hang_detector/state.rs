@@ -107,8 +107,6 @@ pub struct HangDetectorState {
     pub hang_first_detected_at: Option<u64>,
     /// 最近一段连续 Normal 观测的起始时间（秒，UNIX epoch）
     pub normal_observed_since: Option<u64>,
-    /// 当前 HANG 事件前连续 Normal 观测的持续秒数
-    pub normal_observed_duration_before_hang_secs: Option<u64>,
     /// 当前 HANG 事件是否已有钉钉通知发送任务在执行
     pub hang_notify_in_flight: bool,
     /// 连续被判定为 Normal 的轮次数（用于判断当前采样未满足 HANG 条件）
@@ -140,7 +138,6 @@ impl Default for HangDetectorState {
             hang_intranet_action_notified: false,
             hang_first_detected_at: None,
             normal_observed_since: None,
-            normal_observed_duration_before_hang_secs: None,
             hang_notify_in_flight: false,
             consecutive_normal_count: 0,
             pending_recovery: None,
@@ -368,9 +365,6 @@ impl HangDetectorState {
             let event_id = now.saturating_sub(backdate_secs);
             self.hang_event_id = Some(event_id);
             self.hang_first_detected_at = Some(now);
-            self.normal_observed_duration_before_hang_secs = self
-                .normal_observed_since
-                .map(|start| now.saturating_sub(start));
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;
@@ -392,7 +386,6 @@ impl HangDetectorState {
             if self.normal_observed_since.is_none() {
                 self.normal_observed_since = Some(current_epoch_secs());
             }
-            self.normal_observed_duration_before_hang_secs = None;
             return false;
         }
 
@@ -411,7 +404,6 @@ impl HangDetectorState {
             self.hang_event_id = None;
             self.hang_first_detected_at = None;
             self.normal_observed_since = Some(current_epoch_secs());
-            self.normal_observed_duration_before_hang_secs = None;
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;
@@ -482,8 +474,7 @@ impl HangDetectorState {
     pub fn snapshot(&self) -> HangStatusSnapshot {
         let mut details = self.details.clone();
         details.hang_duration_secs = self.hang_duration_secs();
-        details.normal_observed_duration_before_hang_secs =
-            self.normal_observed_duration_before_hang_secs();
+        details.stc_uptime_secs = stc_uptime_secs();
         HangStatusSnapshot {
             status: self.status.clone(),
             details,
@@ -495,15 +486,6 @@ impl HangDetectorState {
     pub fn hang_duration_secs(&self) -> Option<u64> {
         self.hang_event_id
             .map(|start| current_epoch_secs().saturating_sub(start))
-    }
-
-    /// 本次 HANG 前连续 Normal 观测了多久
-    pub fn normal_observed_duration_before_hang_secs(&self) -> Option<u64> {
-        if self.status == HangStatus::Hang {
-            self.normal_observed_duration_before_hang_secs
-        } else {
-            None
-        }
     }
 }
 
@@ -521,6 +503,14 @@ pub static HANG_STATE: Lazy<Arc<RwLock<HangDetectorState>>> =
 /// 获取全局状态的只读引用
 pub fn get_hang_state() -> Arc<RwLock<HangDetectorState>> {
     HANG_STATE.clone()
+}
+
+/// STC 进程启动时刻（UNIX epoch 秒），首次访问时初始化
+pub static STC_START_TIME: Lazy<u64> = Lazy::new(current_epoch_secs);
+
+/// 返回 STC 从启动到现在的运行时长（秒）
+pub fn stc_uptime_secs() -> u64 {
+    current_epoch_secs().saturating_sub(*STC_START_TIME)
 }
 
 #[cfg(test)]
@@ -563,7 +553,6 @@ mod tests {
         assert!(!state.hang_notified);
         assert!(!state.hang_notify_in_flight);
         assert!(state.normal_observed_since.is_none());
-        assert!(state.normal_observed_duration_before_hang_secs.is_none());
         assert_eq!(state.consecutive_normal_count, 0);
         assert!(state.pending_recovery.is_none());
         assert!(!state.recovery_notify_in_flight);
@@ -642,43 +631,35 @@ mod tests {
         assert!(!recovered);
         assert_eq!(state.status, HangStatus::Normal);
         assert!(state.normal_observed_since.is_some());
-        assert!(state.normal_observed_duration_before_hang_secs().is_none());
         assert_eq!(state.consecutive_normal_count, 0);
         assert!(state.hang_event_id.is_none());
         assert!(state.pending_recovery.is_none());
     }
 
     #[test]
-    fn test_enter_hang_records_normal_observed_duration() {
+    fn test_snapshot_records_stc_uptime() {
         let mut state = HangDetectorState::new();
-        let now = current_epoch_secs();
-        state.status = HangStatus::Normal;
-        state.normal_observed_since = Some(now.saturating_sub(3_600));
 
         state.enter_hang();
+        let snapshot = state.snapshot();
 
-        let duration = state.normal_observed_duration_before_hang_secs();
-        assert!(duration.is_some());
-        assert!(duration.unwrap() >= 3_600);
+        assert!(snapshot.details.stc_uptime_secs <= stc_uptime_secs());
     }
 
     #[test]
-    fn test_recovery_resets_normal_observed_duration_for_next_event() {
+    fn test_recovery_resets_normal_observed_since_for_next_event() {
         let mut state = HangDetectorState::new();
         let now = current_epoch_secs();
         state.status = HangStatus::Normal;
         state.normal_observed_since = Some(now.saturating_sub(120));
         state.enter_hang();
         state.mark_notified();
-        assert!(state.normal_observed_duration_before_hang_secs().is_some());
 
         for _ in 0..RECOVERY_NORMAL_ROUNDS {
             state.observe_normal(RECOVERY_NORMAL_ROUNDS);
         }
-
         assert_eq!(state.status, HangStatus::Normal);
         assert!(state.normal_observed_since.is_some());
-        assert!(state.normal_observed_duration_before_hang_secs().is_none());
     }
 
     /// 未发过告警的 HANG 事件恢复时**不**应当排队恢复通知（避免误发）

@@ -44,8 +44,6 @@ pub struct HangAlertOutcome {
 pub struct HangAlertStats {
     /// 本次 HANG 已持续秒数
     pub hang_duration_secs: Option<u64>,
-    /// HANG 前连续 Normal 观测秒数
-    pub normal_observed_duration_before_hang_secs: Option<u64>,
     /// 本轮选中节点数
     pub selected_node_count: usize,
     /// 本轮有效参与判定节点数
@@ -163,12 +161,8 @@ pub async fn send_hang_alert(
             false
         } else if let Some(b) = intranet_body.as_ref() {
             let action_body = build_intranet_alert_action_dingtalk_body(&job_name, event_id, b);
-            send_intranet_alert_action_to_dingtalk(
-                &client,
-                &action_body,
-                user_dingbot.as_deref(),
-            )
-            .await
+            send_intranet_alert_action_to_dingtalk(&client, &action_body, user_dingbot.as_deref())
+                .await
         } else {
             true
         };
@@ -176,8 +170,11 @@ pub async fn send_hang_alert(
         (intranet_ok, action_ok)
     };
 
-    let (dingtalk_ok, _user_ignored, (intranet_ok, action_ok)) =
-        tokio::join!(dingtalk_main_fut, dingtalk_user_fut, intranet_and_action_fut);
+    let (dingtalk_ok, _user_ignored, (intranet_ok, action_ok)) = tokio::join!(
+        dingtalk_main_fut,
+        dingtalk_user_fut,
+        intranet_and_action_fut
+    );
 
     HangAlertOutcome {
         dingtalk_done: dingtalk_ok,
@@ -324,12 +321,12 @@ fn build_hang_alert_markdown(
     if let Some(secs) = stats.hang_duration_secs {
         text.push_str(&format!("\n\n**已持续**: {}", format_duration(secs)));
     }
-    if let Some(secs) = stats.normal_observed_duration_before_hang_secs {
-        text.push_str(&format!(
-            "\n\n**此次任务已守护时长**: {}",
-            format_duration(secs)
-        ));
-    }
+
+    let uptime = super::state::stc_uptime_secs();
+    text.push_str(&format!(
+        "\n\n**此次任务已守护时长**: {}",
+        format_duration(uptime)
+    ));
 
     if let Some(summary) = analysis_summary.map(str::trim).filter(|s| !s.is_empty()) {
         text.push_str("\n\n**分析结果可能是：**\n");
@@ -558,7 +555,6 @@ mod tests {
     fn build_alert_markdown_includes_event_id_and_duration() {
         let stats = HangAlertStats {
             hang_duration_secs: Some(180),
-            normal_observed_duration_before_hang_secs: Some(7_385),
             selected_node_count: 4,
             valid_node_count: 3,
             hang_node_count: 2,
@@ -576,8 +572,8 @@ mod tests {
 
         assert!(text.contains("### [test-job] 检测到 HANG"));
         assert!(text.contains("**事件 ID**: `1700000000`"));
-        assert!(text.contains("**HANG 已持续**: 3m"));
-        assert!(text.contains("**HANG 前正常观测时长**: 2h 3m 5s"));
+        assert!(text.contains("**已持续**: 3m"));
+        assert!(text.contains("**此次任务已守护时长**:"));
         assert!(!text.contains("节点判定"));
         assert!(!text.contains("Rank 判定"));
         assert!(!text.contains("相似度"));
@@ -588,7 +584,8 @@ mod tests {
     #[test]
     fn build_alert_markdown_without_optional_fields() {
         let text = build_hang_alert_markdown("test-job", None, None, &HangAlertStats::default());
-        assert_eq!(text, "### [test-job] 检测到 HANG");
+        assert!(text.contains("### [test-job] 检测到 HANG"));
+        assert!(text.contains("**此次任务已守护时长**:"));
     }
 
     #[test]

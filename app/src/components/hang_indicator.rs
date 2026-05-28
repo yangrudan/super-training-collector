@@ -103,8 +103,8 @@ pub fn HangIndicator() -> impl IntoView {
                                 if let Some(secs) = snapshot.details.hang_duration_secs {
                                     details.push(format!("HANG 已持续: {}", format_duration(secs)));
                                 }
-                                if let Some(secs) = snapshot.details.normal_observed_duration_before_hang_secs {
-                                    details.push(format!("HANG 前正常: {}", format_duration(secs)));
+                                if snapshot.details.stc_uptime_secs > 0 {
+                                    details.push(format!("此次任务已守护: {}", format_duration(snapshot.details.stc_uptime_secs)));
                                 }
                                 let details_text = details.join("；");
 
@@ -189,8 +189,11 @@ pub fn HangIndicatorCompact() -> impl IntoView {
                             if let Some(secs) = snapshot.details.hang_duration_secs {
                                 current.push_str(&format!("\nHANG 已持续: {}", format_duration(secs)));
                             }
-                            if let Some(secs) = snapshot.details.normal_observed_duration_before_hang_secs {
-                                current.push_str(&format!("\nHANG 前正常: {}", format_duration(secs)));
+                            if snapshot.details.stc_uptime_secs > 0 {
+                                current.push_str(&format!(
+                                    "\n此次任务已守护: {}",
+                                    format_duration(snapshot.details.stc_uptime_secs)
+                                ));
                             }
                             if snapshot.details.selected_node_count > 0 {
                                 current.push_str(&format!(

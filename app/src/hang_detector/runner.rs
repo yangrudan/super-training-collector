@@ -91,6 +91,20 @@ pub async fn start_hang_detector_scheduler() {
                     // 保存堆栈数据用于日志记录
                     round_stacks.insert(node_ip.clone(), stacks.clone());
 
+                    // 将本轮采样到的堆栈以 TRACE 级别输出，便于在需要时排查
+                    // 通过 `RUST_LOG=app::hang_detector::runner=trace` 打开
+                    if tracing::enabled!(tracing::Level::TRACE) {
+                        for (rank_idx, stack) in stacks.iter().enumerate() {
+                            tracing::trace!(
+                                node = %node_ip,
+                                rank = rank_idx,
+                                depth = stack.len(),
+                                "sampled stack: {}",
+                                stack.join(" | ")
+                            );
+                        }
+                    }
+
                     let (observation, similarity) = detector.process_node_stacks(&node_ip, stacks);
                     results.push((node_ip.clone(), observation, similarity));
                     tracing::debug!(
@@ -162,8 +176,6 @@ pub async fn start_hang_detector_scheduler() {
                             state.hang_event_id,
                             HangAlertStats {
                                 hang_duration_secs: state.hang_duration_secs(),
-                                normal_observed_duration_before_hang_secs: state
-                                    .normal_observed_duration_before_hang_secs(),
                                 selected_node_count: state.details.selected_node_count,
                                 valid_node_count: state.details.valid_node_count,
                                 hang_node_count: state.details.hang_node_count,
@@ -199,8 +211,7 @@ pub async fn start_hang_detector_scheduler() {
                             {
                                 let intranet_ready =
                                     state.intranet_alert_ready(intranet_delay_secs);
-                                let action_ready =
-                                    state.intranet_action_ready(intranet_delay_secs);
+                                let action_ready = state.intranet_action_ready(intranet_delay_secs);
                                 state.mark_notify_in_flight();
                                 (
                                     true,
