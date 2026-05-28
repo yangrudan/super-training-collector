@@ -23,7 +23,7 @@ const RETRY_BACKOFFS_MS: [u64; MAX_RETRIES] = [500, 1500];
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 
 /// 单次发送 HANG 告警的结果
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HangAlertOutcome {
     /// 钉钉告警是否完成（成功 或 本次跳过/未启用）
     pub dingtalk_done: bool,
@@ -37,6 +37,8 @@ pub struct HangAlertOutcome {
     /// - 若本轮内网本体失败 → 动作通知未发送，视作未完成（下一轮跟随内网一起重试）
     /// - 若内网已成功（之前或本轮）→ 动作通知真实发送，按结果记账
     pub intranet_action_done: bool,
+    /// 内网后台告警请求真正成功的时间。
+    pub intranet_success_time: Option<String>,
 }
 
 /// HANG 告警展示用统计信息
@@ -84,6 +86,7 @@ pub async fn send_hang_alert(
     skip_dingtalk: bool,
     skip_intranet: bool,
     skip_intranet_action: bool,
+    existing_intranet_success_time: Option<String>,
 ) -> HangAlertOutcome {
     let job_name = env::var("JOB_NAME").unwrap_or_else(|_| "未知任务".to_string());
     let title = format!("[{}] 训练任务 HANG 告警", job_name);
@@ -108,6 +111,7 @@ pub async fn send_hang_alert(
                 dingtalk_done: skip_dingtalk,
                 intranet_done: skip_intranet,
                 intranet_action_done: skip_intranet || skip_intranet_action,
+                intranet_success_time: existing_intranet_success_time,
             };
         }
     };
@@ -141,14 +145,17 @@ pub async fn send_hang_alert(
     };
     // 串行：intranet 本体 → 动作通知。两者独立记账，便于跨轮重试。
     let intranet_and_action_fut = async {
-        let intranet_ok = match intranet_body.as_ref() {
-            None => true, // 未启用：视作完成
+        let (intranet_ok, intranet_success_time) = match intranet_body.as_ref() {
+            None => (true, existing_intranet_success_time), // 未启用：视作完成
             Some(b) => {
                 if skip_intranet {
                     // 之前轮次已成功，本轮无需重发
-                    true
+                    (true, existing_intranet_success_time)
                 } else {
-                    send_intranet_alert_with_retry(&client, b).await
+                    match send_intranet_alert_with_retry(&client, b).await {
+                        Some(success_time) => (true, Some(success_time)),
+                        None => (false, None),
+                    }
                 }
             }
         };
@@ -160,17 +167,22 @@ pub async fn send_hang_alert(
             // 本轮内网本体失败 → 动作通知不能发，等下一轮内网先成功
             false
         } else if let Some(b) = intranet_body.as_ref() {
-            let action_body = build_intranet_alert_action_dingtalk_body(&job_name, event_id, b);
+            let action_body = build_intranet_alert_action_dingtalk_body(
+                &job_name,
+                event_id,
+                b,
+                intranet_success_time.as_deref(),
+            );
             send_intranet_alert_action_to_dingtalk(&client, &action_body, user_dingbot.as_deref())
                 .await
         } else {
             true
         };
 
-        (intranet_ok, action_ok)
+        (intranet_ok, action_ok, intranet_success_time)
     };
 
-    let (dingtalk_ok, _user_ignored, (intranet_ok, action_ok)) = tokio::join!(
+    let (dingtalk_ok, _user_ignored, (intranet_ok, action_ok, intranet_success_time)) = tokio::join!(
         dingtalk_main_fut,
         dingtalk_user_fut,
         intranet_and_action_fut
@@ -180,6 +192,7 @@ pub async fn send_hang_alert(
         dingtalk_done: dingtalk_ok,
         intranet_done: intranet_skipped_or_disabled || intranet_ok,
         intranet_action_done: action_skipped_or_disabled || action_ok,
+        intranet_success_time,
     }
 }
 
@@ -205,9 +218,15 @@ fn build_intranet_alert_action_dingtalk_body(
     job_name: &str,
     event_id: Option<u64>,
     intranet_body: &serde_json::Value,
+    intranet_success_time: Option<&str>,
 ) -> serde_json::Value {
     let title = format!("[{}] 重启告警已发送", job_name);
-    let text = build_intranet_alert_action_markdown(job_name, event_id, intranet_body);
+    let text = build_intranet_alert_action_markdown(
+        job_name,
+        event_id,
+        intranet_body,
+        intranet_success_time,
+    );
 
     serde_json::json!({
         "msgtype": "markdown",
@@ -220,10 +239,15 @@ fn build_intranet_alert_action_dingtalk_body(
 
 fn build_intranet_alert_action_markdown(
     job_name: &str,
-    event_id: Option<u64>,
-    intranet_body: &serde_json::Value,
+    _event_id: Option<u64>,
+    _intranet_body: &serde_json::Value,
+    intranet_success_time: Option<&str>,
 ) -> String {
     let mut text = format!("### [{}] 已完成内部服务重启通知下发", job_name);
+
+    if let Some(success_time) = intranet_success_time {
+        text.push_str(&format!("\n\n**内网请求成功时间**: {}", success_time));
+    }
 
     // if let Some(id) = event_id {
     //     text.push_str(&format!("\n\n**关联 HANG 事件 ID**: `{}`", id));
@@ -435,7 +459,7 @@ fn build_intranet_alert_body(
 async fn send_intranet_alert_with_retry(
     client: &reqwest::Client,
     body: &serde_json::Value,
-) -> bool {
+) -> Option<String> {
     let mut last_err: Option<String> = None;
     for attempt in 0..=MAX_RETRIES {
         match client
@@ -449,13 +473,15 @@ async fn send_intranet_alert_with_retry(
                 let status = resp.status();
                 let body_text = resp.text().await.unwrap_or_default();
                 if status.is_success() {
+                    let success_time = chrono::Utc::now().to_rfc3339();
                     tracing::info!(
-                        "内网后台告警发送成功: attempt={}, status={}, body={}",
+                        "内网后台告警发送成功: attempt={}, success_time={}, status={}, body={}",
                         attempt,
+                        success_time,
                         status,
                         body_text
                     );
-                    return true;
+                    return Some(success_time);
                 }
                 last_err = Some(format!("status={}, body={}", status, body_text));
                 tracing::warn!(
@@ -480,7 +506,7 @@ async fn send_intranet_alert_with_retry(
         MAX_RETRIES,
         last_err.unwrap_or_else(|| "unknown".to_string())
     );
-    false
+    None
 }
 
 /// 发送 HANG 告警**解除**通知
@@ -648,15 +674,15 @@ mod tests {
             "### [test-job] 检测到 HANG",
         );
 
-        let text =
-            build_intranet_alert_action_markdown("test-job", Some(1700000000), &intranet_body);
+        let text = build_intranet_alert_action_markdown(
+            "test-job",
+            Some(1700000000),
+            &intranet_body,
+            Some("2026-05-21T10:00:01Z"),
+        );
 
-        assert!(text.contains("### [test-job] 已发送内网后台告警"));
-        assert!(text.contains("**关联 HANG 事件 ID**: `1700000000`"));
-        assert!(text.contains("**内网事件类型**: 作业训练hang住"));
-        assert!(text.contains("**作业 UUID**: `jb-aitrain-156450823014475840`"));
-        assert!(text.contains("**实例 UUID**: `ji-aitrain-156450823388817472`"));
-        assert!(text.contains("**发送时间**: 2026-05-21T10:00:00Z"));
+        assert!(text.contains("### [test-job] 已完成内部服务重启通知下发"));
+        assert!(text.contains("**内网请求成功时间**: 2026-05-21T10:00:01Z"));
     }
 
     #[test]
@@ -664,14 +690,23 @@ mod tests {
         let intranet_body =
             build_intranet_alert_body("job-1", "instance-1", "2026-05-21T10:00:00Z", "detail");
 
-        let body = build_intranet_alert_action_dingtalk_body("test-job", None, &intranet_body);
+        let body = build_intranet_alert_action_dingtalk_body(
+            "test-job",
+            None,
+            &intranet_body,
+            Some("2026-05-21T10:00:01Z"),
+        );
 
         assert_eq!(body["msgtype"], "markdown");
-        assert_eq!(body["markdown"]["title"], "[test-job] 内网后台告警已发送");
+        assert_eq!(body["markdown"]["title"], "[test-job] 重启告警已发送");
         assert!(body["markdown"]["text"]
             .as_str()
             .unwrap()
-            .contains("### [test-job] 已发送内网后台告警"));
+            .contains("### [test-job] 已完成内部服务重启通知下发"));
+        assert!(body["markdown"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("**内网请求成功时间**: 2026-05-21T10:00:01Z"));
     }
 
     #[test]
@@ -729,6 +764,7 @@ mod tests {
             false,
             false,
             false,
+            None,
         )
         .await;
         println!("消息已发送，请检查钉钉群");
@@ -748,6 +784,7 @@ mod tests {
             false,
             false,
             false,
+            None,
         )
         .await;
         println!("消息已发送，请检查主群和 USER_DINGBOT 群");

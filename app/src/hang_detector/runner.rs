@@ -202,6 +202,7 @@ pub async fn start_hang_detector_scheduler() {
                             skip_intranet_action,
                             attempted_intranet,
                             attempted_action,
+                            intranet_success_time,
                         ) = {
                             use super::state::get_hang_state;
                             let state = get_hang_state();
@@ -220,9 +221,10 @@ pub async fn start_hang_detector_scheduler() {
                                     !action_ready,
                                     intranet_ready,
                                     action_ready,
+                                    state.hang_intranet_success_time.clone(),
                                 )
                             } else {
-                                (false, false, false, false, false, false)
+                                (false, false, false, false, false, false, None)
                             }
                         };
 
@@ -235,6 +237,7 @@ pub async fn start_hang_detector_scheduler() {
                                     skip_dingtalk,
                                     skip_intranet,
                                     skip_intranet_action,
+                                    intranet_success_time,
                                 )
                                 .await;
                                 use super::state::get_hang_state;
@@ -250,7 +253,10 @@ pub async fn start_hang_detector_scheduler() {
                                 // 在 notifier 中被设为 skip→true，但语义是"本轮跳过"，
                                 // **不能**视为发送成功，否则会永远不再尝试。
                                 if attempted_intranet && outcome.intranet_done {
-                                    state.mark_intranet_notified_for(event_id);
+                                    state.mark_intranet_notified_for(
+                                        event_id,
+                                        outcome.intranet_success_time.clone(),
+                                    );
                                 }
                                 // "内网后台告警动作"：同样只有"本轮真正尝试"才记账。
                                 // 注意 notifier 内部要求 intranet 本体已成功才会真正发送动作通知，

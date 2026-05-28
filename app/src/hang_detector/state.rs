@@ -93,6 +93,8 @@ pub struct HangDetectorState {
     ///
     /// 一旦置 true，本事件内不再重复发送内网告警，即使后续钉钉告警仍在重试。
     pub hang_intranet_notified: bool,
+    /// 当前 HANG 事件内网后台告警请求真正成功的时间。
+    pub hang_intranet_success_time: Option<String>,
     /// 当前 HANG 事件"内网后台告警动作"钉钉通知是否已发送成功或本事件无需发送（按事件去重，粘性）
     ///
     /// 该通知是在"内网告警本体成功后"额外向钉钉机器人推送的动作提醒。
@@ -135,6 +137,7 @@ impl Default for HangDetectorState {
             hang_logged: false,
             hang_notified: false,
             hang_intranet_notified: false,
+            hang_intranet_success_time: None,
             hang_intranet_action_notified: false,
             hang_first_detected_at: None,
             normal_observed_since: None,
@@ -184,9 +187,12 @@ impl HangDetectorState {
     }
 
     /// 标记内网后台告警已成功或本事件不需要再发送内网告警
-    pub fn mark_intranet_notified_for(&mut self, event_id: u64) {
+    pub fn mark_intranet_notified_for(&mut self, event_id: u64, success_time: Option<String>) {
         if self.hang_event_id == Some(event_id) {
             self.hang_intranet_notified = true;
+            if let Some(success_time) = success_time {
+                self.hang_intranet_success_time = Some(success_time);
+            }
         }
     }
 
@@ -368,6 +374,7 @@ impl HangDetectorState {
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;
+            self.hang_intranet_success_time = None;
             self.hang_intranet_action_notified = false;
             self.hang_notify_in_flight = false;
         }
@@ -407,6 +414,7 @@ impl HangDetectorState {
             self.hang_logged = false;
             self.hang_notified = false;
             self.hang_intranet_notified = false;
+            self.hang_intranet_success_time = None;
             self.hang_intranet_action_notified = false;
             was_in_hang
         } else {
