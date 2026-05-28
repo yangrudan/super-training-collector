@@ -475,7 +475,7 @@ async fn send_intranet_alert_with_retry(
                 let status = resp.status();
                 let body_text = resp.text().await.unwrap_or_default();
                 if status.is_success() {
-                    let success_time = shanghai_now_rfc3339();
+                    let success_time = shanghai_now_display();
                     tracing::info!(
                         "内网后台告警发送成功: attempt={}, success_time={}, status={}, body={}",
                         attempt,
@@ -513,6 +513,10 @@ async fn send_intranet_alert_with_retry(
 
 fn shanghai_now_rfc3339() -> String {
     shanghai_now().to_rfc3339()
+}
+
+fn shanghai_now_display() -> String {
+    shanghai_now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 fn shanghai_now() -> DateTime<FixedOffset> {
@@ -685,6 +689,13 @@ mod tests {
     }
 
     #[test]
+    fn shanghai_now_display_omits_timezone_suffix() {
+        let display = shanghai_now_display();
+        assert!(!display.ends_with("+08:00"));
+        assert!(!display.ends_with("+0800"));
+    }
+
+    #[test]
     fn build_intranet_alert_action_markdown_includes_action_context() {
         let intranet_body = build_intranet_alert_body(
             "jb-aitrain-156450823014475840",
@@ -697,11 +708,11 @@ mod tests {
             "test-job",
             Some(1700000000),
             &intranet_body,
-            Some("2026-05-21T10:00:01Z"),
+            Some("2026-05-21 10:00:01"),
         );
 
         assert!(text.contains("### [test-job] 已完成内部服务重启通知下发"));
-        assert!(text.contains("**内网请求成功时间**: 2026-05-21T10:00:01Z"));
+        assert!(text.contains("**内网请求成功时间**: 2026-05-21 10:00:01"));
     }
 
     #[test]
@@ -713,7 +724,7 @@ mod tests {
             "test-job",
             None,
             &intranet_body,
-            Some("2026-05-21T10:00:01Z"),
+            Some("2026-05-21 10:00:01"),
         );
 
         assert_eq!(body["msgtype"], "markdown");
@@ -725,7 +736,7 @@ mod tests {
         assert!(body["markdown"]["text"]
             .as_str()
             .unwrap()
-            .contains("**内网请求成功时间**: 2026-05-21T10:00:01Z"));
+            .contains("**内网请求成功时间**: 2026-05-21 10:00:01"));
     }
 
     #[test]
