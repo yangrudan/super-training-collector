@@ -54,8 +54,8 @@ pub fn AppChrome(children: Children) -> impl IntoView {
                 </nav>
 
                 <div class="left-area-footer">
-                    <div class="sidebar-caption">"Zone"</div>
-                    <div class="sidebar-value">"Enterprise GPU Ops"</div>
+                    <div class="sidebar-caption">"Version"</div>
+                    <div class="sidebar-value">{env!("CARGO_PKG_VERSION")}</div>
                 </div>
             </aside>
 
