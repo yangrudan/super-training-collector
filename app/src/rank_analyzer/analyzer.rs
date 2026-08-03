@@ -5,8 +5,6 @@
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use roaring::RoaringBitmap;
-
 use super::config::RankAnalysisConfig;
 use super::types::{AnalysisTrigger, DivergencePoint, ProblematicRank, RankAnalysisResult};
 use crate::flamegraph::stack_merger::{StackTrie, TrieNode};
@@ -59,6 +57,10 @@ pub fn analyze_trie(
             issue_reason: None,
             anomaly_score: score,
             divergence_points: points,
+            parallel_context: None,
+            suspected_dimensions: Vec::new(),
+            root_cause_confidence: crate::rank_analysis_types::RootCauseConfidence::Low,
+            parallel_evidence: Vec::new(),
         })
         .collect();
 
@@ -74,6 +76,7 @@ pub fn analyze_trie(
         trigger,
         timestamp: now_secs(),
         minority_threshold: config.minority_threshold,
+        parallel_topology: Default::default(),
     }
 }
 

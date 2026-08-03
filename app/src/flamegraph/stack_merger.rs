@@ -97,7 +97,12 @@ impl StackTrie {
     /// Create a new StackTrie with known total rank count.
     /// Use this when processing ranks in batches but need consistent rank formatting.
     pub fn with_total_ranks(total_ranks: u32) -> Self {
-        let all_ranks_bitmap: RoaringBitmap = (0..total_ranks).collect();
+        Self::with_ranks((0..total_ranks).collect())
+    }
+
+    // Create a trie whose rank universe uses the actual global rank IDs.
+    pub fn with_ranks(ranks: Vec<u32>) -> Self {
+        let all_ranks_bitmap: RoaringBitmap = ranks.into_iter().collect();
         StackTrie {
             root: TrieNode::new(),
             all_ranks: all_ranks_bitmap,

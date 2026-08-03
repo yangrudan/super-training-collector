@@ -6,6 +6,8 @@ pub mod config;
 pub mod detector;
 pub mod jaccard;
 #[cfg(feature = "ssr")]
+pub mod job_info_client;
+#[cfg(feature = "ssr")]
 pub mod logger;
 #[cfg(feature = "ssr")]
 pub mod notifier;

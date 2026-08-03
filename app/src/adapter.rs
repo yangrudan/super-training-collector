@@ -519,17 +519,17 @@ fn apply_hang_state_to_metrics(ranks: &mut Vec<RankMetrics>, nodes: &mut Vec<Nod
         return;
     }
 
-    // 从最近一次问题 Rank 分析中构建精确分类表：
-    //   rank_id → (is_root_cause, label)
-    // is_root_cause = true  表示采集失败/missing，标为 Critical
-    // is_root_cause = false 表示少数派堆栈（anomaly_score > 0），标为 Warning
+    // 高置信度或采集失败候选标为疑似根因，其余保留为受影响 Rank。
     let analysis_map: HashMap<u32, bool> = get_last_analysis()
-        .map(|a| {
-            a.problematic_ranks
+        .map(|analysis| {
+            analysis
+                .problematic_ranks
                 .iter()
-                .map(|r| {
-                    let is_root_cause = r.issue_reason.is_some();
-                    (r.rank_id, is_root_cause)
+                .map(|rank| {
+                    let is_root_cause = rank.issue_reason.is_some()
+                        || rank.root_cause_confidence
+                            == crate::rank_analysis_types::RootCauseConfidence::High;
+                    (rank.rank_id, is_root_cause)
                 })
                 .collect()
         })
@@ -543,9 +543,9 @@ fn apply_hang_state_to_metrics(ranks: &mut Vec<RankMetrics>, nodes: &mut Vec<Nod
         if has_analysis {
             match analysis_map.get(&rank.rank_id) {
                 Some(true) => {
-                    // 采集失败 / missing → 真正根因
+                    // 采集失败或高置信度关联证据 → 疑似根因
                     rank.status = HealthStatus::Critical;
-                    rank.error_message = Some("训练 HANG：根因 Rank".to_string());
+                    rank.error_message = Some("训练 HANG：疑似根因 Rank".to_string());
                 }
                 Some(false) => {
                     // 少数派堆栈 → 受影响，不是根因

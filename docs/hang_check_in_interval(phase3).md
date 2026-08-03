@@ -207,6 +207,13 @@ HANG 告警会同时展示两类时长：
 5. 统计每个 Rank 出现在少数派分支的次数，作为 `anomaly_score`
 6. `anomaly_score > 0` 的 Rank 即为问题 Rank，分数越高异常越严重
 
+少数派只作为候选。系统随后从训练平台任务详情的 `data.env` 读取 Megatron 的 `TP_SIZE`、`PP_SIZE`、`DP_SIZE`、`EP_SIZE`、`CP_SIZE` 和 `RANK_ORDER`，按 `parallel_state.py` 的 mixed-radix 规则恢复通信组，并增加两类证据：
+
+- **通信组证据**：候选分叉签名在 PP/DP/TP/EP/CP 组内是离群，或覆盖了整组。
+- **跨副本证据**：相同模型坐标的分叉签名在至少两个 DP 副本上重复出现，且覆盖率达到 50%。
+
+采集失败直接记为高置信度；同时具备通信组和跨副本证据记为高，仅一种记为中，仅有全局少数派证据记为低。拓扑获取或校验失败时不会阻断分析，Dashboard 和告警会明确标记已降级为旧的全局少数派算法。Megatron 的 dense CP 网格与 expert EP 网格分别生成，避免把 CP/EP 错误压成一个统一坐标。
+
 ### 触发方式
 
 | 触发方式 | 说明 |

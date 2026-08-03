@@ -2,7 +2,9 @@
 //!
 //! 提供手动触发分析和展示分析结果的 UI 组件
 
-use crate::rank_analysis_types::{AnalysisTrigger, ProblematicRank, RankAnalysisResult};
+use crate::rank_analysis_types::{
+    AnalysisTrigger, ParallelEvidenceKind, ProblematicRank, RankAnalysisResult, RootCauseConfidence,
+};
 use leptos::prelude::*;
 
 /// 问题 Rank 分析面板（完整版，用于 Level2 Tab）
@@ -195,12 +197,12 @@ fn RankAnalysisResultView(result: RankAnalysisResult) -> impl IntoView {
     let trigger = result.trigger.clone();
     let timestamp = result.timestamp;
     let ranks = result.problematic_ranks.clone();
+    let topology = result.parallel_topology.clone();
 
     let trigger_label = match &trigger {
         AnalysisTrigger::HangDetected => "HANG 自动触发",
         AnalysisTrigger::Manual => "手动触发",
     };
-
     let severity_class = if problematic_count == 0 {
         "result-normal"
     } else if problematic_count <= 2 {
@@ -208,10 +210,33 @@ fn RankAnalysisResultView(result: RankAnalysisResult) -> impl IntoView {
     } else {
         "result-critical"
     };
+    let topology_class = if topology.available {
+        "parallel-topology-status topology-ready"
+    } else {
+        "parallel-topology-status topology-degraded"
+    };
+    let topology_text = if topology.available {
+        format!(
+            "Megatron 拓扑：TP={} / PP={} / DP={} / EP={} / CP={} · order={}",
+            topology.tp_size,
+            topology.pp_size,
+            topology.dp_size,
+            topology.ep_size,
+            topology.cp_size,
+            topology.rank_order
+        )
+    } else {
+        format!(
+            "并行拓扑未参与分析：{}",
+            topology
+                .degraded_reason
+                .as_deref()
+                .unwrap_or("未知原因，已降级为全局少数派分析")
+        )
+    };
 
     view! {
         <div class=format!("rank-analysis-result {}", severity_class)>
-            // 概要信息
             <div class="result-summary">
                 <div class="result-summary-main">
                     <span class="result-icon">
@@ -232,10 +257,9 @@ fn RankAnalysisResultView(result: RankAnalysisResult) -> impl IntoView {
                     <span class="meta-item">"时间: " {format_timestamp(timestamp)}</span>
                 </div>
             </div>
+            <div class=topology_class>{topology_text}</div>
 
-            // 问题 Rank 详情表格
             {if !ranks.is_empty() {
-                let ranks_for_table = ranks.clone();
                 Some(view! {
                     <div class="rank-table-container">
                         <table class="rank-table">
@@ -243,13 +267,16 @@ fn RankAnalysisResultView(result: RankAnalysisResult) -> impl IntoView {
                                 <tr>
                                     <th>"Rank ID"</th>
                                     <th>"节点 IP"</th>
+                                    <th>"置信度"</th>
+                                    <th>"并行坐标"</th>
+                                    <th>"疑似维度"</th>
+                                    <th>"关联证据"</th>
                                     <th>"异常分数"</th>
-                                    <th>"分叉点数"</th>
                                     <th>"主要分叉位置"</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {ranks_for_table.into_iter().map(|rank| {
+                                {ranks.into_iter().map(|rank| {
                                     view! { <ProblematicRankRow rank=rank /> }
                                 }).collect_view()}
                             </tbody>
@@ -263,7 +290,6 @@ fn RankAnalysisResultView(result: RankAnalysisResult) -> impl IntoView {
     }
 }
 
-/// 问题 Rank 表格行
 #[component]
 fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
     let score = rank.anomaly_score;
@@ -274,10 +300,13 @@ fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
     } else {
         "score-low"
     };
+    let confidence_class = match rank.root_cause_confidence {
+        RootCauseConfidence::High => "confidence-high",
+        RootCauseConfidence::Medium => "confidence-medium",
+        RootCauseConfidence::Low => "confidence-low",
+    };
+    let confidence_label = rank.root_cause_confidence.label();
 
-    let divergence_count = rank.divergence_points.len();
-
-    // 展示最显著的分叉位置（按覆盖率升序，取前 2 个）
     let mut sorted_points = rank.divergence_points.clone();
     sorted_points.sort_by(|a, b| {
         a.minority_coverage
@@ -287,15 +316,18 @@ fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
     let points_display = if let Some(reason) = rank.issue_reason.clone() {
         reason
     } else {
-        let top_points: Vec<String> = sorted_points
+        sorted_points
             .iter()
             .take(2)
-            .map(|p| {
-                let short_name = shorten_frame_name(&p.frame_name);
-                format!("{} ({:.0}%)", short_name, p.minority_coverage * 100.0)
+            .map(|point| {
+                format!(
+                    "{} ({:.0}%)",
+                    shorten_frame_name(&point.frame_name),
+                    point.minority_coverage * 100.0
+                )
             })
-            .collect();
-        top_points.join(", ")
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     let points_display_title = points_display.clone();
     let score_display = rank
@@ -303,6 +335,53 @@ fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
         .as_ref()
         .map(|_| "采集异常".to_string())
         .unwrap_or_else(|| score.to_string());
+    let coordinates = rank
+        .parallel_context
+        .as_ref()
+        .map(|context| {
+            format!(
+                "PP{} DP{} TP{} EP{} CP{}",
+                coordinate(context.pp_rank),
+                coordinate(context.dp_rank),
+                coordinate(context.tp_rank),
+                coordinate(context.ep_rank),
+                coordinate(context.cp_rank),
+            )
+        })
+        .unwrap_or_else(|| "-".to_string());
+    let dimensions = if rank.suspected_dimensions.is_empty() {
+        "-".to_string()
+    } else {
+        rank.suspected_dimensions
+            .iter()
+            .map(|dimension| dimension.label())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    };
+    let evidence = if rank.parallel_evidence.is_empty() {
+        "仅全局少数派".to_string()
+    } else {
+        rank.parallel_evidence
+            .iter()
+            .take(3)
+            .map(|item| {
+                let relation = match item.kind {
+                    ParallelEvidenceKind::GroupOutlier => "组内离群",
+                    ParallelEvidenceKind::GroupCorrelated => "整组相关",
+                    ParallelEvidenceKind::ReplicaRepeated => "跨副本重复",
+                };
+                format!(
+                    "{}{} {}/{}",
+                    item.dimension.label(),
+                    relation,
+                    item.matching_ranks.len(),
+                    item.group_ranks.len()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("；")
+    };
+    let evidence_title = evidence.clone();
 
     view! {
         <tr class="rank-row">
@@ -310,15 +389,20 @@ fn ProblematicRankRow(rank: ProblematicRank) -> impl IntoView {
                 <span class="rank-id-badge">{format!("Rank {}", rank.rank_id)}</span>
             </td>
             <td>{rank.node_ip.clone().unwrap_or_else(|| "-".to_string())}</td>
-            <td>
-                <span class=format!("anomaly-score {}", score_class)>{score_display}</span>
-            </td>
-            <td>{divergence_count}</td>
-            <td class="divergence-info" title=points_display_title>
-                {points_display}
-            </td>
+            <td><span class=format!("root-confidence {}", confidence_class)>{confidence_label}</span></td>
+            <td class="parallel-coordinates">{coordinates}</td>
+            <td>{dimensions}</td>
+            <td class="parallel-evidence" title=evidence_title>{evidence}</td>
+            <td><span class=format!("anomaly-score {}", score_class)>{score_display}</span></td>
+            <td class="divergence-info" title=points_display_title>{points_display}</td>
         </tr>
     }
+}
+
+fn coordinate(value: Option<u32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// 紧凑版分析结果摘要（用于 Level1 页面）
@@ -353,11 +437,25 @@ pub fn RankAnalysisSummary() -> impl IntoView {
                             let count = analysis.problematic_ranks.len();
                             let total = analysis.total_ranks;
                             let top_rank = analysis.problematic_ranks.first()
-                                .map(|r| {
-                                    r.issue_reason
-                                        .as_ref()
-                                        .map(|reason| format!("Rank {} ({})", r.rank_id, reason))
-                                        .unwrap_or_else(|| format!("Rank {} (分数: {})", r.rank_id, r.anomaly_score))
+                                .map(|rank| {
+                                    let dimensions = rank.suspected_dimensions
+                                        .iter()
+                                        .map(|dimension| dimension.label())
+                                        .collect::<Vec<_>>()
+                                        .join("/");
+                                    let detail = rank.issue_reason.clone().unwrap_or_else(|| {
+                                        if dimensions.is_empty() {
+                                            "仅全局少数派证据".to_string()
+                                        } else {
+                                            format!("疑似 {} 关联", dimensions)
+                                        }
+                                    });
+                                    format!(
+                                        "Rank {}（置信度: {}，{}）",
+                                        rank.rank_id,
+                                        rank.root_cause_confidence.label(),
+                                        detail
+                                    )
                                 })
                                 .unwrap_or_default();
 
