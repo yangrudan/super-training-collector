@@ -80,6 +80,21 @@ impl Grid {
 }
 
 impl ParallelTopology {
+    /// 当 DP 显式配置时，可仅根据进程环境恢复 dense world_size。
+    pub fn configured_world_size(env: &HashMap<String, String>) -> Result<Option<u32>, String> {
+        let Some(dp) = parse_optional_size(env, "DP")? else {
+            return Ok(None);
+        };
+        let tp = parse_size(env, "TP")?;
+        let pp = parse_size(env, "PP")?;
+        let cp = parse_size(env, "CP")?;
+        tp.checked_mul(pp)
+            .and_then(|value| value.checked_mul(cp))
+            .and_then(|value| value.checked_mul(dp))
+            .map(Some)
+            .ok_or_else(|| "TP×PP×CP×DP 溢出".to_string())
+    }
+
     pub fn from_env_map(env: &HashMap<String, String>, world_size: u32) -> Result<Self, String> {
         if world_size == 0 {
             return Err("world_size 为 0".to_string());
@@ -567,5 +582,17 @@ mod tests {
                 .unwrap();
         assert_eq!(topology.summary.tp_size, 2);
         assert_eq!(topology.summary.dp_size, 4);
+    }
+
+    #[test]
+    fn derives_complete_world_size_from_explicit_dp() {
+        let world_size = ParallelTopology::configured_world_size(&env(&[
+            ("TP", "2"),
+            ("PP", "3"),
+            ("CP", "2"),
+            ("DP", "4"),
+        ]))
+        .unwrap();
+        assert_eq!(world_size, Some(48));
     }
 }

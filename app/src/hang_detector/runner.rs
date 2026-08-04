@@ -7,7 +7,7 @@ use super::detector::{HangDetector, NodeObservation};
 use super::logger::HangLogger;
 use super::notifier::{send_hang_alert, send_hang_recovery_alert, HangAlertStats};
 use super::state::{init_stc_start_time, HangStatus};
-use crate::adapter::get_real_training_data;
+use crate::adapter::{get_real_training_data, get_real_training_data_with_world_size};
 use crate::flamegraph::{build_callstack_url, build_callstack_urls, load_collector_config};
 use crate::rank_analyzer::{
     analyze_trie, set_last_analysis, AnalysisTrigger, RankAnalysisConfig, RankAnalysisResult,
@@ -460,7 +460,7 @@ pub async fn run_rank_analysis_with_trigger(
     let collector_config = load_collector_config(&get_config_path())
         .map_err(|e| format!("Failed to load collector config: {}", e))?;
 
-    let (ranks, nodes) = get_real_training_data()
+    let (ranks, nodes, reported_world_size) = get_real_training_data_with_world_size()
         .await
         .map_err(|e| format!("Failed to get training data: {}", e))?;
 
@@ -474,8 +474,32 @@ pub async fn run_rank_analysis_with_trigger(
         .iter()
         .map(|rank| rank.rank_id)
         .collect::<Vec<_>>();
-    let total_ranks = rank_ids.len() as u32;
-    let ranks_are_contiguous = rank_ids.iter().copied().eq(0..total_ranks);
+    let observed_world_size = rank_ids
+        .iter()
+        .max()
+        .map(|rank| rank.saturating_add(1))
+        .unwrap_or(0);
+    let process_env = std::env::vars().collect::<HashMap<_, _>>();
+    let mut topology_error = None;
+    let configured_world_size = match ParallelTopology::configured_world_size(&process_env) {
+        Ok(world_size) => world_size,
+        Err(error) => {
+            topology_error = Some(error);
+            None
+        }
+    };
+    let mut total_ranks = reported_world_size
+        .or(configured_world_size)
+        .unwrap_or(observed_world_size);
+    if observed_world_size > total_ranks {
+        topology_error = Some(format!(
+            "观测到 Rank {}，超出配置 world_size {}",
+            observed_world_size - 1,
+            total_ranks
+        ));
+        total_ranks = observed_world_size;
+    }
+    let missing_process_ranks = find_missing_process_ranks(total_ranks, &rank_ids);
 
     let mut all_urls = Vec::with_capacity(sorted_ranks.len());
     let mut rank_to_node: HashMap<u32, String> = HashMap::new();
@@ -488,20 +512,19 @@ pub async fn run_rank_analysis_with_trigger(
         ));
     }
 
-    let (parallel_topology, topology_error) = if !ranks_are_contiguous {
-        (
-            None,
-            Some("global rank 不连续，无法按 Megatron world_size 构建拓扑".to_string()),
-        )
-    } else {
-        let process_env = std::env::vars().collect::<HashMap<_, _>>();
+    let parallel_topology = if topology_error.is_none() {
         match ParallelTopology::from_env_map(&process_env, total_ranks) {
-            Ok(topology) => (Some(topology), None),
-            Err(error) => (None, Some(error)),
+            Ok(topology) => Some(topology),
+            Err(error) => {
+                topology_error = Some(error);
+                None
+            }
         }
+    } else {
+        None
     };
 
-    let trie = Arc::new(Mutex::new(StackTrie::with_ranks(rank_ids.clone())));
+    let trie = Arc::new(Mutex::new(StackTrie::with_total_ranks(total_ranks)));
     let trie_clone = trie.clone();
     let missing_ranks = Arc::new(Mutex::new(Vec::<u32>::new()));
     let missing_ranks_clone = missing_ranks.clone();
@@ -577,16 +600,38 @@ pub async fn run_rank_analysis_with_trigger(
     for rank in &mut result.problematic_ranks {
         rank.node_ip = rank_to_node.get(&rank.rank_id).cloned();
     }
-    append_missing_ranks(&mut result, &missing_rank_ids, &rank_to_node);
+    append_missing_ranks(
+        &mut result,
+        &missing_process_ranks,
+        &rank_to_node,
+        "训练进程缺失（未出现在节点注册信息中）",
+    );
+    append_missing_ranks(
+        &mut result,
+        &missing_rank_ids,
+        &rank_to_node,
+        "调用栈采集失败或返回空栈",
+    );
     correlate_result(&mut result, parallel_topology.as_ref(), topology_error);
 
     Ok(result)
+}
+
+fn find_missing_process_ranks(world_size: u32, observed_rank_ids: &[u32]) -> Vec<u32> {
+    let observed = observed_rank_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    (0..world_size)
+        .filter(|rank_id| !observed.contains(rank_id))
+        .collect()
 }
 
 fn append_missing_ranks(
     result: &mut RankAnalysisResult,
     missing_rank_ids: &[u32],
     rank_to_node: &HashMap<u32, String>,
+    reason: &str,
 ) {
     let mut seen_missing = std::collections::HashSet::new();
 
@@ -600,7 +645,7 @@ fn append_missing_ranks(
             .iter_mut()
             .find(|rank| rank.rank_id == rank_id)
         {
-            existing.issue_reason = Some("调用栈采集失败或返回空栈".to_string());
+            existing.issue_reason = Some(reason.to_string());
             continue;
         }
 
@@ -609,7 +654,7 @@ fn append_missing_ranks(
             .push(crate::rank_analyzer::ProblematicRank {
                 rank_id,
                 node_ip: rank_to_node.get(&rank_id).cloned(),
-                issue_reason: Some("调用栈采集失败或返回空栈".to_string()),
+                issue_reason: Some(reason.to_string()),
                 anomaly_score: 0,
                 divergence_points: Vec::new(),
                 parallel_context: None,
@@ -796,7 +841,12 @@ mod tests {
         };
         let rank_to_node = HashMap::from([(1u32, "10.0.0.9".to_string())]);
 
-        append_missing_ranks(&mut result, &[1, 1], &rank_to_node);
+        append_missing_ranks(
+            &mut result,
+            &[1, 1],
+            &rank_to_node,
+            "调用栈采集失败或返回空栈",
+        );
 
         assert_eq!(result.problematic_ranks.len(), 1);
         assert_eq!(result.problematic_ranks[0].rank_id, 1);
@@ -807,6 +857,36 @@ mod tests {
         assert_eq!(
             result.problematic_ranks[0].node_ip.as_deref(),
             Some("10.0.0.9")
+        );
+    }
+
+    #[test]
+    fn finds_missing_process_in_non_contiguous_world() {
+        let observed = (0..30).filter(|rank| *rank != 28).collect::<Vec<_>>();
+        assert_eq!(find_missing_process_ranks(30, &observed), vec![28]);
+    }
+
+    #[test]
+    fn missing_registered_process_is_high_confidence_root_cause() {
+        let mut result = RankAnalysisResult {
+            total_ranks: 30,
+            ..Default::default()
+        };
+        append_missing_ranks(
+            &mut result,
+            &[28],
+            &HashMap::new(),
+            "训练进程缺失（未出现在节点注册信息中）",
+        );
+        assert_eq!(result.total_ranks, 30);
+        assert_eq!(result.problematic_ranks[0].rank_id, 28);
+        assert_eq!(
+            result.problematic_ranks[0].root_cause_confidence,
+            crate::rank_analysis_types::RootCauseConfidence::High
+        );
+        assert_eq!(
+            result.problematic_ranks[0].issue_reason.as_deref(),
+            Some("训练进程缺失（未出现在节点注册信息中）")
         );
     }
 }

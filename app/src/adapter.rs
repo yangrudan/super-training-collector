@@ -277,6 +277,41 @@ mod tests {
 
         assert!(node_metrics.is_none(), "Should return None for empty ranks");
     }
+
+    #[test]
+    fn test_reported_world_size_survives_missing_rank() {
+        let nodes = vec![
+            NodeInfo {
+                host: None,
+                addr: None,
+                local_rank: None,
+                rank: Some(0),
+                world_size: Some(30),
+                group_rank: None,
+                group_world_size: None,
+                role_name: None,
+                role_rank: None,
+                role_world_size: None,
+                status: None,
+                timestamp: None,
+            },
+            NodeInfo {
+                host: None,
+                addr: None,
+                local_rank: None,
+                rank: Some(29),
+                world_size: Some(30),
+                group_rank: None,
+                group_world_size: None,
+                role_name: None,
+                role_rank: None,
+                role_world_size: None,
+                status: None,
+                timestamp: None,
+            },
+        ];
+        assert_eq!(reported_world_size(&nodes), Some(30));
+    }
 }
 
 #[cfg(feature = "ssr")]
@@ -451,8 +486,19 @@ pub fn aggregate_ranks_to_node_metrics(
 }
 
 #[cfg(feature = "ssr")]
-/// 获取真实数据并转换为应用所需格式
+/// 获取真实数据并转换为应用所需格式。
 pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetrics>), Error> {
+    let (ranks, nodes, _) = get_real_training_data_with_world_size().await?;
+    Ok((ranks, nodes))
+}
+
+#[cfg(feature = "ssr")]
+/// 获取真实数据，同时保留节点注册接口报告的完整训练 world_size。
+///
+/// 即使某个训练进程已经退出，其余存活 Rank 仍会报告原始 world_size；根因分析
+/// 使用这个值恢复完整并行拓扑，而不是把当前存活 Rank 数误当成 world_size。
+pub async fn get_real_training_data_with_world_size(
+) -> Result<(Vec<RankMetrics>, Vec<NodeMetrics>, Option<u32>), Error> {
     use crate::flamegraph::get_config_path;
     let port = load_collector_config(&get_config_path())
         .map(|c| c.callstack_base_port)
@@ -460,15 +506,14 @@ pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetri
     let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
     let url = format!("http://{}:{}/apis/nodes", host, port);
     let node_infos = get_node_info(&url).await?;
+    let world_size = reported_world_size(&node_infos);
 
-    // 转换为RankMetrics，按 rank_id 排序确保确定性顺序
     let mut ranks: Vec<RankMetrics> = node_infos
         .into_iter()
         .map(convert_node_info_to_rank_metrics)
         .collect();
     ranks.sort_by_key(|r| r.rank_id);
 
-    // 按节点IP分组并聚合为NodeMetrics
     let mut nodes_map: HashMap<String, Vec<RankMetrics>> = HashMap::new();
     for rank in &ranks {
         nodes_map
@@ -483,10 +528,27 @@ pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetri
         .collect();
     nodes.sort_by(|a, b| a.node_ip.cmp(&b.node_ip));
 
-    // 将 HANG 检测结果叠加到健康状态上
     apply_hang_state_to_metrics(&mut ranks, &mut nodes);
 
-    Ok((ranks, nodes))
+    Ok((ranks, nodes, world_size))
+}
+
+#[cfg(feature = "ssr")]
+fn reported_world_size(node_infos: &[NodeInfo]) -> Option<u32> {
+    let mut values = node_infos
+        .iter()
+        .filter_map(|node| node.world_size)
+        .filter(|world_size| *world_size > 0)
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    if values.len() > 1 {
+        tracing::warn!(
+            "节点注册信息报告了不一致的 world_size: {:?}，使用最大值",
+            values
+        );
+    }
+    values.into_iter().max()
 }
 
 #[cfg(feature = "ssr")]
