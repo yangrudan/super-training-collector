@@ -454,7 +454,6 @@ pub async fn run_rank_analysis_with_trigger(
         get_config_path, process_callstacks_batch, stack_collector::fetch_urls_batched,
         stack_merger::StackTrie,
     };
-    use crate::hang_detector::job_info_client::fetch_job_info;
     use crate::rank_analyzer::{correlate_result, ParallelTopology};
     use std::sync::{Arc, Mutex};
 
@@ -495,33 +494,10 @@ pub async fn run_rank_analysis_with_trigger(
             Some("global rank 不连续，无法按 Megatron world_size 构建拓扑".to_string()),
         )
     } else {
-        match std::env::var("JOB_NAME") {
-            Ok(job_id) if !job_id.trim().is_empty() => {
-                match fetch_job_info(
-                    &collector_config.job_platform_api_url,
-                    &collector_config.job_platform_app_key,
-                    &collector_config.job_platform_app_secret,
-                    &collector_config.job_platform_user_id,
-                    &job_id,
-                )
-                .await
-                {
-                    Some(job_info) => {
-                        match ParallelTopology::from_env_map(&job_info.env, total_ranks) {
-                            Ok(topology) => (Some(topology), None),
-                            Err(error) => (None, Some(error)),
-                        }
-                    }
-                    None => (
-                        None,
-                        Some("训练平台任务详情获取失败，未结合并行拓扑".to_string()),
-                    ),
-                }
-            }
-            _ => (
-                None,
-                Some("JOB_NAME 未配置，无法查询任务并行拓扑".to_string()),
-            ),
+        let process_env = std::env::vars().collect::<HashMap<_, _>>();
+        match ParallelTopology::from_env_map(&process_env, total_ranks) {
+            Ok(topology) => (Some(topology), None),
+            Err(error) => (None, Some(error)),
         }
     };
 

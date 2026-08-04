@@ -4,7 +4,6 @@
 //! 1. POST /api/open/credentials  → accessToken
 //! 2. GET  /api/open/dros-ic-platform/open-job/getJobDetail → 任务详情
 
-use std::collections::HashMap;
 use std::time::Duration;
 use tracing;
 
@@ -23,8 +22,6 @@ pub struct JobInfo {
     pub gpu_num: u64,
     /// Worker（节点）数量
     pub worker_num: u64,
-    // 任务定义中的环境变量（data.env）。
-    pub env: HashMap<String, String>,
 }
 
 /// 获取任务详情
@@ -163,8 +160,6 @@ async fn get_job_detail(
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
-    let env = parse_env_map(data.get("env"));
-
     Some(JobInfo {
         creator,
         creator_name,
@@ -172,44 +167,5 @@ async fn get_job_detail(
         gpu_type,
         gpu_num,
         worker_num,
-        env,
     })
-}
-
-fn parse_env_map(value: Option<&serde_json::Value>) -> HashMap<String, String> {
-    let Some(object) = value.and_then(serde_json::Value::as_object) else {
-        return HashMap::new();
-    };
-    object
-        .iter()
-        .filter_map(|(key, value)| {
-            let value = match value {
-                serde_json::Value::String(value) => value.clone(),
-                serde_json::Value::Number(value) => value.to_string(),
-                serde_json::Value::Bool(value) => value.to_string(),
-                _ => return None,
-            };
-            Some((key.clone(), value))
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_parallel_environment_map() {
-        let data = serde_json::json!({
-            "TP_SIZE": "8",
-            "PP_SIZE": 2,
-            "ENABLED": true,
-            "IGNORED": {"nested": true}
-        });
-        let env = parse_env_map(Some(&data));
-        assert_eq!(env.get("TP_SIZE").map(String::as_str), Some("8"));
-        assert_eq!(env.get("PP_SIZE").map(String::as_str), Some("2"));
-        assert_eq!(env.get("ENABLED").map(String::as_str), Some("true"));
-        assert!(!env.contains_key("IGNORED"));
-    }
 }

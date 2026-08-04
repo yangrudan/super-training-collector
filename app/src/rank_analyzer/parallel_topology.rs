@@ -85,6 +85,11 @@ impl ParallelTopology {
             return Err("world_size 为 0".to_string());
         }
         if ![
+            "TP",
+            "PP",
+            "CP",
+            "EP",
+            "DP",
             "TP_SIZE",
             "PP_SIZE",
             "CP_SIZE",
@@ -95,13 +100,15 @@ impl ParallelTopology {
         .iter()
         .any(|name| env.contains_key(*name))
         {
-            return Err("data.env 中没有 Megatron 并行配置".to_string());
+            return Err(
+                "进程环境变量中没有 TP/PP/DP/EP/CP 或 RANK_ORDER，未结合并行拓扑".to_string(),
+            );
         }
 
-        let tp = parse_size(env, "TP_SIZE")?;
-        let pp = parse_size(env, "PP_SIZE")?;
-        let cp = parse_size(env, "CP_SIZE")?;
-        let ep = parse_size(env, "EP_SIZE")?;
+        let tp = parse_size(env, "TP")?;
+        let pp = parse_size(env, "PP")?;
+        let cp = parse_size(env, "CP")?;
+        let ep = parse_size(env, "EP")?;
         let dense_model_size = tp
             .checked_mul(pp)
             .and_then(|v| v.checked_mul(cp))
@@ -113,10 +120,10 @@ impl ParallelTopology {
             ));
         }
         let dp = world_size / dense_model_size;
-        if let Some(explicit_dp) = parse_optional_size(env, "DP_SIZE")? {
+        if let Some(explicit_dp) = parse_optional_size(env, "DP")? {
             if explicit_dp != dp {
                 return Err(format!(
-                    "DP_SIZE={}，但按 world_size 推导应为 {}",
+                    "DP={}，但按 world_size 推导应为 {}",
                     explicit_dp, dp
                 ));
             }
@@ -230,7 +237,8 @@ fn parse_size(env: &HashMap<String, String>, name: &str) -> Result<u32, String> 
 }
 
 fn parse_optional_size(env: &HashMap<String, String>, name: &str) -> Result<Option<u32>, String> {
-    let Some(raw) = env.get(name) else {
+    let alias = format!("{}_SIZE", name);
+    let Some(raw) = env.get(name).or_else(|| env.get(&alias)) else {
         return Ok(None);
     };
     let size = raw
@@ -437,9 +445,9 @@ mod tests {
     fn megatron_mixed_radix_matches_tp_pp_dp_example() {
         let topology = ParallelTopology::from_env_map(
             &env(&[
-                ("TP_SIZE", "2"),
-                ("PP_SIZE", "2"),
-                ("DP_SIZE", "2"),
+                ("TP", "2"),
+                ("PP", "2"),
+                ("DP", "2"),
                 ("RANK_ORDER", "tp-pp-dp"),
             ]),
             8,
@@ -457,15 +465,15 @@ mod tests {
 
     #[test]
     fn invalid_explicit_dp_degrades() {
-        let error = ParallelTopology::from_env_map(&env(&[("TP_SIZE", "2"), ("DP_SIZE", "3")]), 8)
-            .unwrap_err();
+        let error =
+            ParallelTopology::from_env_map(&env(&[("TP", "2"), ("DP", "3")]), 8).unwrap_err();
         assert!(error.contains("推导应为 4"));
     }
 
     #[test]
     fn correlates_group_and_replica_evidence() {
         let topology = ParallelTopology::from_env_map(
-            &env(&[("TP_SIZE", "2"), ("DP_SIZE", "2"), ("RANK_ORDER", "tp-dp")]),
+            &env(&[("TP", "2"), ("DP", "2"), ("RANK_ORDER", "tp-dp")]),
             4,
         )
         .unwrap();
@@ -511,12 +519,7 @@ mod tests {
     #[test]
     fn builds_separate_dense_cp_and_expert_ep_groups() {
         let topology = ParallelTopology::from_env_map(
-            &env(&[
-                ("TP_SIZE", "2"),
-                ("CP_SIZE", "2"),
-                ("EP_SIZE", "2"),
-                ("DP_SIZE", "4"),
-            ]),
+            &env(&[("TP", "2"), ("CP", "2"), ("EP", "2"), ("DP", "4")]),
             16,
         )
         .unwrap();
@@ -555,5 +558,14 @@ mod tests {
             result.problematic_ranks[0].root_cause_confidence,
             RootCauseConfidence::Low
         );
+    }
+
+    #[test]
+    fn size_suffix_alias_remains_compatible_but_short_name_has_priority() {
+        let topology =
+            ParallelTopology::from_env_map(&env(&[("TP", "2"), ("TP_SIZE", "4"), ("DP", "4")]), 8)
+                .unwrap();
+        assert_eq!(topology.summary.tp_size, 2);
+        assert_eq!(topology.summary.dp_size, 4);
     }
 }
