@@ -1,5 +1,7 @@
 #[cfg(feature = "ssr")]
-use crate::adapter::{generate_global_metrics_from_real_data, get_real_training_data};
+use crate::adapter::{
+    generate_global_metrics_from_real_data, get_real_training_data, get_training_data_snapshot,
+};
 #[cfg(feature = "ssr")]
 use crate::mock::MockDataStore;
 use crate::models::*;
@@ -231,71 +233,81 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 #[server(GetAllNodesFlamegraph)]
 pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
     use crate::flamegraph::{
-        collect_and_generate_flamegraph, get_config_path, load_collector_config,
+        build_registered_callstack_url, collect_and_generate_flamegraph,
+        collect_and_generate_ranked_flamegraph, get_config_path, load_collector_config,
     };
 
     let config = load_collector_config(&get_config_path())
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
-    let ranks = match get_real_training_data().await {
-        Ok((ranks, _)) => ranks,
-        Err(e) => {
+    let snapshot = match get_training_data_snapshot().await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
             if is_mock_mode() {
-                // mock 模式回退：仍使用 nodes 构建 URL
                 use crate::flamegraph::build_callstack_urls;
                 let store = MockDataStore::new();
-                let mut all_urls: Vec<String> = Vec::new();
+                let mut all_urls = Vec::new();
                 for node in &store.nodes {
-                    let urls = build_callstack_urls(
+                    all_urls.extend(build_callstack_urls(
                         &node.node_ip,
                         node.rank_count,
                         config.callstack_base_port,
-                    );
-                    all_urls.extend(urls);
+                    ));
                 }
                 if all_urls.is_empty() {
                     return Err(ServerFnError::new("No nodes found"));
                 }
-                let svg =
-                    collect_and_generate_flamegraph("all_nodes", all_urls, Some(config.batch_size))
-                        .await
-                        .map_err(|e| {
-                            ServerFnError::new(format!(
-                                "Failed to generate combined flamegraph: {}",
-                                e
-                            ))
-                        })?;
-                return Ok(svg);
-            } else {
-                return Err(ServerFnError::new(format!("无法连接训练集群: {}", e)));
+                return collect_and_generate_flamegraph(
+                    "all_nodes",
+                    all_urls,
+                    Some(config.batch_size),
+                )
+                .await
+                .map_err(|error| {
+                    ServerFnError::new(format!("Failed to generate combined flamegraph: {}", error))
+                });
             }
+            return Err(ServerFnError::new(format!("无法连接训练集群: {}", error)));
         }
     };
 
-    // 按 rank_id 排序构建 URL，确保 URL index 与全局 rank ID 一致
-    // ranks 已在 get_real_training_data() 中按 rank_id 排序
-    let all_urls: Vec<String> = ranks
+    let observed_world_size = snapshot
+        .registrations
         .iter()
-        .map(|r| {
-            format!(
-                "http://{}:{}/apis/pythonext/callstack",
-                r.node_ip,
-                config.callstack_base_port + r.local_rank as u16
+        .map(|registration| registration.rank_id.saturating_add(1))
+        .max()
+        .unwrap_or(0);
+    let world_size = snapshot
+        .world_size
+        .unwrap_or(observed_world_size)
+        .max(observed_world_size);
+    let rank_universe = (0..world_size).collect::<Vec<_>>();
+    let ranked_urls = snapshot
+        .registrations
+        .iter()
+        .filter(|registration| registration.status != "offline")
+        .map(|registration| {
+            (
+                registration.rank_id,
+                build_registered_callstack_url(
+                    &registration.probe_addr,
+                    &registration.node_ip,
+                    registration.local_rank,
+                    config.callstack_base_port,
+                ),
             )
         })
-        .collect();
+        .collect::<Vec<_>>();
 
-    if all_urls.is_empty() {
-        return Err(ServerFnError::new("No nodes found"));
+    if ranked_urls.is_empty() {
+        return Err(ServerFnError::new("No running ranks found"));
     }
 
-    let svg = collect_and_generate_flamegraph("all_nodes", all_urls, Some(config.batch_size))
+    collect_and_generate_ranked_flamegraph(ranked_urls, rank_universe, Some(config.batch_size))
         .await
-        .map_err(|e| {
-            ServerFnError::new(format!("Failed to generate combined flamegraph: {}", e))
-        })?;
-
-    Ok(svg)
+        .map_err(|error| {
+            ServerFnError::new(format!("Failed to generate combined flamegraph: {}", error))
+        })
 }
 
 #[server(GetNodeStacks)]

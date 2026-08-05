@@ -7,8 +7,10 @@ use super::detector::{HangDetector, NodeObservation};
 use super::logger::HangLogger;
 use super::notifier::{send_hang_alert, send_hang_recovery_alert, HangAlertStats};
 use super::state::{init_stc_start_time, HangStatus};
-use crate::adapter::{get_real_training_data, get_real_training_data_with_world_size};
-use crate::flamegraph::{build_callstack_url, build_callstack_urls, load_collector_config};
+use crate::adapter::{get_real_training_data, get_training_data_snapshot};
+use crate::flamegraph::{
+    build_callstack_urls, build_registered_callstack_url, load_collector_config,
+};
 use crate::rank_analyzer::{
     analyze_trie, set_last_analysis, AnalysisTrigger, RankAnalysisConfig, RankAnalysisResult,
 };
@@ -460,21 +462,29 @@ pub async fn run_rank_analysis_with_trigger(
     let collector_config = load_collector_config(&get_config_path())
         .map_err(|e| format!("Failed to load collector config: {}", e))?;
 
-    let (ranks, nodes, reported_world_size) = get_real_training_data_with_world_size()
+    let snapshot = get_training_data_snapshot()
         .await
-        .map_err(|e| format!("Failed to get training data: {}", e))?;
-
-    if ranks.is_empty() || nodes.is_empty() {
-        return Err("No nodes available".to_string());
+        .map_err(|error| format!("Failed to get training data: {}", error))?;
+    for issue in &snapshot.invalid_registration_issues {
+        tracing::warn!("probing nodes 注册异常: {}", issue);
     }
 
-    let mut sorted_ranks = ranks;
-    sorted_ranks.sort_by_key(|rank| rank.rank_id);
-    let rank_ids = sorted_ranks
+    let reported_world_size = snapshot.world_size;
+    let registrations = snapshot.registrations;
+    let rank_registration_issues = snapshot.rank_registration_issues;
+    if registrations.is_empty() && rank_registration_issues.is_empty() {
+        return Err("No valid rank registrations available".to_string());
+    }
+
+    let mut registered_rank_ids = registrations
         .iter()
-        .map(|rank| rank.rank_id)
+        .map(|registration| registration.rank_id)
+        .chain(rank_registration_issues.keys().copied())
         .collect::<Vec<_>>();
-    let observed_world_size = rank_ids
+    registered_rank_ids.sort_unstable();
+    registered_rank_ids.dedup();
+
+    let observed_world_size = registered_rank_ids
         .iter()
         .max()
         .map(|rank| rank.saturating_add(1))
@@ -499,17 +509,25 @@ pub async fn run_rank_analysis_with_trigger(
         ));
         total_ranks = observed_world_size;
     }
-    let missing_process_ranks = find_missing_process_ranks(total_ranks, &rank_ids);
+    let missing_process_ranks = find_missing_process_ranks(total_ranks, &registered_rank_ids);
 
-    let mut all_urls = Vec::with_capacity(sorted_ranks.len());
+    let mut all_urls = Vec::with_capacity(registrations.len());
+    let mut fetch_rank_ids = Vec::with_capacity(registrations.len());
+    let mut offline_rank_ids = Vec::new();
     let mut rank_to_node: HashMap<u32, String> = HashMap::new();
-    for rank in &sorted_ranks {
-        rank_to_node.insert(rank.rank_id, rank.node_ip.clone());
-        all_urls.push(build_callstack_url(
-            &rank.node_ip,
-            rank.local_rank,
+    for registration in &registrations {
+        rank_to_node.insert(registration.rank_id, registration.node_ip.clone());
+        if registration.status == "offline" {
+            offline_rank_ids.push(registration.rank_id);
+            continue;
+        }
+        all_urls.push(build_registered_callstack_url(
+            &registration.probe_addr,
+            &registration.node_ip,
+            registration.local_rank,
             collector_config.callstack_base_port,
         ));
+        fetch_rank_ids.push(registration.rank_id);
     }
 
     let parallel_topology = if topology_error.is_none() {
@@ -528,7 +546,7 @@ pub async fn run_rank_analysis_with_trigger(
     let trie_clone = trie.clone();
     let missing_ranks = Arc::new(Mutex::new(Vec::<u32>::new()));
     let missing_ranks_clone = missing_ranks.clone();
-    let index_to_rank = Arc::new(rank_ids);
+    let index_to_rank = Arc::new(fetch_rank_ids);
     let index_to_rank_clone = index_to_rank.clone();
 
     fetch_urls_batched(all_urls, collector_config.batch_size, 4, move |batch| {
@@ -602,9 +620,18 @@ pub async fn run_rank_analysis_with_trigger(
     }
     append_missing_ranks(
         &mut result,
+        &offline_rank_ids,
+        &rank_to_node,
+        "探针心跳过期或训练进程无响应（status=offline）",
+    );
+    for (rank_id, reason) in rank_registration_issues {
+        append_missing_ranks(&mut result, &[rank_id], &rank_to_node, &reason);
+    }
+    append_missing_ranks(
+        &mut result,
         &missing_process_ranks,
         &rank_to_node,
-        "训练进程缺失（未出现在节点注册信息中）",
+        "节点注册信息缺失（/apis/nodes 未返回该 Rank）",
     );
     append_missing_ranks(
         &mut result,
@@ -876,7 +903,7 @@ mod tests {
             &mut result,
             &[28],
             &HashMap::new(),
-            "训练进程缺失（未出现在节点注册信息中）",
+            "节点注册信息缺失（/apis/nodes 未返回该 Rank）",
         );
         assert_eq!(result.total_ranks, 30);
         assert_eq!(result.problematic_ranks[0].rank_id, 28);
@@ -886,7 +913,31 @@ mod tests {
         );
         assert_eq!(
             result.problematic_ranks[0].issue_reason.as_deref(),
-            Some("训练进程缺失（未出现在节点注册信息中）")
+            Some("节点注册信息缺失（/apis/nodes 未返回该 Rank）")
+        );
+    }
+
+    #[test]
+    fn registered_callstack_url_uses_probing_endpoint_port() {
+        assert_eq!(
+            build_registered_callstack_url("10.0.0.8:12001", "10.0.0.8", 1, 9933),
+            "http://10.0.0.8:12001/apis/pythonext/callstack"
+        );
+    }
+
+    #[test]
+    fn registered_callstack_url_replaces_unspecified_host_but_keeps_port() {
+        assert_eq!(
+            build_registered_callstack_url("0.0.0.0:12001", "10.0.0.8", 1, 9933),
+            "http://10.0.0.8:12001/apis/pythonext/callstack"
+        );
+    }
+
+    #[test]
+    fn invalid_registered_endpoint_falls_back_to_legacy_mapping() {
+        assert_eq!(
+            build_registered_callstack_url("", "10.0.0.8", 2, 9933),
+            "http://10.0.0.8:9935/apis/pythonext/callstack"
         );
     }
 }
