@@ -32,6 +32,30 @@ pub struct NodeInfo {
     pub timestamp: Option<u64>,
 }
 
+/// probing `/apis/nodes` 中一条经过校验、可用于调用栈采集的 Rank 注册信息。
+#[cfg(feature = "ssr")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankRegistration {
+    pub rank_id: u32,
+    pub local_rank: u8,
+    pub node_ip: String,
+    pub probe_addr: String,
+    pub status: String,
+}
+
+/// 同一次 `/apis/nodes` 快照转换出的训练数据与注册诊断。
+#[cfg(feature = "ssr")]
+pub struct TrainingDataSnapshot {
+    pub ranks: Vec<RankMetrics>,
+    pub nodes: Vec<NodeMetrics>,
+    pub world_size: Option<u32>,
+    pub registrations: Vec<RankRegistration>,
+    /// 能关联到 global rank 的注册冲突，例如同一 rank 出现多个 endpoint。
+    pub rank_registration_issues: HashMap<u32, String>,
+    /// 无法关联到 global rank 的坏记录，仅用于日志诊断。
+    pub invalid_registration_issues: Vec<String>,
+}
+
 #[cfg(feature = "ssr")]
 pub async fn get_node_info(url: &str) -> Result<Vec<NodeInfo>, Error> {
     let resp = reqwest::get(url).await?;
@@ -277,6 +301,95 @@ mod tests {
 
         assert!(node_metrics.is_none(), "Should return None for empty ranks");
     }
+
+    #[test]
+    fn test_reported_world_size_survives_missing_rank() {
+        let nodes = vec![
+            NodeInfo {
+                host: None,
+                addr: None,
+                local_rank: None,
+                rank: Some(0),
+                world_size: Some(30),
+                group_rank: None,
+                group_world_size: None,
+                role_name: None,
+                role_rank: None,
+                role_world_size: None,
+                status: None,
+                timestamp: None,
+            },
+            NodeInfo {
+                host: None,
+                addr: None,
+                local_rank: None,
+                rank: Some(29),
+                world_size: Some(30),
+                group_rank: None,
+                group_world_size: None,
+                role_name: None,
+                role_rank: None,
+                role_world_size: None,
+                status: None,
+                timestamp: None,
+            },
+        ];
+        assert_eq!(reported_world_size(&nodes), Some(30));
+    }
+
+    #[test]
+    fn probing_registration_preserves_offline_status_and_endpoint() {
+        let node = NodeInfo {
+            host: Some("worker-2".to_string()),
+            addr: Some("10.200.111.152:9934".to_string()),
+            local_rank: Some(1),
+            rank: Some(17),
+            world_size: Some(32),
+            group_rank: Some(2),
+            group_world_size: None,
+            role_name: None,
+            role_rank: Some(17),
+            role_world_size: Some(32),
+            status: Some("OFFLINE".to_string()),
+            timestamp: Some(1_000_000),
+        };
+
+        let registration = rank_registration_from_node_info(&node).unwrap();
+
+        assert_eq!(registration.rank_id, 17);
+        assert_eq!(registration.local_rank, 1);
+        assert_eq!(registration.node_ip, "10.200.111.152");
+        assert_eq!(registration.probe_addr, "10.200.111.152:9934");
+        assert_eq!(registration.status, "offline");
+    }
+
+    #[test]
+    fn probing_registration_rejects_missing_rank_and_invalid_local_rank() {
+        let mut node = NodeInfo {
+            host: Some("worker".to_string()),
+            addr: Some("10.0.0.1:9933".to_string()),
+            local_rank: Some(0),
+            rank: None,
+            world_size: Some(32),
+            group_rank: None,
+            group_world_size: None,
+            role_name: None,
+            role_rank: None,
+            role_world_size: None,
+            status: Some("running".to_string()),
+            timestamp: None,
+        };
+
+        assert!(rank_registration_from_node_info(&node)
+            .unwrap_err()
+            .contains("缺少 rank"));
+
+        node.rank = Some(16);
+        node.local_rank = Some(256);
+        assert!(rank_registration_from_node_info(&node)
+            .unwrap_err()
+            .contains("超出范围"));
+    }
 }
 
 #[cfg(feature = "ssr")]
@@ -451,42 +564,167 @@ pub fn aggregate_ranks_to_node_metrics(
 }
 
 #[cfg(feature = "ssr")]
-/// 获取真实数据并转换为应用所需格式
+/// 获取真实数据并转换为应用所需格式。
 pub async fn get_real_training_data() -> Result<(Vec<RankMetrics>, Vec<NodeMetrics>), Error> {
+    let (ranks, nodes, _) = get_real_training_data_with_world_size().await?;
+    Ok((ranks, nodes))
+}
+
+#[cfg(feature = "ssr")]
+/// 获取真实数据，同时保留节点注册接口报告的完整训练 world_size。
+///
+/// 即使某个训练进程已经退出，其余存活 Rank 仍会报告原始 world_size；根因分析
+/// 使用这个值恢复完整并行拓扑，而不是把当前存活 Rank 数误当成 world_size。
+pub async fn get_real_training_data_with_world_size(
+) -> Result<(Vec<RankMetrics>, Vec<NodeMetrics>, Option<u32>), Error> {
+    let snapshot = get_training_data_snapshot().await?;
+    Ok((snapshot.ranks, snapshot.nodes, snapshot.world_size))
+}
+
+/// 获取并校验同一份 probing nodes 快照，供根因分析保留 endpoint/status 语义。
+#[cfg(feature = "ssr")]
+pub async fn get_training_data_snapshot() -> Result<TrainingDataSnapshot, Error> {
     use crate::flamegraph::get_config_path;
+
     let port = load_collector_config(&get_config_path())
-        .map(|c| c.callstack_base_port)
+        .map(|config| config.callstack_base_port)
         .unwrap_or(9933);
     let host = std::env::var("MASTER_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
     let url = format!("http://{}:{}/apis/nodes", host, port);
     let node_infos = get_node_info(&url).await?;
+    let world_size = reported_world_size(&node_infos);
 
-    // 转换为RankMetrics，按 rank_id 排序确保确定性顺序
-    let mut ranks: Vec<RankMetrics> = node_infos
-        .into_iter()
-        .map(convert_node_info_to_rank_metrics)
-        .collect();
-    ranks.sort_by_key(|r| r.rank_id);
+    let mut unique = HashMap::<u32, (RankMetrics, RankRegistration)>::new();
+    let mut conflicted = std::collections::HashSet::<u32>::new();
+    let mut rank_registration_issues = HashMap::new();
+    let mut invalid_registration_issues = Vec::new();
 
-    // 按节点IP分组并聚合为NodeMetrics
+    for (index, node_info) in node_infos.into_iter().enumerate() {
+        let registration = match rank_registration_from_node_info(&node_info) {
+            Ok(registration) => registration,
+            Err(error) => {
+                let message = format!("nodes[{}] {}", index, error);
+                tracing::warn!("忽略无效 probing 注册记录: {}", message);
+                if let Some(rank_id) = node_info.rank {
+                    unique.remove(&rank_id);
+                    conflicted.insert(rank_id);
+                    rank_registration_issues.insert(
+                        rank_id,
+                        format!("节点注册信息无效（Rank {}：{}）", rank_id, error),
+                    );
+                } else {
+                    invalid_registration_issues.push(message);
+                }
+                continue;
+            }
+        };
+        let rank_id = registration.rank_id;
+
+        if conflicted.contains(&rank_id) {
+            continue;
+        }
+        if let Some((_, previous)) = unique.remove(&rank_id) {
+            conflicted.insert(rank_id);
+            rank_registration_issues.insert(
+                rank_id,
+                format!(
+                    "节点注册信息冲突（Rank {} 同时对应 {} 和 {}）",
+                    rank_id, previous.probe_addr, registration.probe_addr
+                ),
+            );
+            continue;
+        }
+
+        unique.insert(
+            rank_id,
+            (convert_node_info_to_rank_metrics(node_info), registration),
+        );
+    }
+
+    let mut entries = unique.into_values().collect::<Vec<_>>();
+    entries.sort_by_key(|(_, registration)| registration.rank_id);
+    let (mut ranks, registrations): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+
     let mut nodes_map: HashMap<String, Vec<RankMetrics>> = HashMap::new();
     for rank in &ranks {
         nodes_map
             .entry(rank.node_ip.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(rank.clone());
     }
-
-    let mut nodes: Vec<NodeMetrics> = nodes_map
+    let mut nodes = nodes_map
         .iter()
         .filter_map(|(node_ip, ranks)| aggregate_ranks_to_node_metrics(node_ip, ranks))
-        .collect();
-    nodes.sort_by(|a, b| a.node_ip.cmp(&b.node_ip));
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.node_ip.cmp(&right.node_ip));
 
-    // 将 HANG 检测结果叠加到健康状态上
     apply_hang_state_to_metrics(&mut ranks, &mut nodes);
 
-    Ok((ranks, nodes))
+    Ok(TrainingDataSnapshot {
+        ranks,
+        nodes,
+        world_size,
+        registrations,
+        rank_registration_issues,
+        invalid_registration_issues,
+    })
+}
+
+#[cfg(feature = "ssr")]
+fn rank_registration_from_node_info(node: &NodeInfo) -> Result<RankRegistration, String> {
+    let rank_id = node.rank.ok_or_else(|| "缺少 rank".to_string())?;
+    let local_rank = node
+        .local_rank
+        .ok_or_else(|| format!("Rank {} 缺少 local_rank", rank_id))
+        .and_then(|value| {
+            u8::try_from(value)
+                .map_err(|_| format!("Rank {} 的 local_rank={} 超出范围", rank_id, value))
+        })?;
+    let host = node.host.as_deref().unwrap_or_default().trim();
+    let probe_addr = node
+        .addr
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches(['\'', '"']);
+    if probe_addr.is_empty() {
+        return Err(format!("Rank {} 缺少 addr", rank_id));
+    }
+    let node_ip = extract_ip_from_addr(probe_addr, host);
+    if node_ip.trim().is_empty() {
+        return Err(format!("Rank {} 无法从 addr/host 确定节点地址", rank_id));
+    }
+
+    Ok(RankRegistration {
+        rank_id,
+        local_rank,
+        node_ip,
+        probe_addr: probe_addr.to_string(),
+        status: node
+            .status
+            .as_deref()
+            .unwrap_or("unknown")
+            .trim()
+            .to_ascii_lowercase(),
+    })
+}
+
+#[cfg(feature = "ssr")]
+fn reported_world_size(node_infos: &[NodeInfo]) -> Option<u32> {
+    let mut values = node_infos
+        .iter()
+        .filter_map(|node| node.world_size)
+        .filter(|world_size| *world_size > 0)
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    if values.len() > 1 {
+        tracing::warn!(
+            "节点注册信息报告了不一致的 world_size: {:?}，使用最大值",
+            values
+        );
+    }
+    values.into_iter().max()
 }
 
 #[cfg(feature = "ssr")]
@@ -519,17 +757,17 @@ fn apply_hang_state_to_metrics(ranks: &mut Vec<RankMetrics>, nodes: &mut Vec<Nod
         return;
     }
 
-    // 从最近一次问题 Rank 分析中构建精确分类表：
-    //   rank_id → (is_root_cause, label)
-    // is_root_cause = true  表示采集失败/missing，标为 Critical
-    // is_root_cause = false 表示少数派堆栈（anomaly_score > 0），标为 Warning
+    // 高置信度或采集失败候选标为疑似根因，其余保留为受影响 Rank。
     let analysis_map: HashMap<u32, bool> = get_last_analysis()
-        .map(|a| {
-            a.problematic_ranks
+        .map(|analysis| {
+            analysis
+                .problematic_ranks
                 .iter()
-                .map(|r| {
-                    let is_root_cause = r.issue_reason.is_some();
-                    (r.rank_id, is_root_cause)
+                .map(|rank| {
+                    let is_root_cause = rank.issue_reason.is_some()
+                        || rank.root_cause_confidence
+                            == crate::rank_analysis_types::RootCauseConfidence::High;
+                    (rank.rank_id, is_root_cause)
                 })
                 .collect()
         })
@@ -543,9 +781,9 @@ fn apply_hang_state_to_metrics(ranks: &mut Vec<RankMetrics>, nodes: &mut Vec<Nod
         if has_analysis {
             match analysis_map.get(&rank.rank_id) {
                 Some(true) => {
-                    // 采集失败 / missing → 真正根因
+                    // 采集失败或高置信度关联证据 → 疑似根因
                     rank.status = HealthStatus::Critical;
-                    rank.error_message = Some("训练 HANG：根因 Rank".to_string());
+                    rank.error_message = Some("训练 HANG：疑似根因 Rank".to_string());
                 }
                 Some(false) => {
                     // 少数派堆栈 → 受影响，不是根因
@@ -696,6 +934,7 @@ pub fn generate_global_metrics_from_real_data(
         steps_per_second,
         estimated_remaining_hours,
         last_update,
+        rank_collection: Default::default(),
     }
 }
 

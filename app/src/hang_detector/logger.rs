@@ -14,8 +14,11 @@ use tracing;
 use super::config::HangConfig;
 use super::detector::NodeObservation;
 use super::state::{get_hang_state, stc_uptime_secs};
-use crate::adapter::get_real_training_data;
-use crate::flamegraph::{collect_and_generate_flamegraph, get_config_path, load_collector_config};
+use crate::adapter::get_training_data_snapshot;
+use crate::flamegraph::{
+    build_regular_ranked_callstack_urls, collect_and_generate_ranked_flamegraph, get_config_path,
+    load_collector_config,
+};
 
 /// HANG 日志条目
 #[derive(Debug, Serialize)]
@@ -349,48 +352,53 @@ fn format_shanghai_filename_timestamp(time: DateTime<FixedOffset>) -> String {
 
 /// 采集全局火焰图（所有节点的所有 rank）
 async fn collect_global_flamegraph() -> Result<String, String> {
-    // 加载配置
     let config = load_collector_config(&get_config_path())
-        .map_err(|e| format!("Failed to load collector config: {}", e))?;
-
-    // 获取所有节点信息
-    let (ranks, _nodes) = get_real_training_data()
+        .map_err(|error| format!("Failed to load collector config: {}", error))?;
+    let snapshot = get_training_data_snapshot()
         .await
-        .map_err(|e| format!("Failed to get training data: {}", e))?;
+        .map_err(|error| format!("Failed to get training data: {}", error))?;
 
-    if ranks.is_empty() {
-        return Err("No nodes available for flamegraph collection".to_string());
-    }
-
-    // 按 rank_id 排序构建 URL，确保 URL index 与全局 rank ID 一致
-    // ranks 已在 get_real_training_data() 中按 rank_id 排序
-    let all_urls: Vec<String> = ranks
+    let observed_world_size = snapshot
+        .registrations
         .iter()
-        .map(|r| {
-            format!(
-                "http://{}:{}/apis/pythonext/callstack",
-                r.node_ip,
-                config.callstack_base_port + r.local_rank as u16
+        .map(|registration| registration.rank_id.saturating_add(1))
+        .max()
+        .unwrap_or(0);
+    let world_size = snapshot
+        .world_size
+        .unwrap_or(observed_world_size)
+        .max(observed_world_size);
+    let rank_universe = (0..world_size).collect::<Vec<_>>();
+    let observed_ranks = snapshot
+        .registrations
+        .iter()
+        .map(|registration| {
+            (
+                registration.rank_id,
+                registration.local_rank,
+                registration.node_ip.clone(),
             )
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let ranked_urls = build_regular_ranked_callstack_urls(
+        &observed_ranks,
+        world_size,
+        config.callstack_base_port,
+    )?;
 
-    if all_urls.is_empty() {
-        return Err("No URLs to collect stacks from".to_string());
+    if ranked_urls.is_empty() {
+        return Err("No training nodes available for flamegraph collection".to_string());
     }
 
     tracing::info!(
-        "Collecting global flamegraph from {} URLs across {} ranks",
-        all_urls.len(),
-        ranks.len()
+        "Collecting global flamegraph from {} topology rank slots in world_size {}",
+        ranked_urls.len(),
+        world_size
     );
 
-    // 使用现有的全局火焰图采集函数
-    let svg = collect_and_generate_flamegraph("global", all_urls, None)
+    collect_and_generate_ranked_flamegraph(ranked_urls, rank_universe, None)
         .await
-        .map_err(|e| format!("Failed to generate global flamegraph: {}", e))?;
-
-    Ok(svg)
+        .map_err(|error| format!("Failed to generate global flamegraph: {}", error))
 }
 
 #[cfg(test)]

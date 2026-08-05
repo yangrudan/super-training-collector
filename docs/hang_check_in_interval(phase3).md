@@ -207,6 +207,15 @@ HANG 告警会同时展示两类时长：
 5. 统计每个 Rank 出现在少数派分支的次数，作为 `anomaly_score`
 6. `anomaly_score > 0` 的 Rank 即为问题 Rank，分数越高异常越严重
 
+少数派只作为候选。系统随后直接从 Collector 进程环境读取 Megatron 的 `TP`、`PP`、`DP`、`EP`、`CP` 和 `RANK_ORDER`（同时兼容 `*_SIZE` 别名），按 `parallel_state.py` 的 mixed-radix 规则恢复通信组，并增加两类证据：
+
+- **通信组证据**：候选分叉签名在 PP/DP/TP/EP/CP 组内是离群，或覆盖了整组。
+- **跨副本证据**：相同模型坐标的分叉签名在至少两个 DP 副本上重复出现，且覆盖率达到 50%。
+
+采集失败直接记为高置信度；同时具备通信组和跨副本证据记为高，仅一种记为中，仅有全局少数派证据记为低。拓扑获取或校验失败时不会阻断分析，Dashboard 和告警会明确标记已降级为旧的全局少数派算法。Megatron 的 dense CP 网格与 expert EP 网格分别生成，避免把 CP/EP 错误压成一个统一坐标。
+
+完整 world size 优先取 `/apis/nodes` 中存活 Rank 报告的 `world_size`，其次在显式配置 `DP` 时由 `TP × PP × CP × DP` 推导。当前 Rank 列表允许存在空洞：未注册或已退出的 Rank 会作为“训练进程缺失”高置信度根因加入结果，拓扑仍按完整 world size 构建；调用栈请求失败则单独标记为“调用栈采集失败或返回空栈”。
+
 ### 触发方式
 
 | 触发方式 | 说明 |
@@ -228,6 +237,12 @@ Dashboard 上的手动分析支持调整少数派阈值，默认是 `30%`。阈�
 |---------|--------|------|
 | `RANK_ANALYSIS_ENABLED` | `true` | 是否启用问题 Rank 分析 |
 | `RANK_ANALYSIS_MINORITY_THRESHOLD` | `0.3` | 少数派阈值 (0.05-0.5) |
+| `TP` | `1` | Megatron Tensor Parallel 并行度；兼容 `TP_SIZE` |
+| `PP` | `1` | Megatron Pipeline Parallel 并行度；兼容 `PP_SIZE` |
+| `DP` | 自动推导 | Data Parallel 并行度；兼容 `DP_SIZE`，显式配置时必须与 world size 一致 |
+| `EP` | `1` | Megatron Expert Parallel 并行度；兼容 `EP_SIZE` |
+| `CP` | `1` | Megatron Context Parallel 并行度；兼容 `CP_SIZE` |
+| `RANK_ORDER` | `tp-cp-ep-dp-pp` | Megatron mixed-radix 排布顺序，左侧维度变化最快 |
 
 ### API 端点
 

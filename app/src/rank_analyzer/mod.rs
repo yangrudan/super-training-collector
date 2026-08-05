@@ -4,10 +4,12 @@
 
 pub mod analyzer;
 pub mod config;
+pub mod parallel_topology;
 pub mod state;
 pub mod types;
 
 pub use analyzer::analyze_trie;
 pub use config::RankAnalysisConfig;
+pub use parallel_topology::{correlate_result, ParallelTopology};
 pub use state::{get_last_analysis, set_last_analysis};
 pub use types::{AnalysisTrigger, DivergencePoint, ProblematicRank, RankAnalysisResult};

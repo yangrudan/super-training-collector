@@ -286,6 +286,13 @@ pub fn generate_global_metrics(nodes: &[NodeMetrics], ranks: &[RankMetrics]) -> 
         steps_per_second: 0.95,
         estimated_remaining_hours: Some(24.5),
         last_update: now_timestamp(),
+        rank_collection: RankCollectionSummary {
+            expected_ranks: total_ranks as u32,
+            valid_registrations: total_ranks as u32,
+            online_registrations: total_ranks as u32,
+            offline_registrations: 0,
+            registration_issues: 0,
+        },
     }
 }
 

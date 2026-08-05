@@ -111,12 +111,7 @@ async fn get_job_detail(
         api_url, user_id, job_id
     );
 
-    let resp = match client
-        .get(&url)
-        .header("accessToken", token)
-        .send()
-        .await
-    {
+    let resp = match client.get(&url).header("accessToken", token).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("job_info_client: 获取任务详情失败: {}", e);

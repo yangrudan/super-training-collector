@@ -154,6 +154,18 @@ pub struct GlobalMetrics {
 
     // 时间戳
     pub last_update: u64,
+
+    /// probing 注册快照摘要，仅用于展示，不决定火焰图采集目标。
+    pub rank_collection: RankCollectionSummary,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RankCollectionSummary {
+    pub expected_ranks: u32,
+    pub valid_registrations: u32,
+    pub online_registrations: u32,
+    pub offline_registrations: u32,
+    pub registration_issues: u32,
 }
 
 /// 拓扑视图数据
