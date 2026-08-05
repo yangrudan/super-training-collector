@@ -16,7 +16,7 @@ use super::detector::NodeObservation;
 use super::state::{get_hang_state, stc_uptime_secs};
 use crate::adapter::get_training_data_snapshot;
 use crate::flamegraph::{
-    build_registered_callstack_url, collect_and_generate_ranked_flamegraph, get_config_path,
+    build_regular_ranked_callstack_urls, collect_and_generate_ranked_flamegraph, get_config_path,
     load_collector_config,
 };
 
@@ -369,29 +369,29 @@ async fn collect_global_flamegraph() -> Result<String, String> {
         .unwrap_or(observed_world_size)
         .max(observed_world_size);
     let rank_universe = (0..world_size).collect::<Vec<_>>();
-    let ranked_urls = snapshot
+    let observed_ranks = snapshot
         .registrations
         .iter()
-        .filter(|registration| registration.status != "offline")
         .map(|registration| {
             (
                 registration.rank_id,
-                build_registered_callstack_url(
-                    &registration.probe_addr,
-                    &registration.node_ip,
-                    registration.local_rank,
-                    config.callstack_base_port,
-                ),
+                registration.local_rank,
+                registration.node_ip.clone(),
             )
         })
         .collect::<Vec<_>>();
+    let ranked_urls = build_regular_ranked_callstack_urls(
+        &observed_ranks,
+        world_size,
+        config.callstack_base_port,
+    )?;
 
     if ranked_urls.is_empty() {
-        return Err("No running ranks available for flamegraph collection".to_string());
+        return Err("No training nodes available for flamegraph collection".to_string());
     }
 
     tracing::info!(
-        "Collecting global flamegraph from {} running ranks in world_size {}",
+        "Collecting global flamegraph from {} topology rank slots in world_size {}",
         ranked_urls.len(),
         world_size
     );

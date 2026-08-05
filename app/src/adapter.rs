@@ -934,6 +934,7 @@ pub fn generate_global_metrics_from_real_data(
         steps_per_second,
         estimated_remaining_hours,
         last_update,
+        rank_collection: Default::default(),
     }
 }
 

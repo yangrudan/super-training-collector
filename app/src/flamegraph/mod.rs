@@ -16,6 +16,7 @@ use stack_merger::merge_stacks;
 use stack_merger::StackTrie;
 
 use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -132,6 +133,98 @@ pub fn build_callstack_urls(ip: &str, rank_count: u8, base_port: u16) -> Vec<Str
     (0..rank_count)
         .map(|local_rank| build_callstack_url(ip, local_rank, base_port))
         .collect()
+}
+
+/// 根据 world size 和 global_rank - local_rank 节点基址推导每节点固定 Rank 槽位数。
+pub fn infer_regular_ranks_per_node(
+    observed_ranks: &[(u32, u8, String)],
+    world_size: u32,
+) -> Result<u8, String> {
+    if world_size == 0 {
+        return Err("world_size must be greater than zero".to_string());
+    }
+    let node_bases = observed_ranks
+        .iter()
+        .filter(|(rank, _, node_ip)| *rank < world_size && !node_ip.trim().is_empty())
+        .filter_map(|(rank, local_rank, _)| rank.checked_sub(*local_rank as u32))
+        .collect::<BTreeSet<_>>();
+    if node_bases.is_empty() {
+        return Err("no training nodes observed".to_string());
+    }
+    let node_count = node_bases.len() as u32;
+    if world_size % node_count != 0 {
+        return Err(format!(
+            "world_size {} cannot be evenly distributed across {} observed training nodes",
+            world_size, node_count
+        ));
+    }
+    let ranks_per_node = world_size / node_count;
+    u8::try_from(ranks_per_node).map_err(|_| format!("invalid ranks per node: {}", ranks_per_node))
+}
+
+/// 按训练 Rank 的规则分布恢复全局火焰图采集目标。
+/// probing 注册仅用于发现节点及 global-rank 基址，不使用逐 Rank 的
+/// addr/status 删减采集目标。STOP/offline 槽位仍会发起请求，由超时处理。
+pub fn build_regular_ranked_callstack_urls(
+    observed_ranks: &[(u32, u8, String)],
+    world_size: u32,
+    base_port: u16,
+) -> Result<Vec<(u32, String)>, String> {
+    if world_size == 0 {
+        return Err("world_size must be greater than zero".to_string());
+    }
+
+    let mut node_votes = BTreeMap::<u32, HashMap<String, usize>>::new();
+    for (global_rank, local_rank, node_ip) in observed_ranks {
+        if *global_rank >= world_size || node_ip.trim().is_empty() {
+            continue;
+        }
+        let Some(node_rank_base) = global_rank.checked_sub(*local_rank as u32) else {
+            continue;
+        };
+        *node_votes
+            .entry(node_rank_base)
+            .or_default()
+            .entry(node_ip.clone())
+            .or_default() += 1;
+    }
+    if node_votes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let ranks_per_node = infer_regular_ranks_per_node(observed_ranks, world_size)? as u32;
+
+    let mut targets = Vec::with_capacity(world_size as usize);
+    for (node_rank_base, votes) in node_votes {
+        if node_rank_base % ranks_per_node != 0 {
+            return Err(format!(
+                "rank base {} does not align with {} ranks per node",
+                node_rank_base, ranks_per_node
+            ));
+        }
+        let node_ip = votes
+            .into_iter()
+            .max_by(|(left_ip, left_count), (right_ip, right_count)| {
+                left_count
+                    .cmp(right_count)
+                    .then_with(|| right_ip.cmp(left_ip))
+            })
+            .map(|(ip, _)| ip)
+            .expect("node votes cannot be empty");
+
+        for local_rank in 0..ranks_per_node {
+            let global_rank = node_rank_base + local_rank;
+            if global_rank >= world_size {
+                break;
+            }
+            targets.push((
+                global_rank,
+                build_callstack_url(&node_ip, local_rank as u8, base_port),
+            ));
+        }
+    }
+    targets.sort_by_key(|(rank, _)| *rank);
+    Ok(targets)
 }
 
 /// Collect stacks for the given node, generate a flamegraph SVG, and return it as a String.
@@ -361,6 +454,50 @@ mod tests {
     fn test_load_collector_config_missing_file() {
         let result = load_collector_config("/nonexistent/path/config.json");
         assert!(result.is_err(), "Should fail on missing file");
+    }
+
+    #[test]
+    fn regular_topology_restores_missing_and_offline_rank_slots() {
+        let mut observed = Vec::new();
+        for node in 0..4u32 {
+            for local_rank in 0..8u8 {
+                let global_rank = node * 8 + local_rank as u32;
+                if global_rank == 0 || global_rank == 18 {
+                    continue;
+                }
+                observed.push((global_rank, local_rank, format!("10.0.0.{}", node + 1)));
+            }
+        }
+
+        let targets = build_regular_ranked_callstack_urls(&observed, 32, 9933).unwrap();
+
+        assert_eq!(targets.len(), 32);
+        assert_eq!(
+            targets[0],
+            (
+                0,
+                "http://10.0.0.1:9933/apis/pythonext/callstack".to_string()
+            )
+        );
+        assert_eq!(
+            targets[18],
+            (
+                18,
+                "http://10.0.0.3:9935/apis/pythonext/callstack".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn regular_topology_rejects_incomplete_node_discovery() {
+        let observed = vec![
+            (0, 0, "10.0.0.1".to_string()),
+            (8, 0, "10.0.0.2".to_string()),
+            (16, 0, "10.0.0.3".to_string()),
+        ];
+
+        let error = build_regular_ranked_callstack_urls(&observed, 32, 9933).unwrap_err();
+        assert!(error.contains("cannot be evenly distributed"));
     }
 
     #[test]

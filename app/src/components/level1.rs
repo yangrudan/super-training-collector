@@ -76,6 +76,45 @@ pub fn Level1View() -> impl IntoView {
                                     <section class="panel-surface">
                                         <div class="panel-header-line">
                                             <div>
+                                                <div class="section-label">"Rank 采集摘要"</div>
+                                                <h2 class="section-title">"probing 注册快照"</h2>
+                                            </div>
+                                            <div class="panel-stat">
+                                                "有效注册 "
+                                                {format!(
+                                                    "{}/{}",
+                                                    metrics.rank_collection.valid_registrations,
+                                                    metrics.rank_collection.expected_ranks,
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div class="kpi-grid">
+                                            <KpiCard
+                                                title="训练 World Size"
+                                                value=metrics.rank_collection.expected_ranks.to_string()
+                                            />
+                                            <KpiCard
+                                                title="有效注册 Rank"
+                                                value=metrics.rank_collection.valid_registrations.to_string()
+                                            />
+                                            <KpiCard
+                                                title="在线注册 Rank"
+                                                value=metrics.rank_collection.online_registrations.to_string()
+                                            />
+                                            <KpiCard
+                                                title="Offline Rank"
+                                                value=metrics.rank_collection.offline_registrations.to_string()
+                                            />
+                                            <KpiCard
+                                                title="注册异常记录"
+                                                value=metrics.rank_collection.registration_issues.to_string()
+                                            />
+                                        </div>
+                                    </section>
+
+                                    <section class="panel-surface">
+                                        <div class="panel-header-line">
+                                            <div>
                                                 <div class="section-label">"健康态势"</div>
                                                 <h2 class="section-title">"节点与 Rank 状态分布"</h2>
                                             </div>

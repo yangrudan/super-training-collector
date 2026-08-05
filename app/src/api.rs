@@ -19,14 +19,41 @@ fn is_mock_mode() -> bool {
 #[server(GetGlobalMetrics)]
 pub async fn get_global_metrics() -> Result<GlobalMetrics, ServerFnError> {
     leptos::logging::log!("Getting global metrics from real API...");
-    match get_real_training_data().await {
-        Ok((ranks, nodes)) => {
+    match get_training_data_snapshot().await {
+        Ok(snapshot) => {
+            let ranks = snapshot.ranks;
+            let nodes = snapshot.nodes;
             leptos::logging::log!(
                 "Real API success: {} ranks, {} nodes",
                 ranks.len(),
                 nodes.len()
             );
-            let global_metrics = generate_global_metrics_from_real_data(&nodes, &ranks);
+            let mut global_metrics = generate_global_metrics_from_real_data(&nodes, &ranks);
+            let observed_world_size = snapshot
+                .registrations
+                .iter()
+                .map(|registration| registration.rank_id.saturating_add(1))
+                .max()
+                .unwrap_or(0);
+            let expected_ranks = snapshot
+                .world_size
+                .unwrap_or(observed_world_size)
+                .max(observed_world_size);
+            let offline_registrations = snapshot
+                .registrations
+                .iter()
+                .filter(|registration| registration.status == "offline")
+                .count() as u32;
+            let valid_registrations = snapshot.registrations.len() as u32;
+            global_metrics.rank_collection = RankCollectionSummary {
+                expected_ranks,
+                valid_registrations,
+                online_registrations: valid_registrations.saturating_sub(offline_registrations),
+                offline_registrations,
+                registration_issues: (snapshot.rank_registration_issues.len()
+                    + snapshot.invalid_registration_issues.len())
+                    as u32,
+            };
             Ok(global_metrics)
         }
         Err(e) => {
@@ -198,19 +225,45 @@ pub async fn get_all_nodes_callstack_info() -> Result<Vec<(String, u8, u16)>, Se
 pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
     use crate::flamegraph::{
         build_callstack_urls, collect_and_generate_flamegraph, get_config_path,
-        load_collector_config,
+        infer_regular_ranks_per_node, load_collector_config,
     };
 
     let config = load_collector_config(&get_config_path())
         .map_err(|e| ServerFnError::new(format!("Failed to load collector config: {}", e)))?;
 
-    // 获取该节点的 rank_count
-    let rank_count = match get_real_training_data().await {
-        Ok((_, nodes)) => nodes
-            .into_iter()
-            .find(|n| n.node_ip == ip)
-            .map(|n| n.rank_count)
-            .unwrap_or(4),
+    // 节点火焰图也使用固定训练拓扑槽位，不把当前有效注册数当作 rank_count。
+    let rank_count = match get_training_data_snapshot().await {
+        Ok(snapshot) => {
+            if !snapshot
+                .registrations
+                .iter()
+                .any(|registration| registration.node_ip == ip)
+            {
+                return Err(ServerFnError::new("Node not found"));
+            }
+            let observed_world_size = snapshot
+                .registrations
+                .iter()
+                .map(|registration| registration.rank_id.saturating_add(1))
+                .max()
+                .unwrap_or(0);
+            let world_size = snapshot
+                .world_size
+                .unwrap_or(observed_world_size)
+                .max(observed_world_size);
+            let observed_ranks = snapshot
+                .registrations
+                .iter()
+                .map(|registration| {
+                    (
+                        registration.rank_id,
+                        registration.local_rank,
+                        registration.node_ip.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            infer_regular_ranks_per_node(&observed_ranks, world_size).map_err(ServerFnError::new)?
+        }
         Err(e) => {
             if is_mock_mode() {
                 let store = MockDataStore::new();
@@ -233,7 +286,7 @@ pub async fn get_node_flamegraph(ip: String) -> Result<String, ServerFnError> {
 #[server(GetAllNodesFlamegraph)]
 pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
     use crate::flamegraph::{
-        build_registered_callstack_url, collect_and_generate_flamegraph,
+        build_regular_ranked_callstack_urls, collect_and_generate_flamegraph,
         collect_and_generate_ranked_flamegraph, get_config_path, load_collector_config,
     };
 
@@ -282,25 +335,26 @@ pub async fn get_all_nodes_flamegraph() -> Result<String, ServerFnError> {
         .unwrap_or(observed_world_size)
         .max(observed_world_size);
     let rank_universe = (0..world_size).collect::<Vec<_>>();
-    let ranked_urls = snapshot
+    let observed_ranks = snapshot
         .registrations
         .iter()
-        .filter(|registration| registration.status != "offline")
         .map(|registration| {
             (
                 registration.rank_id,
-                build_registered_callstack_url(
-                    &registration.probe_addr,
-                    &registration.node_ip,
-                    registration.local_rank,
-                    config.callstack_base_port,
-                ),
+                registration.local_rank,
+                registration.node_ip.clone(),
             )
         })
         .collect::<Vec<_>>();
+    let ranked_urls = build_regular_ranked_callstack_urls(
+        &observed_ranks,
+        world_size,
+        config.callstack_base_port,
+    )
+    .map_err(ServerFnError::new)?;
 
     if ranked_urls.is_empty() {
-        return Err(ServerFnError::new("No running ranks found"));
+        return Err(ServerFnError::new("No training nodes found"));
     }
 
     collect_and_generate_ranked_flamegraph(ranked_urls, rank_universe, Some(config.batch_size))
