@@ -15,6 +15,7 @@
 - [项目结构](#项目结构)
 - [配置说明](#配置说明)
 - [数据模型](#数据模型)
+- [文档](#文档)
 - [License](#license)
 
 ---
@@ -290,6 +291,13 @@ pub enum HealthStatus {
     Critical,  // 故障
 }
 ```
+
+---
+
+## 文档
+
+- [Agent 学习与实践能力路线规划](./docs/agent-learning-roadmap.md) - 分阶段拆解 Agent 学习路径与重点标注
+- [Leptos 开发指南](./docs/leptos-start.md) - 快速上手与部署说明
 
 ---
 
